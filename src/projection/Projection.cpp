@@ -342,27 +342,40 @@ bool projectionStatesMatch(Block const& expected, Block const& actual) {
     if (expected == actual) return true;
     if (expected.getTypeName() != actual.getTypeName()) return false;
 
-    // A door stores its placement state across two blocks. The lower half owns
-    // direction/open, while the upper half owns hinge. Bedrock may normalize
-    // the non-owning duplicate fields differently when a real door is placed,
-    // so comparing the complete serialization hash reports a false direction
-    // error even though the assembled door is correct.
-    if (expected.getTypeName().find("door") == std::string::npos) return false;
-
-    auto const expectedUpper = expected.getState<bool>(VanillaStates::UpperBlockBit());
-    auto const actualUpper = actual.getState<bool>(VanillaStates::UpperBlockBit());
-    if (!expectedUpper || !actualUpper || *expectedUpper != *actualUpper) return false;
-
     auto stateMatches = [&](auto const& state) {
         using StateValue = typename std::remove_cvref_t<decltype(state)>::Type;
         auto const expectedValue = expected.getState<StateValue>(state);
         auto const actualValue = actual.getState<StateValue>(state);
         return expectedValue && actualValue && *expectedValue == *actualValue;
     };
-    return *expectedUpper
-        ? stateMatches(VanillaStates::DoorHingeBit())
-        : stateMatches(VanillaStates::Direction())
-            && stateMatches(VanillaStates::OpenBit());
+
+    // A real door stores its placement state across two blocks: the lower half
+    // owns direction/open, the upper half owns hinge. Bedrock may normalize the
+    // duplicated fields differently after a structure load, so the complete
+    // serialization hash can differ even for a correctly placed door. Only real
+    // doors carry upper_block_bit; trapdoor names also end with "door", so the
+    // presence of that state is the reliable discriminator.
+    auto const expectedUpper = expected.getState<bool>(VanillaStates::UpperBlockBit());
+    if (expectedUpper) {
+        auto const actualUpper = actual.getState<bool>(VanillaStates::UpperBlockBit());
+        if (!actualUpper || *actualUpper != *expectedUpper) return false;
+        return *expectedUpper
+            ? stateMatches(VanillaStates::DoorHingeBit())
+            : stateMatches(VanillaStates::Direction())
+                && stateMatches(VanillaStates::OpenBit());
+    }
+
+    // Trapdoors are single blocks: compare their own placement states instead
+    // of treating them like a two-block door.
+    auto const expectedOpen = expected.getState<bool>(VanillaStates::OpenBit());
+    if (expectedOpen) {
+        auto const actualOpen = actual.getState<bool>(VanillaStates::OpenBit());
+        return actualOpen && *actualOpen == *expectedOpen
+            && stateMatches(VanillaStates::Direction())
+            && stateMatches(VanillaStates::UpsideDownBit());
+    }
+
+    return false;
 }
 
 BlockPos transformStructurePosition(
@@ -594,15 +607,13 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 && !actualLiquid.isAir() && actualLiquid.getTypeName() != expectedLiquid->getTypeName();
             auto const liquidCellOccupiedBySolid = !expected && expectedLiquid && !actual.isAir()
                 && actual.getTypeName() != expectedLiquid->getTypeName();
-            auto const unexpectedLiquid = !expectedLiquid && !actualLiquid.isAir();
             auto nextState = ProjectionState::CorrectionState::Correct;
             if (bodyMissing || liquidMissing) {
                 nextState = ProjectionState::CorrectionState::Missing;
             } else if (bodyTypeWrong || liquidTypeWrong || liquidCellOccupiedBySolid) {
                 nextState = ProjectionState::CorrectionState::WrongType;
             } else if ((expected && !projectionStatesMatch(*expected, actual))
-                || (expectedLiquid && actualLiquid != *expectedLiquid)
-                || unexpectedLiquid) {
+                || (expectedLiquid && actualLiquid != *expectedLiquid)) {
                 nextState = ProjectionState::CorrectionState::WrongState;
             }
             auto const nowCorrect = nextState == ProjectionState::CorrectionState::Correct;
