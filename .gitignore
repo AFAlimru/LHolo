@@ -1,0 +1,26 @@
+# XMake caches and generated output
+.xmake/
+build/
+bin/
+
+# IDE and compiler artifacts
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+
+# Runtime-local data
+config/
+*.log
+
+# OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini

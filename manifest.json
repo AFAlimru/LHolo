@@ -1,0 +1,9 @@
+{
+  "name": "${modName}",
+  "entry": "${modFile}",
+  "version": "${modVersion}",
+  "type": "native",
+  "platform": "${modPlatform}",
+  "description": "Client-side projection renderer for Minecraft Windows 1.26.20 with an injected Dear ImGui mcstructure and litematic loader.",
+  "author": "Cat66"
+}
