@@ -67,7 +67,7 @@ jobs:
           path: artifact
 
       - run: |
-          cp CHANGELOG.md README.md artifact/
+          cp README.md artifact/
           cp LICENSE artifact/ 2>/dev/null || true
 
       - run: |
