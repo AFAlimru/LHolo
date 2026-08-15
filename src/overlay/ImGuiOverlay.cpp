@@ -64,6 +64,17 @@ bool             gImGuiInitialized{};
 bool             gGraphicsInitialized{};
 bool             gGuiVisibleLastFrame{};
 std::atomic_bool gMouseHandoffActive{};
+
+// ShowCursor is a per-input-queue counter (>= 0 displays the OS cursor).
+// While the LHolo menu is open it swallows all mouse messages, and Bedrock's
+// input state machine can decide mid-menu that it returned to gameplay and
+// hide the system cursor. After closing the menu neither cursor would be
+// visible, stranding the player. The counter is therefore snapshotted when
+// the menu opens and restored on the first window message after it closes:
+// the normal gameplay path snapshots -1 and restores -1 (a no-op), while a
+// menu opened from a cursor-showing UI keeps its visible cursor.
+// -999 means "no restore pending".
+std::atomic_int gSavedCursorDisplay{-999};
 std::array<bool, 256> gGameKeysDown{};
 std::array<bool, 5>   gGameMouseButtonsDown{};
 std::atomic_bool      gConsumeEscapeRelease{false};
@@ -206,6 +217,15 @@ void releaseGameInput(HWND window) {
         if (button == 4) buttonParam = MAKEWPARAM(0, XBUTTON2);
         forwardToGame(window, upMessages[button], buttonParam, mousePosition);
     }
+
+    // Snapshot the OS cursor display counter (runs on the window's input
+    // thread, which owns the counter). If the game was showing its cursor
+    // (chat, pause, inventory), hide it once so the ImGui software cursor is
+    // the only one on screen; the close path restores the snapshot.
+    int const probed = ::ShowCursor(TRUE) - 1;
+    ::ShowCursor(FALSE);
+    gSavedCursorDisplay.store(probed, std::memory_order_release);
+    if (probed >= 0) ::ShowCursor(FALSE);
 }
 
 void prepareMouseHandoff(HWND window) {
@@ -269,9 +289,21 @@ void maintainMouseHandoff(HWND window) {
 }
 
 LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+    // First message after the menu closed: restore the OS cursor display
+    // counter that was snapshotted on open. Bedrock may have hidden the
+    // cursor mid-menu (its input state machine mistook the swallowed input
+    // for a return to gameplay); without this, no cursor would be visible.
+    // The gameplay path snapshots -1 and restores -1, a no-op.
+    if (auto const saved = gSavedCursorDisplay.exchange(-999, std::memory_order_acq_rel);
+        saved != -999 && !structure::isGuiVisible()) {
+        int const current = ::ShowCursor(TRUE) - 1;
+        ::ShowCursor(FALSE);
+        for (int count = current; count < saved; ++count) ::ShowCursor(TRUE);
+    }
     if (message == WM_KILLFOCUS || (message == WM_ACTIVATEAPP && wParam == FALSE)) {
         structure::resetHotkeyState();
         gMouseHandoffActive.store(false, std::memory_order_release);
+        gSavedCursorDisplay.store(-999, std::memory_order_release);
         ClipCursor(nullptr);
     }
     if (!gShuttingDown.load(std::memory_order_acquire)
@@ -671,6 +703,14 @@ bool ensureInstalled() {
 void shutdown() {
     gShuttingDown.store(true, std::memory_order_release);
     gMouseHandoffActive.store(false, std::memory_order_release);
+    // If the menu was open at shutdown, one layer of cursor hiding may still
+    // be pending; restore the snapshot so the OS cursor is not stranded.
+    if (auto const saved = gSavedCursorDisplay.exchange(-999, std::memory_order_acq_rel);
+        saved >= 0) {
+        int const current = ::ShowCursor(TRUE) - 1;
+        ::ShowCursor(FALSE);
+        for (int count = current; count < saved; ++count) ::ShowCursor(TRUE);
+    }
     ClipCursor(nullptr);
     removeHook(gExecuteTarget);
     removeHook(gPresent1Target);

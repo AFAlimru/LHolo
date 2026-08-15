@@ -16,6 +16,7 @@
 #include <map>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <tuple>
 #include <utility>
 #include <variant>
@@ -31,6 +32,7 @@
 #include "mc/client/renderer/game/ItemInHandRenderer.h"
 #include "mc/client/renderer/game/LevelRenderer.h"
 #include "mc/client/renderer/game/LevelRendererPlayer.h"
+#include "mc/client/renderer/texture/TextureUVCoordinateSet.h"
 #include "mc/client/player/LocalPlayer.h"
 #include "mc/deps/minecraft_renderer/resources/ClientTexture.h"
 #include "mc/deps/minecraft_renderer/resources/ServerTexture.h"
@@ -64,6 +66,15 @@ namespace {
 constexpr std::uint32_t MissingColorAbgrRgb    = 0x00E6B333U; // #33B3E6
 constexpr std::uint32_t WrongBlockColorAbgrRgb = 0x003333FFU; // #FF3333
 constexpr std::uint32_t WrongStateColorAbgrRgb = 0x001090FFU; // #FF9010
+
+// Liquid proxy rendering: the hulls reuse the vanilla terrain-atlas water and
+// lava tiles. Water tiles are untinted, so their vertex color carries the
+// vanilla water blue #3F76E4; lava keeps its own texture colors with a white
+// vertex tint. Bedrock's animated water surface lives in a terrain-water pass
+// an injected mesh cannot reach; the textured proxy is the accepted static
+// approximation, drawn through the exact same material path as glass.
+constexpr std::uint32_t LiquidWaterTintAbgrRgb = 0x00E4763FU; // #3F76E4
+constexpr std::uint32_t LiquidLavaTintAbgrRgb  = 0x00FFFFFFU; // white
 
 std::uint32_t withAlpha(std::uint32_t colorAbgrRgb, float opacity) {
     auto const alpha = static_cast<std::uint32_t>(std::lround(std::clamp(opacity, 0.0f, 1.0f) * 255.0f));
@@ -117,6 +128,7 @@ struct ProjectionState {
         sectionMeshes;
     std::vector<std::unique_ptr<mce::Mesh>> warningFillSectionMeshes;
     std::vector<std::unique_ptr<mce::Mesh>> correctionOutlineSectionMeshes;
+    std::vector<std::unique_ptr<mce::Mesh>> liquidProxySectionMeshes;
     std::unique_ptr<mce::Mesh>              structureBoundsMesh;
     std::vector<Vec3>              sectionCenters;
     std::vector<bool>              sectionDirty;
@@ -183,6 +195,8 @@ void clearProjectionStateLocked() {
     gBuildProgressWrongType.store(0, std::memory_order_relaxed);
     gBuildProgressWrongState.store(0, std::memory_order_relaxed);
     gBuildProgressTotal.store(0, std::memory_order_release);
+    // Withdraw nothing: liquids are drawn by LHolo's own meshes and never
+    // touch the vanilla chunk pipeline.
     gState.terrainTexture.reset();
     gState.terrainTextureVariant.reset();
     gState.dimension     = nullptr;
@@ -278,6 +292,7 @@ bool enableStructureProjection(
     for (auto& meshes : next.sectionMeshes) meshes.resize(next.sectionBlockIndices.size());
     next.warningFillSectionMeshes.resize(next.sectionBlockIndices.size());
     next.correctionOutlineSectionMeshes.resize(next.sectionBlockIndices.size());
+    next.liquidProxySectionMeshes.resize(next.sectionBlockIndices.size());
     next.sectionDirty.assign(next.sectionBlockIndices.size(), true);
     if (!resolveTerrainTexture(client, next)) return false;
     if (gPendingStructureAnchor.exchange(false, std::memory_order_acq_rel)) {
@@ -401,8 +416,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
     auto* player  = client.getLocalPlayer();
     if (!contextIsValid(client, player)) {
         clearProjectionStateLocked();
-        structure::clear();
-        return;
+        structure::clear();        return;
     }
 
     auto& tessellator = renderContext.getTessellator();
@@ -506,6 +520,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 }
                 for (auto& mesh : gState.warningFillSectionMeshes) mesh.reset();
                 for (auto& mesh : gState.correctionOutlineSectionMeshes) mesh.reset();
+                for (auto& mesh : gState.liquidProxySectionMeshes) mesh.reset();
                 gState.structureBoundsMesh.reset();
                 gState.correctionScanCursor = 0;
                 std::fill(gState.progressCorrect.begin(), gState.progressCorrect.end(), 0);
@@ -546,7 +561,14 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     gState.anchor.y + offsetY + transformed.y,
                     gState.anchor.z + offsetZ + transformed.z
                 };
-                if (transformedBlock) gState.expectedWorldBlocks.emplace(worldKey, transformedBlock);
+                if (transformedBlock) {
+                    gState.expectedWorldBlocks.emplace(worldKey, transformedBlock);
+                } else {
+                    // Liquids join the virtual world so vanilla liquid-height
+                    // queries see stacked virtual water (full-cell columns).
+                    auto const* transformedLiquid = transformExpectedBlock(entry.liquid, rotation, mirror);
+                    if (transformedLiquid) gState.expectedWorldBlocks.emplace(worldKey, transformedLiquid);
+                }
                 gState.expectedWorldBlockIndices.emplace(worldKey, index);
                 auto const section = gState.blockToSection[index];
                 centerSums[section] += Vec3{
@@ -771,6 +793,110 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 ));
             }
 
+            // Textured liquid proxy hulls. LHolo never lies to the vanilla
+            // world or chunk pipeline (that leaks into gameplay), so missing
+            // liquids draw as translucent hulls here. The hulls reuse the
+            // vanilla terrain-atlas water/lava tiles and travel the exact
+            // material path used for glass, keeping them purely cosmetic.
+            std::vector<std::size_t> liquidProxyIndices;
+            for (auto const index : gState.sectionBlockIndices[section]) {
+                if (gState.structure->renderBlocks[index].liquid == nullptr) continue;
+                if (gState.correctionStates[index] != ProjectionState::CorrectionState::Missing) continue;
+                liquidProxyIndices.push_back(index);
+            }
+            if (!liquidProxyIndices.empty()) {
+                tessellator.begin(
+                    Tessellator::DebugContextCallback{},
+                    mce::PrimitiveMode::QuadList,
+                    static_cast<int>(liquidProxyIndices.size() * 24),
+                    false
+                );
+                auto const alpha = static_cast<uint>(std::lround(
+                    std::clamp(structureOpacity, 0.05f, 1.0f) * 255.0f
+                ));
+                for (auto const index : liquidProxyIndices) {
+                    auto const& entry = gState.structure->renderBlocks[index];
+                    auto const* expectedLiquid = transformExpectedBlock(entry.liquid, rotation, mirror);
+                    if (!expectedLiquid) continue;
+                    auto const* graphics = BlockGraphics::getForBlock(*expectedLiquid);
+                    auto const* uvSet = graphics ? &graphics->getTexture(0, 0) : nullptr;
+                    auto const p = transformStructurePosition(entry, *gState.structure, mirrorMode, rotationTurns);
+                    BlockPos const worldPosition{
+                        gState.anchor.x + offsetX + p.x,
+                        gState.anchor.y + offsetY + p.y,
+                        gState.anchor.z + offsetZ + p.z
+                    };
+                    auto const neighborEntry = [&](int dx, int dy, int dz)
+                        -> structure::LoadedStructure::RenderBlock const* {
+                        auto const found = gState.expectedWorldBlockIndices.find(std::tuple{
+                            worldPosition.x + dx, worldPosition.y + dy, worldPosition.z + dz
+                        });
+                        return found == gState.expectedWorldBlockIndices.end()
+                            ? nullptr : &gState.structure->renderBlocks[found->second];
+                    };
+                    auto const neighborIsSameLiquid = [&](int dx, int dy, int dz) {
+                        auto const* neighbor = neighborEntry(dx, dy, dz);
+                        if (!neighbor || !neighbor->liquid) return false;
+                        auto const* transformed = transformExpectedBlock(neighbor->liquid, rotation, mirror);
+                        return transformed && transformed->getTypeName() == expectedLiquid->getTypeName();
+                    };
+                    // Vanilla source liquids render at 8/9 of a block.
+                    // getHeightFromDepth() proved unreliable here on 1.26
+                    // (source cells came out as thin slivers), so the proxy
+                    // always uses the source height for the topmost cell and
+                    // full height for submerged cells. Per-cell flowing depth
+                    // is intentionally not depicted; it still participates in
+                    // the correction comparison.
+                    constexpr float surface = 8.0f / 9.0f;
+                    auto const tint = expectedLiquid->getMaterial().isSuperHot()
+                        ? (LiquidLavaTintAbgrRgb | (alpha << 24U))
+                        : (LiquidWaterTintAbgrRgb | (alpha << 24U));
+                    float const x0 = static_cast<float>(p.x);
+                    float const y0 = static_cast<float>(p.y);
+                    float const z0 = static_cast<float>(p.z);
+                    float const x1 = static_cast<float>(p.x + 1);
+                    // A same-liquid cell above means this cell is fully
+                    // submerged and its sides run to the full cube height.
+                    float const y1 = static_cast<float>(p.y)
+                        + (neighborIsSameLiquid(0, 1, 0) ? 1.0f : surface);
+                    float const z1 = static_cast<float>(p.z + 1);
+                    // Full-tile UVs when the atlas tile is available; a tiny
+                    // degenerate UV otherwise still renders as flat tint.
+                    float const u0 = uvSet ? uvSet->_u0 : 0.0f;
+                    float const v0 = uvSet ? uvSet->_v0 : 0.0f;
+                    float const u1 = uvSet ? uvSet->_u1 : 0.0f;
+                    float const v1 = uvSet ? uvSet->_v1 : 0.0f;
+                    auto addLiquidFace = [&](
+                        Vec3 const& a, Vec3 const& b, Vec3 const& c, Vec3 const& d
+                    ) {
+                        tessellator.colorABGR(static_cast<int>(tint));
+                        tessellator.vertexUV(a.x, a.y, a.z, u0, v0);
+                        tessellator.vertexUV(b.x, b.y, b.z, u0, v1);
+                        tessellator.vertexUV(c.x, c.y, c.z, u1, v1);
+                        tessellator.vertexUV(d.x, d.y, d.z, u1, v0);
+                    };
+                    if (!neighborEntry(0, -1, 0))
+                        addLiquidFace({x0,y0,z1}, {x0,y0,z0}, {x1,y0,z0}, {x1,y0,z1});
+                    if (!neighborIsSameLiquid(0, 1, 0))
+                        addLiquidFace({x0,y1,z0}, {x0,y1,z1}, {x1,y1,z1}, {x1,y1,z0});
+                    if (!neighborIsSameLiquid(0, 0, -1))
+                        addLiquidFace({x0,y0,z0}, {x0,y1,z0}, {x1,y1,z0}, {x1,y0,z0});
+                    if (!neighborIsSameLiquid(0, 0, 1))
+                        addLiquidFace({x1,y0,z1}, {x1,y1,z1}, {x0,y1,z1}, {x0,y0,z1});
+                    if (!neighborIsSameLiquid(-1, 0, 0))
+                        addLiquidFace({x0,y0,z1}, {x0,y1,z1}, {x0,y1,z0}, {x0,y0,z0});
+                    if (!neighborIsSameLiquid(1, 0, 0))
+                        addLiquidFace({x1,y0,z0}, {x1,y1,z0}, {x1,y1,z1}, {x1,y0,z1});
+                }
+                gState.liquidProxySectionMeshes[section] = std::make_unique<mce::Mesh>(tessellator.end(
+                    Tessellator::UploadMode::Buffered,
+                    "LHoloLiquidProxy",
+                    Tessellator::SupplementaryFieldAutoGenerationMode::None
+                ));
+            } else {
+                gState.liquidProxySectionMeshes[section].reset();
+            }
+
             // Missing and error markers now both use complete-cell shells.
             std::size_t warningCount{};
             for (auto const index : gState.sectionBlockIndices[section]) {
@@ -805,6 +931,10 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     auto const priority = correctionPriority(state);
                     if (priority == 0) continue;
                     auto const& entry = gState.structure->renderBlocks[index];
+                    // A missing pure-liquid cell is already communicated by its
+                    // blue translucent proxy hull; skip the duplicate outline.
+                    if (state == ProjectionState::CorrectionState::Missing
+                        && !entry.block && entry.liquid) continue;
                     auto const p = transformStructurePosition(entry, *gState.structure, mirrorMode, rotationTurns);
                     auto const outlineColor = state == ProjectionState::CorrectionState::Missing
                         ? withAlpha(MissingColorAbgrRgb, correctionOutlineOpacity)
@@ -851,6 +981,10 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     auto const priority = correctionPriority(state);
                     if (priority == 0) continue;
                     auto const& entry = gState.structure->renderBlocks[index];
+                    // Same as the outline above: the blue proxy hull already
+                    // marks a missing pure-liquid cell.
+                    if (state == ProjectionState::CorrectionState::Missing
+                        && !entry.block && entry.liquid) continue;
                     auto const p = transformStructurePosition(entry, *gState.structure, mirrorMode, rotationTurns);
                     BlockPos const worldPosition{
                         gState.anchor.x + offsetX + p.x,
@@ -1059,6 +1193,39 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 sortBackToFront(transparentMeshes);
                 renderMeshes(transparentMeshes, blendMaterial);
             }
+
+            // Textured liquid hulls travel the proven glass path: blend-block
+            // material plus the terrain atlas, sorted back to front by
+            // section like the other transparent meshes.
+            if (renderAlphaLayer) {
+                std::vector<std::size_t> liquidSections;
+                for (std::size_t liquidSection = 0;
+                     liquidSection < gState.liquidProxySectionMeshes.size();
+                     ++liquidSection) {
+                    auto const& mesh = gState.liquidProxySectionMeshes[liquidSection];
+                    if (mesh && mesh->isValid()) liquidSections.push_back(liquidSection);
+                }
+                std::sort(
+                    liquidSections.begin(),
+                    liquidSections.end(),
+                    [&](std::size_t lhs, std::size_t rhs) {
+                        return distanceSquared(worldCenter(lhs))
+                            > distanceSquared(worldCenter(rhs));
+                    }
+                );
+                for (auto const liquidSection : liquidSections) {
+                    auto& mesh = *gState.liquidProxySectionMeshes[liquidSection];
+                    mesh.renderMesh(
+                        renderContext.getScreenContext(),
+                        blendMaterial,
+                        *gState.terrainTextureVariant,
+                        0,
+                        static_cast<uint>(mesh.getMeshVertexCount()),
+                        renderContext.mOffscreenCaptureDescription.get(),
+                        nullptr
+                    );
+                }
+            }
         }
 
         if (renderAlphaLayer) {
@@ -1080,15 +1247,17 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
             auto const& warningMaterial = levelRenderer
                 ? levelRenderer->getLevelRendererPlayer().selectionBlockEntityOverlayColorMaterial.get()
                 : renderContext.getItemInHandRenderer().mMatBlendBlockNoColor.get();
-            auto renderCorrectionFillMeshes = [&](mce::MaterialPtr const& material) {
+            auto renderOverlayMeshes = [&](
+                std::vector<std::unique_ptr<mce::Mesh>> const& meshes, mce::MaterialPtr const& material
+            ) {
                 if (!material) return;
-                for (auto const& warningFill : gState.warningFillSectionMeshes) {
-                    if (!warningFill || !warningFill->isValid()) continue;
-                    warningFill->renderMesh(
+                for (auto const& overlay : meshes) {
+                    if (!overlay || !overlay->isValid()) continue;
+                    overlay->renderMesh(
                         renderContext.getScreenContext(),
                         material,
                         0,
-                        static_cast<uint>(warningFill->getMeshVertexCount()),
+                        static_cast<uint>(overlay->getMeshVertexCount()),
                         renderContext.mOffscreenCaptureDescription.get(),
                         nullptr
                     );
@@ -1114,7 +1283,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                         = blendMaterial->blendStateDescription.get();
                     renderMaterial->mDepthBias = 100.0f;
                     renderMaterial->mSlopeScaledDepthBias = 15.0f;
-                    renderCorrectionFillMeshes(outlineMaterial);
+                    renderOverlayMeshes(gState.warningFillSectionMeshes, outlineMaterial);
                     renderMaterial->mPrimitiveMode = savedPrimitive;
                     renderMaterial->blendStateDescription.get() = savedBlend;
                     renderMaterial->mDepthBias = savedDepthBias;
@@ -1152,7 +1321,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     renderMaterial->mDepthBias = 100.0f;
                     renderMaterial->mSlopeScaledDepthBias = 15.0f;
                 }
-                renderCorrectionFillMeshes(warningMaterial);
+                renderOverlayMeshes(gState.warningFillSectionMeshes, warningMaterial);
             }
             if (outlineMaterial) {
                 for (auto const& correctionOutline : gState.correctionOutlineSectionMeshes) {

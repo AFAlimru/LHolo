@@ -153,11 +153,12 @@ LHolo/Windows/26.20/LHolo/
 渲染与纠错约束：
 
 - 实体模型走原版 `tessellateInWorld()`，并按原版 render layer 分桶。相邻实体方块只在 LHolo 生成网格的线程局部作用域内通过 `BlockSource::getBlock()` 暴露，供门、栅栏等邻居相关模型正确生成；作用域外始终调用原版函数，不改变世界。
-- 当前版本有意不生成普通水和含水层的投影模型。水仍被完整解析并参与纠错，但不会显示水面投影；这是已知限制，不是文件解析失败。
+- 水和岩浆使用贴图 proxy 单元壳，完全由 LHolo 自绘，不与原版世界或区块管线交互：仅 Missing（未放置）状态的液体格绘制半透明截顶外壳，最上层液体格顶面固定为原版源液体高度 8/9（`getHeightFromDepth()` 在 1.26 上对源液体的返回值不可靠，不再使用；逐格流动深度不参与视觉，只参与纠错比较），上方有同液体时侧壁满格；相邻同种液体剔除共享面；UV 取自 `BlockGraphics::getForBlock(liquid)->getTexture(0, 0)` 的 terrain atlas 水/岩浆贴图；水顶点色为原版蓝 #3F76E4（atlas 水贴图无色），岩浆白色顶点色保留贴图原色；alpha 跟随投影透明度；经 `liquidProxySectionMeshes` 独立网格在 alpha pass 用 `mMatBlendBlock` + terrain atlas 提交（与玻璃同路径），按 section 距离排序。静态贴图无波浪动画是已知限制。纯液体格的 Missing 不再叠加蓝色纠错面/描边（proxy 本身即提示），WrongType/WrongState 仍保留红/黄纠错面。`.litematic` 加载时液体路由到 `RenderBlock::liquid` 字段，与 `.mcstructure` 语义一致。
+- `.litematic` 加载时把 `getMaterial().isLiquid()` 的方块路由到 `RenderBlock::liquid` 字段，与 `.mcstructure` 语义一致。
 - 纠错分别比较 `BlockSource::getBlock()` 与 `getLiquidBlock()`。缺少液体判为“未放置”，液体类型错误判为“类型错误”，液体深度等状态不同判为“状态错误”。
 - 投影进度仍以结构坐标计数，而不是把同一坐标的实体层和液体层重复计数。
 
-不要重新引入已经验证失败的“把水交给 `tessellateLiquidInWorld()` 后用普通方块 blend material 提交”方案。1.26 的普通路径与灵动视效路径都对水使用独立的 terrain water 渲染管线；缺少该管线需要的水体元数据、环境参数或正确 pass 时，会表现为未知方块纹理、不可见、过曝或黑块。未来若实现水投影，应接入原版区块水渲染对象或等价的 terrain water pass，并同时验证普通与 Deferred/灵动视效，不能靠猜材质名修补。
+不要重新引入“把水交给 `tessellateLiquidInWorld()` 后自行提交”的方案——该路线已两次证伪：盲提交表现为黑块/过曝，受控版本（Blend 桶 + `mMatBlendBlock` + 顶点色覆写）表现为未知方块纹理，说明其顶点格式/UV 语义与普通方块材质根本不兼容。当前正式方案是世界注入（见 4.2 节）：Hook `BlockSource` 读取路径 + `fireBlockChanged` 触发原版区块重建，让原版 terrain water pass（dragon framebuilder 的 `DeferredWater`/`water::WaterParameters` 组件）自己渲染投影液体。注入语义是“真实空气才填充”，因此不产生碰撞、不覆盖真实方块、放对方块后自动让位；服务器无感知。
 
 ### 4.3 `.litematic`
 
@@ -234,7 +235,7 @@ LHolo 不自制草方块、楼梯等材质模型。它使用：
 
 这样可保留草色、生物群系着色、方块模型和原版纹理。若新版本出现草方块白顶、随机材质或黑块，应先检查 atlas、BlockGraphics、Tessellator 缓存和材质，不要重新引入手写 UV。
 
-本节只描述实体方块模型。水目前仅解析和纠错，不进入这些持久 GPU 网格。
+本节只描述实体方块模型。水和岩浆使用 4.2 节所述的液体 proxy 单元壳（`liquidProxySectionMeshes`），不进入这四种持久 GPU 网格桶，也不调用 `tessellateInWorld()`。
 
 ### 6.2 渲染桶
 
@@ -583,7 +584,7 @@ D:\games\LeviLauncher\MC\versions\1.26.20.04\mods\LHolo
 
 准备固定回归样本：
 
-- 小型 `.mcstructure`：草方块、石头、玻璃板、栅栏、楼梯、门、活塞、观察者、普通水、不同液位，以及至少一个含水方块。水样本用于验证解析与纠错；当前版本不要求显示水面投影。
+- 小型 `.mcstructure`：草方块、石头、玻璃板、栅栏、楼梯、门、活塞、观察者、普通水、岩浆、不同液位，以及至少一个含水方块。水/岩浆样本同时验证 proxy 投影（蓝色水面/橙色岩浆面、液面高度随液位变化、相邻共享面剔除）与纠错。
 - 多区域 `.litematic`：正/负 Size、区域重叠、不同 palette 位宽。
 - 大型结构：至少 10 万方块。
 - 损坏/截断/超大文件。
@@ -677,6 +678,13 @@ D:\games\LeviLauncher\MC\versions\1.26.20.04\mods\LHolo
 
 ### 纠错与渲染
 
+- [ ] 未放置的水显示带原版水贴图的蓝色半透明外壳（无波浪动画，静态贴图为已知限制），岩浆显示原版岩浆贴图。
+- [ ] 玩家穿过投影水/岩浆无任何游戏效果（无伤害、无着火、无声音、无游泳状态）。
+- [ ] 在服务器上使用时服务器日志无异常、无踢出、世界数据无变化。
+- [ ] 液体放对后虚拟水在一小段时间内消失；拆除后虚拟水恢复。
+- [ ] 移动/旋转投影后旧位置虚拟水消失、新位置出现。
+- [ ] 退出世界再进入，虚拟水不残留。
+- [ ] 灵动视效/Deferred 路径下注入水体正常。
 - [ ] 草方块颜色、顶面和侧面与原版一致。
 - [ ] 石头、玻璃、玻璃板、栅栏、楼梯、门等模型正常。
 - [ ] 透明度 100% 与低透明度均无整体黑块。
@@ -702,6 +710,10 @@ D:\games\LeviLauncher\MC\versions\1.26.20.04\mods\LHolo
 - `spgui` 旧菜单命令。
 - 单方块即时 Tessellator、首次黑块预热、单方块射线选中日志。
 - 手写草方块 UV、手动替换材质或只修改顶点 alpha 的早期实验链。
+- 液体 proxy 单元壳（纯色半透明截顶立方体）：已被世界注入方案整体替代并删除。
+- `tessellateLiquidInWorld()` 几何自行提交：盲提交黑块/过曝，受控提交（顶点色覆写 + Blend 桶）未知方块纹理，顶点格式/UV 语义与普通方块材质根本不兼容。
+- 用 `BlockSource::$fireBlockChanged` 触发区块重建：该事件会抵达游戏逻辑监听者（液体流动 tick、燃烧、声音、网络），实测导致投影岩浆/水被流动模拟写成真实方块。渲染失效只能走 `RenderChunkCoordinator::$onAreaChanged`。
+- 世界注入（Hook `BlockSource::getBlock`/`getLiquidBlock` 对读取路径返回投影液体 + `RenderChunkCoordinator::$onAreaChanged` 失效重建）：即使加了线程门和 Level 门，全类读取 Hook 仍无法穷尽区分渲染读者与游戏逻辑读者，且会污染客户端对世界的认知，违背“纯客户端、不修改游戏内容”的产品边界。液体渲染只允许 LHolo 自绘网格方案。
 - 同一位置同时绘制投影模型、纠错外壳和原版 hit-select 的多层共面方案。
 - 通过扩大外壳几何长期规避 Z-fighting；相邻方块会产生新重叠。
 - 未做共享面剔除的每方块完整六面叠加。

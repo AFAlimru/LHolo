@@ -28,11 +28,13 @@
 #include <commdlg.h>
 
 #include "ll/api/mod/NativeMod.h"
+#include "ll/api/service/Bedrock.h"
 #include "imgui.h"
 #include "mc/deps/nbt/CompoundTag.h"
 #include "mc/deps/nbt/IntTag.h"
 #include "mc/deps/nbt/ListTag.h"
 #include "mc/deps/core/string/HashedString.h"
+#include "mc/world/level/Level.h"
 #include "mc/world/level/block/Block.h"
 #include "mc/world/level/block/registry/BlockTypeRegistry.h"
 #include "mc/world/level/material/Material.h"
@@ -597,8 +599,20 @@ std::shared_ptr<LoadedStructure> loadMcstructure(std::filesystem::path const& pa
     // blocks through the active world's palette/unknown-block registry. Calling
     // Block::tryGetFromRegistry() directly skips that official load pipeline and
     // can turn valid legacy states (notably water and doors) into unknown blocks.
-    auto nativeStructure = StructureTemplate::create("lholo:projection", *root);
-    if (!nativeStructure || !nativeStructure->isLoaded()) {
+    // StructureTemplate::create() internally uses ll::service::getLevel(),
+    // which only exists for the integrated (local) server and returns null on
+    // remote server connections. Build the template against the client
+    // multiplayer Level instead; it exists in local worlds and on servers.
+    auto const clientLevel = ll::service::getMultiPlayerLevel();
+    if (!clientLevel) {
+        error = "尚未进入世界，无法解析结构";
+        return nullptr;
+    }
+    auto nativeStructure = std::make_unique<StructureTemplate>(
+        "lholo:projection",
+        clientLevel->getUnknownBlockTypeRegistry()
+    );
+    if (!nativeStructure->load(*root)) {
         error = "原版 StructureTemplate 无法加载该结构";
         return nullptr;
     }
@@ -794,9 +808,18 @@ std::shared_ptr<LoadedStructure> loadLitematic(std::filesystem::path const& path
         auto const remainder = index % yz;
         auto const y = remainder / static_cast<std::uint64_t>(loaded->sizeZ);
         auto const z = remainder % static_cast<std::uint64_t>(loaded->sizeZ);
-        loaded->renderBlocks.push_back({
-            static_cast<int>(x), static_cast<int>(y), static_cast<int>(z), block, nullptr
-        });
+        // Java litematics have no dual block/liquid layers: route liquid
+        // blocks into the liquid slot so both formats share correction and
+        // proxy-rendering semantics.
+        if (block->getMaterial().isLiquid()) {
+            loaded->renderBlocks.push_back({
+                static_cast<int>(x), static_cast<int>(y), static_cast<int>(z), nullptr, block
+            });
+        } else {
+            loaded->renderBlocks.push_back({
+                static_cast<int>(x), static_cast<int>(y), static_cast<int>(z), block, nullptr
+            });
+        }
     }
     std::sort(loaded->renderBlocks.begin(), loaded->renderBlocks.end(), [](auto const& left, auto const& right) {
         return std::tie(left.x, left.y, left.z) < std::tie(right.x, right.y, right.z);
