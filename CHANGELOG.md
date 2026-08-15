@@ -1,5 +1,11 @@
 # Changelog
 
+## [26.20.1] - 2026-08-15
+
+### Fixed
+
+- Restore the OS cursor display counter around the menu lifecycle, preventing an occasionally invisible cursor after closing the menu.
+
 ## [26.20.0] - 2026-08-15
 
 ### Added
