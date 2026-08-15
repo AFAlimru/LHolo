@@ -13,7 +13,7 @@
   },
   "variants": [
     {
-      "label": "",
+      "label": "client",
       "platform": "win-x64",
       "dependencies": {
         "github.com/LiteLDev/LeviLamina#client": "26.20.*"
