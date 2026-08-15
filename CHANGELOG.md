@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- Restore the OS cursor display counter around the menu lifecycle, preventing an occasionally invisible cursor after closing the menu.
+- Fix water and lava projections not rendering.
 
 ## [26.20.0] - 2026-08-15
 
