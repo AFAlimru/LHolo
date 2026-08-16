@@ -16,6 +16,7 @@
 
 #include "structure/StructureLoader.h"
 
+#include "place/PlaceHelper.h"
 #include "plugin/LHolo.h"
 #include "projection/Projection.h"
 
@@ -86,6 +87,7 @@ std::atomic_bool                 gHudShowLayer{true};
 std::atomic_bool                 gHudShowProgress{true};
 std::atomic_bool                 gHudShowWrongState{true};
 std::atomic_bool                 gHudShowWrongType{true};
+std::atomic_bool                 gHudShowBlockEntity{true};
 // 0: left-top, 1: left-bottom (default), 2: right-top, 3: right-bottom.
 std::atomic_int                  gHudPosition{1};
 std::atomic<float>              gUiScale{0.0f};
@@ -1120,7 +1122,8 @@ bool hasHudInfo() {
         && !gHudShowLayer.load(std::memory_order_relaxed)
         && !gHudShowProgress.load(std::memory_order_relaxed)
         && !gHudShowWrongState.load(std::memory_order_relaxed)
-        && !gHudShowWrongType.load(std::memory_order_relaxed)) return false;
+        && !gHudShowWrongType.load(std::memory_order_relaxed)
+        && !gHudShowBlockEntity.load(std::memory_order_relaxed)) return false;
     std::lock_guard lock(gLoadedMutex);
     return static_cast<bool>(gLoaded);
 }
@@ -1133,7 +1136,8 @@ void renderHud() {
     auto const showProgress = gHudShowProgress.load(std::memory_order_relaxed);
     auto const showWrongState = gHudShowWrongState.load(std::memory_order_relaxed);
     auto const showWrongType = gHudShowWrongType.load(std::memory_order_relaxed);
-    if (!showFileName && !showLayer && !showProgress && !showWrongState && !showWrongType) return;
+    auto const showBlockEntity = gHudShowBlockEntity.load(std::memory_order_relaxed);
+    if (!showFileName && !showLayer && !showProgress && !showWrongState && !showWrongType && !showBlockEntity) return;
 
     std::string fileName;
     int maxLayer{};
@@ -1235,6 +1239,14 @@ void renderHud() {
                 );
             }
         }
+        auto const aimedBlockEntity = place::getAimedBlockEntityName();
+        if (showBlockEntity && !aimedBlockEntity.empty()) {
+            ImGui::TextColored(
+                ImVec4(0.55f, 0.85f, 1.0f, 1.0f),
+                "方块实体：%s",
+                aimedBlockEntity.c_str()
+            );
+        }
     }
     ImGui::End();
     ImGui::PopStyleVar(2);
@@ -1287,12 +1299,22 @@ void renderGui() {
             ImGuiWindowFlags_None
         );
         ImGui::SetWindowFontScale(uiScale * 0.5f);
-        ImGui::TextUnformatted("LHolo");
-        ImGui::SameLine();
         auto const closeButtonWidth = 110.0f * uiScale;
+        auto const closeButtonHeight = 42.0f * uiScale;
+        // Larger title, vertically centered against the taller close button.
+        ImGui::SetWindowFontScale(uiScale * 0.9f);
+        float const titleHeight = ImGui::GetTextLineHeight();
+        float const titleOffset = std::max(0.0f, (closeButtonHeight - titleHeight) * 0.5f);
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + titleOffset);
+        ImGui::TextUnformatted("LHolo");
+        ImGui::SetWindowFontScale(uiScale * 0.5f);
+        ImGui::SameLine();
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() - titleOffset);
         ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), panelWidth - closeButtonWidth - 20.0f));
-        if (ImGui::Button("关闭菜单", ImVec2(closeButtonWidth, 0.0f))) open = false;
+        if (ImGui::Button("关闭菜单", ImVec2(closeButtonWidth, closeButtonHeight))) open = false;
+        ImGui::Spacing();
         ImGui::Separator();
+        ImGui::Spacing();
 
         static int activePage = 0;
         static char const* pageNames[]{"投影", "结构变换", "渲染设置", "快捷键", "HUD"};
@@ -1340,7 +1362,7 @@ void renderGui() {
             blockOpeningInput ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_None
         );
         ImGui::SameLine();
-        if (ImGui::Button("浏览...", ImVec2(105.0f * uiScale, 0.0f))) {
+        if (ImGui::Button("浏览", ImVec2(105.0f * uiScale, 0.0f))) {
             if (auto selected = browseStructureFile(pathFromUtf8(pathBuffer))) {
                 auto const value = pathToUtf8(*selected);
                 std::snprintf(pathBuffer, sizeof(pathBuffer), "%s", value.c_str());
@@ -1378,16 +1400,11 @@ void renderGui() {
             projection::disable();
             clear();
         }
+        ImGui::Spacing();
         if (gHasSavedProjection.load(std::memory_order_acquire)) {
             auto const savedX = gSavedAnchorX.load(std::memory_order_relaxed);
             auto const savedY = gSavedAnchorY.load(std::memory_order_relaxed);
             auto const savedZ = gSavedAnchorZ.load(std::memory_order_relaxed);
-            ImGui::TextDisabled(
-                "上次投影原点：X %d  Y %d  Z %d",
-                savedX,
-                savedY,
-                savedZ
-            );
             if (ImGui::Button("恢复上次投影", ImVec2(180.0f * uiScale, 0.0f))) {
                 std::string savedPath;
                 {
@@ -1423,6 +1440,12 @@ void renderGui() {
                     logger().error("Could not restore structure {}: {}", savedPath, error);
                 }
             }
+            ImGui::TextDisabled(
+                "上次投影原点：X %d  Y %d  Z %d",
+                savedX,
+                savedY,
+                savedZ
+            );
         } else {
             ImGui::TextDisabled("没有可恢复的上次投影记录");
         }
@@ -1433,17 +1456,18 @@ void renderGui() {
             gUiScale.store(uiScale, std::memory_order_relaxed);
             saveSettings();
         }
-        auto opacityPercent = static_cast<int>(std::lround(projection::getOpacity() * 100.0f));
-        ImGui::SetNextItemWidth(260.0f * uiScale);
-        if (ImGui::InputInt("投影透明度（范围 0～100）", &opacityPercent, 0, 0)) {
-            opacityPercent = std::clamp(opacityPercent, 0, 100);
-            projection::setOpacity(static_cast<float>(opacityPercent) / 100.0f);
-            saveSettings();
-        }
         auto structureBoundsEnabled = projection::getStructureBoundsEnabled();
         if (ImGui::Checkbox("显示整体结构边框", &structureBoundsEnabled)) {
             projection::setStructureBoundsEnabled(structureBoundsEnabled);
             saveSettings();
+        }
+        auto easyPlaceEnabled = place::isEnabled();
+        if (ImGui::Checkbox("轻松放置（准心对准投影方块自动放置）", &easyPlaceEnabled)) {
+            place::setEnabled(easyPlaceEnabled);
+            saveSettings();
+        }
+        if (easyPlaceEnabled) {
+            ImGui::TextDisabled("自动放置：对准投影的蓝色缺块位置会自动放置");
         }
         }
 
@@ -1466,6 +1490,14 @@ void renderGui() {
         }
 
         if (activePage == 2) {
+        ImGui::SeparatorText("投影样式");
+        auto opacityPercent = static_cast<int>(std::lround(projection::getOpacity() * 100.0f));
+        ImGui::SetNextItemWidth(260.0f * uiScale);
+        if (ImGui::InputInt("投影透明度（范围 0～100）", &opacityPercent, 0, 0)) {
+            opacityPercent = std::clamp(opacityPercent, 0, 100);
+            projection::setOpacity(static_cast<float>(opacityPercent) / 100.0f);
+            saveSettings();
+        }
         ImGui::SeparatorText("分层显示");
         static char const* layerAxisNames[]{"Y 轴（水平分层）", "X 轴（纵向切片）"};
         auto layerAxis = gLayerAxis.load(std::memory_order_relaxed);
@@ -1705,6 +1737,11 @@ void renderGui() {
             gHudShowWrongType.store(showWrongType, std::memory_order_relaxed);
             saveSettings();
         }
+        auto showBlockEntity = gHudShowBlockEntity.load(std::memory_order_relaxed);
+        if (ImGui::Checkbox("显示方块实体名称", &showBlockEntity)) {
+            gHudShowBlockEntity.store(showBlockEntity, std::memory_order_relaxed);
+            saveSettings();
+        }
         ImGui::EndDisabled();
         ImGui::TextDisabled("HUD 仅在关闭投影菜单后显示");
         }
@@ -1757,7 +1794,9 @@ void loadSettings() {
         gHudShowProgress.store(json.value("hudShowProgress", true), std::memory_order_relaxed);
         gHudShowWrongState.store(json.value("hudShowWrongState", true), std::memory_order_relaxed);
         gHudShowWrongType.store(json.value("hudShowWrongType", true), std::memory_order_relaxed);
+        gHudShowBlockEntity.store(json.value("hudShowBlockEntity", true), std::memory_order_relaxed);
         gHudPosition.store(std::clamp(json.value("hudPosition", 1), 0, 3), std::memory_order_relaxed);
+        place::setEnabled(json.value("easyPlaceEnabled", false));
         gGuiHotkey.store(std::clamp(json.value("guiHotkey", static_cast<int>('M')), 0, 255), std::memory_order_relaxed);
         gGuiHotkeyModifiers.store(
             std::clamp(json.value("guiHotkeyModifiers", static_cast<int>(kHotkeyModifierAlt)), 0, 7),
@@ -1859,19 +1898,21 @@ void saveSettings() {
             savedStructurePath = gSavedStructurePath;
         }
         nlohmann::ordered_json const json{
-            {"version", 4},
+            {"version", 5},
             {"lastStructurePath", lastPath},
             {"uiScale", gUiScale.load(std::memory_order_relaxed)},
             {"opacity", projection::getOpacity()},
             {"correctionFillOpacity", projection::getCorrectionFillOpacity()},
             {"correctionOutlineOpacity", projection::getCorrectionOutlineOpacity()},
             {"structureBoundsEnabled", projection::getStructureBoundsEnabled()},
+            {"easyPlaceEnabled", place::isEnabled()},
             {"hudEnabled", gHudEnabled.load(std::memory_order_relaxed)},
             {"hudShowFileName", gHudShowFileName.load(std::memory_order_relaxed)},
             {"hudShowLayer", gHudShowLayer.load(std::memory_order_relaxed)},
             {"hudShowProgress", gHudShowProgress.load(std::memory_order_relaxed)},
             {"hudShowWrongState", gHudShowWrongState.load(std::memory_order_relaxed)},
             {"hudShowWrongType", gHudShowWrongType.load(std::memory_order_relaxed)},
+            {"hudShowBlockEntity", gHudShowBlockEntity.load(std::memory_order_relaxed)},
             {"hudPosition", gHudPosition.load(std::memory_order_relaxed)},
             {"guiHotkey", gGuiHotkey.load(std::memory_order_relaxed)},
             {"guiHotkeyModifiers", gGuiHotkeyModifiers.load(std::memory_order_relaxed)},

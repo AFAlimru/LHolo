@@ -60,9 +60,12 @@ LHolo/Windows/26.20/LHolo/
 │  ├─ structure/
 │  │  ├─ StructureLoader.cpp    两种格式解析、GUI、HUD、快捷键、配置
 │  │  └─ StructureLoader.h      LoadedStructure 统一数据模型
-│  └─ projection/
-│     ├─ Projection.cpp         投影网格、纠错、分区缓存、渲染 Hook
-│     └─ Projection.h           GUI/HUD 使用的投影控制接口
+│  ├─ projection/
+│  │  ├─ Projection.cpp         投影网格、纠错、分区缓存、渲染 Hook
+│  │  └─ Projection.h           GUI/HUD 使用的投影控制接口
+│  └─ place/
+│     ├─ PlaceHelper.cpp        轻松放置：准心定位、投影查表、快捷栏取物、useItemOn 放置
+│     └─ PlaceHelper.h          配置开关与 Hook 生命周期接口
 ├─ manifest.json                Mod Packer 模板
 ├─ xmake.lua                    依赖、编译选项和发布规则
 ├─ DEVELOPMENT.md               本文档
@@ -77,6 +80,7 @@ LHolo/Windows/26.20/LHolo/
 - `structure` 负责“文件和用户意图”，不直接提交 Minecraft 网格。
 - `projection` 负责“结构如何出现在世界中”，不弹文件选择框、不直接操作 ImGui。
 - `overlay` 负责“外部 GUI 如何安全进入游戏图形链”，不解析结构或扫描世界方块。
+- `place` 负责“轻松放置”：只读准心结果、调用 projection 导出接口、取快捷栏物品并走 `GameMode::useItemOn`，不碰渲染与配置。
 - `plugin` 只组织生命周期，不承载业务逻辑。
 
 ---
@@ -88,7 +92,8 @@ LHolo/Windows/26.20/LHolo/
 `LHolo::enable()` 的顺序：
 
 1. 安装投影相关 LeviLamina Hook。
-2. 尝试安装 ImGui/DXGI Hook；图形环境尚未可用时允许后续 `Present` 重试。
+2. 安装轻松放置 `LocalPlayer::tickWorld` Hook（失败仅告警，不阻断）。
+3. 尝试安装 ImGui/DXGI Hook；图形环境尚未可用时允许后续 `Present` 重试。
 
 配置由 `LHolo::load()` 在 enable 之前从 `mods/LHolo/config/config.json` 读取。当前没有单独依赖世界退出事件；投影渲染入口通过 `client/level/dimension` 身份变化检测世界切换，并在上下文失效时调用 `projection::disable()` 等价的状态清理和 `structure::clear()`。
 
@@ -105,8 +110,9 @@ LHolo/Windows/26.20/LHolo/
 
 1. 保存配置。
 2. 清理投影状态和 GPU 网格。
-3. 卸载投影 Hook。
-4. 关闭 ImGui 图形后端、恢复原 WndProc、移除 MinHook。
+3. 卸载轻松放置 Hook。
+4. 卸载投影 Hook。
+5. 关闭 ImGui 图形后端、恢复原 WndProc、移除 MinHook。
 
 ### 3.3 世界切换
 
@@ -477,12 +483,42 @@ WndProc 收到首次 `WM_KEYDOWN + VK_F11`，在消息交回 Minecraft 前：
 - 两个 LoopbackPacketSender 发送路径：本地菜单命令。
 - `LevelRendererPlayer::renderHitSelect`：避免红/黄纠错与原版选中覆盖共面闪烁。
 - `LevelRendererPlayer::$renderBlockEntities`：在原版调用后更新/提交投影。
+- `LocalPlayer::$tickWorld`（`place` 模块）：轻松放置的每 tick 驱动。
 
 新版本最容易变化的是成员函数符号、签名、调用层次和 render pass 时序，必须逐一验证，不能只以“Hook 安装成功”判断适配完成。
 
 ---
 
-## 12. 配置与持久化
+## 12. 轻松放置
+
+### 12.1 行为
+
+菜单“投影”页勾选“轻松放置”后常驻生效：准心指向投影中的蓝色缺块位置（`correctionStates == Missing`）时，自动从快捷栏取对应物品并放置。只放投影期望的方块，液体单元与隐藏层不参与。
+
+### 12.2 实现要点
+
+- 驱动：直接 Hook `LocalPlayer::$tickWorld`，模拟线程每 tick 一次，不使用 LL 事件系统（与全项目 Hook 风格一致）。
+- 定位：不能使用 `Level::getHitResult()`——那是原版射线，只命中真实世界方块，永远看不到 LHolo 自绘的投影幽灵。改为自身体素 DDA（Amanatides & Woo）射线：原点 `Actor::getEyePos()`、方向 `Actor::getViewVector(1.0f)`、上限 `LocalPlayer::getPickRange()`。逐格判定：真实方块挡住射线（此时检查其相机侧邻居是否为待放幽灵），投影 `Missing` 幽灵格直接作为放置目标；支持面用 `BlockPos::neighbor` + `Facing::getOpposite` 选取朝向相机、且为真实方块的邻居。
+- 投影查表：`Projection::queryProjection()`——一次锁 `gStateMutex` 内同时查 `expectedWorldBlocks`（期望块，液体/隐藏层返回 null）与 `expectedWorldBlockIndices`/`correctionStates`（是否 Missing）。DDA 每格只调一次，避免两次独立加锁；命中结果（含期望块指针）随 `ProjectionTarget` 一并返回，`tickEasyPlace` 不再二次查询。
+- 取物：遍历完整背包（36 格）用 `sameItemAndAuxAndBlockData` 匹配。快捷栏命中直接 `Player::setSelectedSlot`；背包命中用 legacy `NormalTransaction`（`ComplexInventoryTransaction::fromType` + 两个 `InventoryAction`）把物品与当前选中格**交换**（服务器同步，不假设目标格为空，避免被 net 管理器回滚）。交换后本 tick 不放置，下一 tick 物品已在选中格、走单包快速路径——同 tick 立即放置会被服务器 net 记账滞后拒绝，再触发格锁反而更慢。服务器只接受选中快捷栏槽位的放置事务。
+- 放置：直接构造 `ItemUseInventoryTransaction`(Place) 经 `IClientInstance::getPacketSender().sendToServer()` 发送（单机走 LoopbackPacketSender，联机走网络发送器），服务器权威落块并保存。**关键细节**（踩坑记录）：
+  - `mPos` 是“被点击的方块”，服务器在 `mPos.neighbor(mFace)` 落块——必须填支撑块 `at`，填目标格会导致偏一格。
+  - `setIncludeNetIds(true)`：服务器栈 net-id 系统按“含 net id”读包，缺此标志流错位、包被静默丢弃（`onTransactionError` 都不会触发）。
+  - `setTargetBlock` / `setSelectedItem` 用导出 setter 填 `mTargetBlockId` / `mItem`，避免未导出的赋值运算符。
+  - 点击点取支撑面中心：`(cell + at)` 的中点。
+  - `GameMode::useItemOn`（客户端）只做本地预测不持久；`Player::sendNetworkPacket` 在单机不送达集成服务器，两条路都不可用。
+- 节流：逐格锁——已放置的格在 `kCellLockMs`（200ms）内不重复发包，等服务器应用 + 纠错扫描更新；新格沿射线立即放置（受 tick 20Hz 上限约束）。发送地板间隔 `kMinSendIntervalMs`（40ms）防异常 tick 率双发。
+- 守卫：开关关闭、未进世界、`isInGameInputEnabled()` 为假（菜单/暂停）或 LHolo 菜单打开时全部跳过。
+
+### 12.3 已知限制
+
+- 服务器只接受快捷栏槽位（`mSlot` 为 0-8）的放置事务：直接指定背包槽会被消耗物品但不落块。背包物品靠 legacy `NormalTransaction` 交换到选中格——单机（客户端托管世界）实测有效；联机服务器是否接受 legacy 背包事务需实测。
+- 直接 `swapSlots`（绕过物品栈请求系统）会被服务器 net 管理器回滚（物品在快捷栏/背包间闪烁），不可用。
+- LeviLamina 26.20 客户端包的 `ItemStackNetManagerClient` / `ItemStackRequest*`（服务器权威物品请求系统）符号均为 `MCNAPI` 未导出（编译期 “This API is not available” 警告、链接期 LNK2019），无法用它做联机安全的跨容器交换。
+
+---
+
+## 13. 配置与持久化
 
 配置路径：
 
@@ -490,7 +526,7 @@ WndProc 收到首次 `WM_KEYDOWN + VK_F11`，在消息交回 Minecraft 前：
 mods/LHolo/config/config.json
 ```
 
-当前配置版本：`4`。
+当前配置版本：`5`。
 
 正式持久化字段：
 
@@ -501,7 +537,8 @@ mods/LHolo/config/config.json
 - `correctionFillOpacity`
 - `correctionOutlineOpacity`
 - `structureBoundsEnabled`
-- HUD 开关、各项显示开关、位置
+- `easyPlaceEnabled`
+- HUD 开关、各项显示开关（含 `hudShowBlockEntity` 方块实体名称）、位置
 - GUI、移动、显示层快捷键与修饰键
 - 上次投影是否存在、文件路径、绝对锚点
 - 上次投影旋转、镜像、偏移、显示模式、显示层和分层轴
@@ -518,9 +555,9 @@ mods/LHolo/config/config.json
 
 ---
 
-## 13. 构建、发布与部署
+## 14. 构建、发布与部署
 
-### 13.1 依赖
+### 14.1 依赖
 
 - Visual Studio 2022 C++ 工具链
 - xmake
@@ -532,7 +569,7 @@ mods/LHolo/config/config.json
 
 编译设置：C++20、MD runtime、UTF-8、警告等级 `/W4`。
 
-### 13.2 干净 Release 构建
+### 14.2 干净 Release 构建
 
 ```powershell
 xmake clean
@@ -550,7 +587,7 @@ bin/LHolo/
 
 不要发布 `build/`、`.exp`、`.lib`、日志、崩溃转储、配置或测试结构文件。
 
-### 13.3 本机部署
+### 14.3 本机部署
 
 测试路径：
 
@@ -562,7 +599,7 @@ D:\games\LeviLauncher\MC\versions\1.26.20.04\mods\LHolo
 
 ---
 
-## 14. 新版本适配流程
+## 15. 新版本适配流程
 
 ### 阶段 A：建立新目录与依赖
 
@@ -640,7 +677,7 @@ D:\games\LeviLauncher\MC\versions\1.26.20.04\mods\LHolo
 
 ---
 
-## 15. 发布前回归矩阵
+## 16. 发布前回归矩阵
 
 ### GUI/输入
 
@@ -702,7 +739,7 @@ D:\games\LeviLauncher\MC\versions\1.26.20.04\mods\LHolo
 
 ---
 
-## 16. 已淘汰方案与禁止回归项
+## 17. 已淘汰方案与禁止回归项
 
 以下路线已验证失败或已被正式架构替代，不应重新引入：
 
@@ -726,7 +763,7 @@ D:\games\LeviLauncher\MC\versions\1.26.20.04\mods\LHolo
 
 ---
 
-## 17. 日志和故障文件
+## 18. 日志和故障文件
 
 测试实例日志：
 

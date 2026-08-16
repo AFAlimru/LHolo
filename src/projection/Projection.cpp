@@ -61,6 +61,7 @@
 #include "mc/network/Packet.h"
 #include "mc/network/packet/TextPacket.h"
 #include "mc/world/actor/Actor.h"
+#include "mc/world/Facing.h"
 #include "mc/world/level/BlockSource.h"
 #include "mc/world/level/block/Block.h"
 #include "mc/world/level/block/BlockRenderLayer.h"
@@ -145,6 +146,7 @@ struct ProjectionState {
     std::vector<std::unique_ptr<mce::Mesh>> warningFillSectionMeshes;
     std::vector<std::unique_ptr<mce::Mesh>> correctionOutlineSectionMeshes;
     std::vector<std::unique_ptr<mce::Mesh>> liquidProxySectionMeshes;
+    std::vector<std::unique_ptr<mce::Mesh>> blockEntityPlaceholderSectionMeshes;
     std::unique_ptr<mce::Mesh>              structureBoundsMesh;
     std::vector<Vec3>              sectionCenters;
     std::vector<bool>              sectionDirty;
@@ -309,6 +311,7 @@ bool enableStructureProjection(
     next.warningFillSectionMeshes.resize(next.sectionBlockIndices.size());
     next.correctionOutlineSectionMeshes.resize(next.sectionBlockIndices.size());
     next.liquidProxySectionMeshes.resize(next.sectionBlockIndices.size());
+    next.blockEntityPlaceholderSectionMeshes.resize(next.sectionBlockIndices.size());
     next.sectionDirty.assign(next.sectionBlockIndices.size(), true);
     if (!resolveTerrainTexture(client, next)) return false;
     if (gPendingStructureAnchor.exchange(false, std::memory_order_acq_rel)) {
@@ -711,7 +714,11 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 BlockPos                      position{};
                 BlockRenderLayer              layer{BlockRenderLayer::RenderlayerOpaque};
                 ProjectionState::RenderBucket bucket{ProjectionState::RenderBucket::Opaque};
+                std::size_t                   structureIndex{};
             };
+            // Blocks whose model produced no geometry during tessellation
+            // (block-entity blocks such as chests and signs) get a placeholder.
+            std::vector<std::size_t> failedTessellationIndices;
             std::vector<LayeredBlock> layeredBlocks;
             layeredBlocks.reserve(gState.sectionBlockIndices[section].size());
             for (auto const index : gState.sectionBlockIndices[section]) {
@@ -741,7 +748,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                         : (transformedBlock->isOpaqueFullBlock()
                             ? BlockRenderLayer::RenderlayerOpaque
                             : BlockRenderLayer::RenderlayerAlphatest);
-                    layeredBlocks.push_back({transformedBlock, position, layer, renderBucketFor(layer)});
+                    layeredBlocks.push_back({transformedBlock, position, layer, renderBucketFor(layer), index});
                 };
                 appendBlock(entry.block);
             }
@@ -781,7 +788,11 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     // Trust the actual mesh delta so those models are retained.
                     auto const geometryAdded =
                         tessellator.mMeshData->mPositions.get().size() > firstPosition;
-                    if (!rendered && !geometryAdded) continue;
+                    if (!rendered && !geometryAdded) {
+                        // No terrain-atlas model: needs a placeholder hull.
+                        failedTessellationIndices.push_back(layered.structureIndex);
+                        continue;
+                    }
                     auto& colors = tessellator.mMeshData->mColors.get();
                     auto const alpha = static_cast<uint>(std::lround(
                         std::clamp(structureOpacity, 0.05f, 1.0f) * 255.0f
@@ -911,6 +922,96 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 ));
             } else {
                 gState.liquidProxySectionMeshes[section].reset();
+            }
+
+            // Blocks that tessellated to nothing (block-entity blocks such as
+            // chests and signs) get a textured placeholder hull from their
+            // BlockGraphics tile so the projection still shows them. Blocks
+            // that render normally (hoppers, beds, ...) are left untouched.
+            std::vector<std::size_t> blockEntityIndices;
+            for (auto const index : failedTessellationIndices) {
+                if (gState.correctionStates[index] != ProjectionState::CorrectionState::Missing) continue;
+                blockEntityIndices.push_back(index);
+            }
+            if (!blockEntityIndices.empty()) {
+                tessellator.begin(
+                    Tessellator::DebugContextCallback{},
+                    mce::PrimitiveMode::QuadList,
+                    static_cast<int>(blockEntityIndices.size() * 24),
+                    false
+                );
+                auto const alpha = static_cast<uint>(std::lround(
+                    std::clamp(structureOpacity, 0.05f, 1.0f) * 255.0f
+                ));
+                auto const tint = 0x00FFFFFFU | (alpha << 24U);
+                for (auto const index : blockEntityIndices) {
+                    auto const& entry = gState.structure->renderBlocks[index];
+                    auto const* expectedBlock = transformExpectedBlock(entry.block, rotation, mirror);
+                    if (!expectedBlock) continue;
+                    auto const* graphics = BlockGraphics::getForBlock(*expectedBlock);
+                    auto const* uvSet = graphics ? &graphics->getTexture(0, 0) : nullptr;
+                    auto const p = transformStructurePosition(entry, *gState.structure, mirrorMode, rotationTurns);
+                    // Signs are thin planks, not full cubes.
+                    bool const isSign = expectedBlock->getTypeName().find("sign") != std::string::npos;
+                    // Facing (FacingDirection state: North=2 South=3 West=4 East=5)
+                    // decides which cube face is the block's front.
+                    int frontFace = -1;
+                    if (auto const facing = expectedBlock->getState<int>(VanillaStates::FacingDirection())) {
+                        frontFace = *facing;
+                    }
+                    float const px = static_cast<float>(p.x);
+                    float const py = static_cast<float>(p.y);
+                    float const pz = static_cast<float>(p.z);
+                    float x0 = px, y0 = py, z0 = pz;
+                    float x1 = px + 1.0f, y1 = py + 1.0f, z1 = pz + 1.0f;
+                    if (isSign) {
+                        // Thin plank, 0.125 thick along the facing axis.
+                        float const mid = (frontFace == static_cast<int>(Facing::Name::West)
+                            || frontFace == static_cast<int>(Facing::Name::East))
+                            ? px + 0.5f : pz + 0.5f;
+                        if (frontFace == static_cast<int>(Facing::Name::West)
+                            || frontFace == static_cast<int>(Facing::Name::East)) {
+                            x0 = mid - 0.0625f;
+                            x1 = mid + 0.0625f;
+                        } else {
+                            z0 = mid - 0.0625f;
+                            z1 = mid + 0.0625f;
+                        }
+                    }
+                    float const u0 = uvSet ? uvSet->_u0 : 0.0f;
+                    float const v0 = uvSet ? uvSet->_v0 : 0.0f;
+                    float const u1 = uvSet ? uvSet->_u1 : 0.0f;
+                    float const v1 = uvSet ? uvSet->_v1 : 0.0f;
+                    auto const frontColor = tint;
+                    auto const dimColor = (0x00888888U & 0x00FFFFFFU) | (alpha << 24U);
+                    auto addFace = [&](
+                        Vec3 const& a, Vec3 const& b, Vec3 const& c, Vec3 const& d, bool isFront
+                    ) {
+                        auto const color = isFront ? frontColor : dimColor;
+                        tessellator.colorABGR(static_cast<int>(color));
+                        tessellator.vertexUV(a.x, a.y, a.z, u0, v0);
+                        tessellator.vertexUV(b.x, b.y, b.z, u0, v1);
+                        tessellator.vertexUV(c.x, c.y, c.z, u1, v1);
+                        tessellator.vertexUV(d.x, d.y, d.z, u1, v0);
+                    };
+                    bool const northFront = frontFace == static_cast<int>(Facing::Name::North);
+                    bool const southFront = frontFace == static_cast<int>(Facing::Name::South);
+                    bool const westFront = frontFace == static_cast<int>(Facing::Name::West);
+                    bool const eastFront = frontFace == static_cast<int>(Facing::Name::East);
+                    addFace({x0,y0,z1}, {x0,y0,z0}, {x1,y0,z0}, {x1,y0,z1}, false); // bottom
+                    addFace({x0,y1,z0}, {x0,y1,z1}, {x1,y1,z1}, {x1,y1,z0}, false); // top
+                    addFace({x0,y0,z0}, {x0,y1,z0}, {x1,y1,z0}, {x1,y0,z0}, northFront); // north
+                    addFace({x1,y0,z1}, {x1,y1,z1}, {x0,y1,z1}, {x0,y0,z1}, southFront); // south
+                    addFace({x0,y0,z1}, {x0,y1,z1}, {x0,y1,z0}, {x0,y0,z0}, westFront); // west
+                    addFace({x1,y0,z0}, {x1,y1,z0}, {x1,y1,z1}, {x1,y0,z1}, eastFront); // east
+                }
+                gState.blockEntityPlaceholderSectionMeshes[section] = std::make_unique<mce::Mesh>(tessellator.end(
+                    Tessellator::UploadMode::Buffered,
+                    "LHoloBlockEntityPlaceholder",
+                    Tessellator::SupplementaryFieldAutoGenerationMode::None
+                ));
+            } else {
+                gState.blockEntityPlaceholderSectionMeshes[section].reset();
             }
 
             // Missing and error markers now both use complete-cell shells.
@@ -1237,6 +1338,20 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                         *gState.terrainTextureVariant,
                         0,
                         static_cast<uint>(mesh.getMeshVertexCount()),
+                        renderContext.mOffscreenCaptureDescription.get(),
+                        nullptr
+                    );
+                }
+
+                // Textured placeholder hulls for block-entity blocks.
+                for (auto const& placeholder : gState.blockEntityPlaceholderSectionMeshes) {
+                    if (!placeholder || !placeholder->isValid()) continue;
+                    placeholder->renderMesh(
+                        renderContext.getScreenContext(),
+                        blendMaterial,
+                        *gState.terrainTextureVariant,
+                        0,
+                        static_cast<uint>(placeholder->getMeshVertexCount()),
                         renderContext.mOffscreenCaptureDescription.get(),
                         nullptr
                     );
@@ -1581,6 +1696,21 @@ BuildProgress getBuildProgress() {
     if (result.wrongType > result.total) result.wrongType = result.total;
     if (result.wrongState > result.total) result.wrongState = result.total;
     return result;
+}
+
+ProjectionQuery queryProjection(BlockPos const& worldPos) {
+    std::lock_guard lock(gStateMutex);
+    if (!gState.enabled || !gState.structure) return {nullptr, false};
+    auto const key = std::tuple{worldPos.x, worldPos.y, worldPos.z};
+    auto const foundIndex = gState.expectedWorldBlockIndices.find(key);
+    if (foundIndex == gState.expectedWorldBlockIndices.end()) return {nullptr, false};
+    auto const foundBlock = gState.expectedWorldBlocks.find(key);
+    Block const* block = foundBlock == gState.expectedWorldBlocks.end() ? nullptr : foundBlock->second;
+    // Liquids have no normal block item, so they are never a valid place target.
+    if (block && block->getMaterial().isLiquid()) block = nullptr;
+    bool const missing = gState.correctionStates[foundIndex->second]
+        == ProjectionState::CorrectionState::Missing;
+    return {block, missing};
 }
 
 } // namespace lholo::projection

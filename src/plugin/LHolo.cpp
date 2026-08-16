@@ -16,6 +16,7 @@
 
 #include "plugin/LHolo.h"
 
+#include "place/PlaceHelper.h"
 #include "projection/Projection.h"
 #include "overlay/ImGuiOverlay.h"
 #include "structure/StructureLoader.h"
@@ -45,6 +46,10 @@ bool LHolo::enable() {
         return false;
     }
 
+    if (!place::installHook()) {
+        mSelf.getLogger().warn("Failed to install easy-place hooks");
+    }
+
     if (!overlay::ensureInstalled()) {
         mSelf.getLogger().warn("GUI overlay hotkey hooks are not ready; lholo will retry initialization");
     }
@@ -56,6 +61,7 @@ bool LHolo::enable() {
 bool LHolo::disable() {
     structure::saveSettings();
     projection::disable();
+    place::uninstallHook();
     overlay::shutdown();
     structure::clear();
     projection::uninstallHook();

@@ -18,6 +18,9 @@
 
 #include <cstdint>
 
+class Block;
+class BlockPos;
+
 namespace lholo::projection {
 
 struct BuildProgress {
@@ -41,5 +44,15 @@ bool getStructureBoundsEnabled();
 void setStructureBoundsEnabled(bool enabled);
 void requestNextStructureAnchor(int x, int y, int z);
 BuildProgress getBuildProgress();
+
+// Easy-place support: query the currently projected virtual world in a single
+// locked lookup.
+struct ProjectionQuery {
+    Block const* block;   // transformed expected block, or nullptr when the
+                          // position is not a placeable projection target
+                          // (liquid-only cells and hidden layers excluded)
+    bool missing;         // correction state is Missing, i.e. worth placing
+};
+ProjectionQuery queryProjection(BlockPos const& worldPos);
 
 } // namespace lholo::projection
