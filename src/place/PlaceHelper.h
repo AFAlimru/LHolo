@@ -22,6 +22,12 @@ namespace lholo::place {
 
 void setEnabled(bool enabled);
 bool isEnabled();
+// Range placement: auto-place missing projection cells within a radius of the
+// player (still bounded by the player's actual placement reach).
+void setRangeEnabled(bool enabled);
+bool isRangeEnabled();
+void setPlacementRadius(int radius);
+int  getPlacementRadius();
 // Name of the block-entity block (chest, sign, hopper, ...) the crosshair
 // points at, for the HUD to identify projected placeholder boxes.
 std::string getAimedBlockEntityName();

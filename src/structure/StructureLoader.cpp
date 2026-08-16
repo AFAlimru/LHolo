@@ -1466,6 +1466,17 @@ void renderGui() {
             place::setEnabled(easyPlaceEnabled);
             saveSettings();
         }
+        auto rangeEnabled = place::isRangeEnabled();
+        if (ImGui::Checkbox("范围放置（自动放置周围投影缺块）", &rangeEnabled)) {
+            place::setRangeEnabled(rangeEnabled);
+            saveSettings();
+        }
+        auto placementRadius = place::getPlacementRadius();
+        ImGui::SetNextItemWidth(260.0f * uiScale);
+        if (ImGui::SliderInt("放置半径（范围 1～4）", &placementRadius, 1, 4)) {
+            place::setPlacementRadius(placementRadius);
+            saveSettings();
+        }
         }
 
         if (activePage == 1) {
@@ -1794,6 +1805,8 @@ void loadSettings() {
         gHudShowBlockEntity.store(json.value("hudShowBlockEntity", true), std::memory_order_relaxed);
         gHudPosition.store(std::clamp(json.value("hudPosition", 1), 0, 3), std::memory_order_relaxed);
         place::setEnabled(json.value("easyPlaceEnabled", false));
+        place::setRangeEnabled(json.value("rangePlaceEnabled", false));
+        place::setPlacementRadius(std::clamp(json.value("placementRadius", 4), 1, 4));
         gGuiHotkey.store(std::clamp(json.value("guiHotkey", static_cast<int>('M')), 0, 255), std::memory_order_relaxed);
         gGuiHotkeyModifiers.store(
             std::clamp(json.value("guiHotkeyModifiers", static_cast<int>(kHotkeyModifierAlt)), 0, 7),
@@ -1895,7 +1908,7 @@ void saveSettings() {
             savedStructurePath = gSavedStructurePath;
         }
         nlohmann::ordered_json const json{
-            {"version", 5},
+            {"version", 6},
             {"lastStructurePath", lastPath},
             {"uiScale", gUiScale.load(std::memory_order_relaxed)},
             {"opacity", projection::getOpacity()},
@@ -1903,6 +1916,8 @@ void saveSettings() {
             {"correctionOutlineOpacity", projection::getCorrectionOutlineOpacity()},
             {"structureBoundsEnabled", projection::getStructureBoundsEnabled()},
             {"easyPlaceEnabled", place::isEnabled()},
+            {"rangePlaceEnabled", place::isRangeEnabled()},
+            {"placementRadius", place::getPlacementRadius()},
             {"hudEnabled", gHudEnabled.load(std::memory_order_relaxed)},
             {"hudShowFileName", gHudShowFileName.load(std::memory_order_relaxed)},
             {"hudShowLayer", gHudShowLayer.load(std::memory_order_relaxed)},

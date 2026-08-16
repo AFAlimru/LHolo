@@ -526,7 +526,7 @@ WndProc 收到首次 `WM_KEYDOWN + VK_F11`，在消息交回 Minecraft 前：
 mods/LHolo/config/config.json
 ```
 
-当前配置版本：`5`。
+当前配置版本：`6`。
 
 正式持久化字段：
 
@@ -538,6 +538,8 @@ mods/LHolo/config/config.json
 - `correctionOutlineOpacity`
 - `structureBoundsEnabled`
 - `easyPlaceEnabled`
+- `rangePlaceEnabled`
+- `placementRadius`
 - HUD 开关、各项显示开关（含 `hudShowBlockEntity` 方块实体名称）、位置
 - GUI、移动、显示层快捷键与修饰键
 - 上次投影是否存在、文件路径、绝对锚点

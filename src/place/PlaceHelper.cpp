@@ -49,6 +49,7 @@
 
 #include <Windows.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -75,6 +76,10 @@ constexpr std::uint64_t kMinSendIntervalMs = 40;
 constexpr std::uint64_t kSwapRetryMs = 200;
 
 std::atomic_bool gEnabled{false};
+std::atomic_bool gRangeEnabled{false};
+// Scan radius for range placement (blocks). Actual placement still respects
+// the player's reach.
+std::atomic_int gPlacementRadius{4};
 std::atomic_uint64_t gNextPlaceAt{0};
 std::optional<BlockPos> gLastPlaceCell;
 std::atomic_uint64_t gLastPlaceAt{0};
@@ -141,6 +146,49 @@ struct ProjectionTarget {
     Block const* block;
 };
 
+// Which face of a cell points most along the given (unit) direction.
+uchar faceToward(Vec3 const& v) {
+    float const absX = std::abs(v.x);
+    float const absY = std::abs(v.y);
+    float const absZ = std::abs(v.z);
+    if (absX >= absY && absX >= absZ) {
+        return v.x > 0 ? static_cast<uchar>(Facing::Name::East) : static_cast<uchar>(Facing::Name::West);
+    }
+    if (absY >= absZ) {
+        return v.y > 0 ? static_cast<uchar>(Facing::Name::Up) : static_cast<uchar>(Facing::Name::Down);
+    }
+    return v.z > 0 ? static_cast<uchar>(Facing::Name::South) : static_cast<uchar>(Facing::Name::North);
+}
+
+// Shared by easy-place and range placement: pick the placement target for a
+// ghost `cell` given the approach direction (unit vector from the player
+// toward the cell). Prefers a real, non-air neighbor as the support; when none
+// exists it falls back to pointing mPos at the ghost cell itself (the server
+// places at an air mPos).
+ProjectionTarget selectPlacementTarget(BlockSource& region, BlockPos const& cell, Vec3 const& approachDir, Block const* block) {
+    uchar bestFace = std::numeric_limits<uchar>::max();
+    float bestScore = std::numeric_limits<float>::lowest();
+    for (uchar face = 0; face < 6; ++face) {
+        BlockPos const at = cell.neighbor(face);
+        if (region.getBlock(at).isAir()) continue;
+        float const offX = static_cast<float>(at.x - cell.x);
+        float const offY = static_cast<float>(at.y - cell.y);
+        float const offZ = static_cast<float>(at.z - cell.z);
+        float const score = -(offX * approachDir.x + offY * approachDir.y + offZ * approachDir.z);
+        if (score > bestScore) {
+            bestScore = score;
+            bestFace = face;
+        }
+    }
+    if (bestFace == std::numeric_limits<uchar>::max()) {
+        // No real support nearby. The server places the block AT an air mPos
+        // (instead of mPos.neighbor(mFace) for a solid mPos), so point mPos at
+        // the ghost cell itself to make the block land there.
+        return ProjectionTarget{cell, cell, Facing::getOpposite(faceToward({-approachDir.x, -approachDir.y, -approachDir.z})), block};
+    }
+    return ProjectionTarget{cell, cell.neighbor(bestFace), Facing::getOpposite(bestFace), block};
+}
+
 // Voxel raycast (Amanatides & Woo) against the real world plus the projection's
 // virtual grid. The vanilla crosshair hit result never sees LHolo's drawn ghost
 // blocks, so the ray is traced manually: real blocks block it, projected
@@ -204,35 +252,9 @@ std::optional<ProjectionTarget> findProjectionTarget(
         auto const query = projection::queryProjection(cell);
         if (!query.block || !query.missing) continue;
 
-        // The ghost itself is the target. Choose a real, non-air neighbor as
-        // the placement support, preferring the one most facing the camera.
-        uchar bestFace = std::numeric_limits<uchar>::max();
-        float bestScore = std::numeric_limits<float>::lowest();
-        for (uchar face = 0; face < 6; ++face) {
-            BlockPos const at = cell.neighbor(face);
-            if (region.getBlock(at).isAir()) continue;
-            float const offX = static_cast<float>(at.x - cell.x);
-            float const offY = static_cast<float>(at.y - cell.y);
-            float const offZ = static_cast<float>(at.z - cell.z);
-            float const score = -(offX * dir.x + offY * dir.y + offZ * dir.z);
-            if (score > bestScore) {
-                bestScore = score;
-                bestFace = face;
-            }
-        }
-        if (bestFace == std::numeric_limits<uchar>::max()) {
-            // No real support nearby. The server places the block AT an air
-            // mPos (instead of mPos.neighbor(mFace) for a solid mPos), so point
-            // mPos at the ghost cell itself to make the block land there.
-            return ProjectionTarget{
-                cell,
-                cell,
-                Facing::getOpposite(entryFace),
-                query.block
-            };
-        }
-
-        return ProjectionTarget{cell, cell.neighbor(bestFace), Facing::getOpposite(bestFace), query.block};
+        // The ghost itself is the target; reuse the shared support selection
+        // (real neighbor preferred, air-mPos fallback when floating).
+        return selectPlacementTarget(region, cell, dir, query.block);
     }
     return std::nullopt;
 }
@@ -291,6 +313,58 @@ void placeBlock(LocalPlayer& player, ProjectionTarget const& target, int slot, I
     gNextPlaceAt.store(GetTickCount64() + kMinSendIntervalMs, std::memory_order_release);
 }
 
+void tickRangePlace(LocalPlayer& player) {
+    auto const now = GetTickCount64();
+    Vec3 const center = player.getPosition();
+    float const radius = static_cast<float>(gPlacementRadius.load(std::memory_order_relaxed));
+    auto& region = player.getDimensionBlockSource();
+
+    auto candidates = projection::queryMissingCellsInRange(center, radius);
+    for (auto const& cand : candidates) {
+        BlockPos const cell{cand.x, cand.y, cand.z};
+        Vec3 const toCell{
+            static_cast<float>(cell.x) + 0.5f - center.x,
+            static_cast<float>(cell.y) + 0.5f - center.y,
+            static_cast<float>(cell.z) + 0.5f - center.z
+        };
+
+        // Per-cell lock: the server needs a moment to apply the placement and
+        // the correction scan needs a moment to mark the cell Correct.
+        if (gLastPlaceCell && *gLastPlaceCell == cell
+            && now - gLastPlaceAt.load(std::memory_order_acquire) < kCellLockMs) {
+            continue;
+        }
+
+        // Reuse the easy-place placement chain: shared support selection (with
+        // air-mPos fallback), item lookup, swap, and server transaction.
+        float const dist = std::sqrt(toCell.x * toCell.x + toCell.y * toCell.y + toCell.z * toCell.z);
+        if (dist <= 0.0f) continue;
+        Vec3 const approachDir{toCell.x / dist, toCell.y / dist, toCell.z / dist};
+        auto const target = selectPlacementTarget(region, cell, approachDir, cand.block);
+
+        ItemStack const want(*cand.block, 1, nullptr);
+        auto const found = findItemSlot(player, want);
+        if (found.slot < 0) continue;
+
+        if (found.slot >= kHotbarSlots) {
+            // Back off a rejected swap; see sendInventorySwap and the same
+            // logic in tickEasyPlace.
+            if (now < gNextSwapAt.load(std::memory_order_acquire)) continue;
+            auto& inventory = player.getInventory();
+            int const hotbarSlot = player.getSelectedItemSlot();
+            auto const& toItem = inventory.getItem(hotbarSlot);
+            sendInventorySwap(player, found.slot, hotbarSlot, *found.item, toItem);
+            gNextSwapAt.store(now + kSwapRetryMs, std::memory_order_release);
+            return;
+        }
+        player.setSelectedSlot(found.slot);
+        gLastPlaceCell = cell;
+        gLastPlaceAt.store(now, std::memory_order_release);
+        placeBlock(player, target, found.slot, *found.item);
+        return;
+    }
+}
+
 void tickEasyPlace() {
     auto client = ll::service::getClientInstance();
     if (!client) {
@@ -323,8 +397,18 @@ void tickEasyPlace() {
     // Keep the HUD informed even when easy-place is disabled.
     updateAimedBlockEntityName(target ? target->block : nullptr);
 
-    if (!gEnabled.load(std::memory_order_acquire)) return;
+    if (!gEnabled.load(std::memory_order_acquire)
+        && !gRangeEnabled.load(std::memory_order_acquire)) {
+        return;
+    }
     if (GetTickCount64() < gNextPlaceAt.load(std::memory_order_acquire)) return;
+
+    // Range placement scans everything within the configured radius; it takes
+    // precedence over the single-target easy-place when both are on.
+    if (gRangeEnabled.load(std::memory_order_acquire)) {
+        tickRangePlace(*player);
+        return;
+    }
     if (!target) return;
 
     // Per-cell lock: the server needs a moment to apply the placement and the
@@ -390,6 +474,27 @@ void setEnabled(bool enabled) {
 
 bool isEnabled() {
     return gEnabled.load(std::memory_order_acquire);
+}
+
+void setRangeEnabled(bool enabled) {
+    if (enabled) {
+        logger().info("Range placement enabled (radius {})", gPlacementRadius.load(std::memory_order_relaxed));
+    } else {
+        logger().info("Range placement disabled");
+    }
+    gRangeEnabled.store(enabled, std::memory_order_release);
+}
+
+bool isRangeEnabled() {
+    return gRangeEnabled.load(std::memory_order_acquire);
+}
+
+void setPlacementRadius(int radius) {
+    gPlacementRadius.store(std::clamp(radius, 1, 4), std::memory_order_release);
+}
+
+int getPlacementRadius() {
+    return gPlacementRadius.load(std::memory_order_relaxed);
 }
 
 std::string getAimedBlockEntityName() {
