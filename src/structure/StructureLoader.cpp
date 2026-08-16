@@ -1466,9 +1466,6 @@ void renderGui() {
             place::setEnabled(easyPlaceEnabled);
             saveSettings();
         }
-        if (easyPlaceEnabled) {
-            ImGui::TextDisabled("自动放置：对准投影的蓝色缺块位置会自动放置");
-        }
         }
 
         if (activePage == 1) {
