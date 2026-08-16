@@ -67,13 +67,13 @@ constexpr int kInventorySlots = 36;
 // A cell that was just placed must not be re-targeted until the server applies
 // it and the correction scan catches up. This window prevents hammering one
 // cell; new cells along the ray are placed immediately (bounded by the tick).
-constexpr std::uint64_t kCellLockMs = 200;
+constexpr std::uint64_t kCellLockMs = 500;
 // Safety floor between any two placements. The tick hook already runs at 20 Hz,
 // so this just guards against double-sends on unusual tick rates.
 constexpr std::uint64_t kMinSendIntervalMs = 40;
 // Backoff for a rejected inventory swap. Without it a failed swap retries every
 // tick and spams the server.
-constexpr std::uint64_t kSwapRetryMs = 200;
+constexpr std::uint64_t kSwapRetryMs = 50;
 
 std::atomic_bool gEnabled{false};
 std::atomic_bool gRangeEnabled{false};

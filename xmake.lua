@@ -26,7 +26,7 @@ end
 
 target("LHolo")
     add_rules("@levibuildscript/linkrule")
-    add_rules("@levibuildscript/modpacker", {modVersion = "26.20.2"})
+    add_rules("@levibuildscript/modpacker", {modVersion = "26.20.3"})
     add_cxflags(
         "/utf-8",
         "/W4",
