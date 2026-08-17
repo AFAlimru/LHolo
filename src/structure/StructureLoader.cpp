@@ -30,7 +30,9 @@
 #include <cstring>
 #include <cwctype>
 #include <fstream>
+#include <iterator>
 #include <limits>
+#include <map>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -52,12 +54,20 @@
 #include "mc/deps/nbt/IntTag.h"
 #include "mc/deps/nbt/ListTag.h"
 #include "mc/deps/core/string/HashedString.h"
+#include "mc/client/game/ClientInstance.h"
+#include "mc/client/game/IClientInstance.h"
+#include "mc/client/player/LocalPlayer.h"
+#include "mc/world/item/ItemStack.h"
+#include "mc/world/item/Item.h"
+#include "mc/world/item/registry/ItemRegistry.h"
+#include "mc/world/item/registry/ItemRegistryManager.h"
 #include "mc/world/level/Level.h"
 #include "mc/world/level/block/Block.h"
 #include "mc/world/level/block/registry/BlockTypeRegistry.h"
 #include "mc/world/level/material/Material.h"
 #include "mc/world/level/levelgen/structure/StructureBlockPalette.h"
 #include "mc/world/level/levelgen/structure/StructureTemplate.h"
+#include "mc/locale/I18n.h"
 
 namespace lholo::structure {
 namespace {
@@ -67,6 +77,7 @@ constexpr std::size_t    kMaximumInflatedFileSize  = 1024ull * 1024ull * 1024ull
 constexpr unsigned int   kHotkeyModifierControl    = 1u;
 constexpr unsigned int   kHotkeyModifierAlt        = 2u;
 constexpr unsigned int   kHotkeyModifierShift      = 4u;
+constexpr char           kMaterialPopupName[]       = "材料清单###LHoloMaterialList";
 
 std::atomic_bool                 gGuiVisible{false};
 std::atomic_int                  gOpeningInputBlockFrames{0};
@@ -140,9 +151,96 @@ std::atomic_int                  gSavedLayerAxis{0};
 std::string                      gSavedStructurePath;
 std::string                      gLastPath;
 std::string                      gStatus = "尚未加载结构文件";
+std::mutex                       gMaterialMutex;
+std::atomic_bool                 gMaterialListRequested{false};
+
+struct MaterialRequirement {
+    std::string displayName;
+    std::string typeName;
+    std::uint64_t count{};
+};
+
+std::vector<MaterialRequirement> gMaterialRequirements;
 
 int maxLayerFor(LoadedStructure const& structure, int axis) {
     return std::max(0, (axis == 1 ? structure.sizeX : structure.sizeY) - 1);
+}
+
+std::string localizedBlockName(Block const& block, std::string_view localeCode) {
+    auto const& typeName = block.getTypeName();
+    auto const itemId = ItemRegistry::getBlockItemId(block);
+    auto const item = ItemRegistryManager::getItemRegistry().getItem(itemId);
+    if (auto* itemPtr = item.get()) {
+        ItemStack const itemStack(*itemPtr, 1, 0, nullptr);
+        auto const name = itemStack.getName();
+        if (!name.empty() && name != typeName) return name;
+    }
+
+    auto const translationKey = block.buildDescriptionName();
+    if (!translationKey.empty()) {
+        auto& i18n = ::getI18n();
+        auto locale = localeCode.empty()
+            ? i18n.getCurrentLanguage().get()
+            : i18n.getLocaleFor(std::string{localeCode});
+        if (locale) {
+            auto const localized = i18n.get(
+                translationKey,
+                std::vector<std::string>{},
+                locale
+            );
+            if (!localized.empty() && localized != translationKey) return localized;
+        }
+    }
+
+    auto name = block.getDisplayName();
+    if (name.empty()) name = typeName;
+    return name;
+}
+
+std::vector<MaterialRequirement> collectMaterials(
+    std::vector<LoadedStructure::RenderBlock> const& renderBlocks,
+    std::string_view localeCode
+) {
+    std::map<std::string, MaterialRequirement> byType;
+    std::map<std::string, MaterialRequirement> byLiquidType;
+    auto aggregate = [&](auto& destination, Block const* block) {
+        if (!block) return;
+
+        auto const& typeName = block->getTypeName();
+        auto [it, inserted] = destination.try_emplace(typeName);
+        if (inserted) {
+            it->second.displayName = localizedBlockName(*block, localeCode);
+            it->second.typeName = typeName;
+        }
+        if (it->second.count != std::numeric_limits<std::uint64_t>::max()) {
+            ++it->second.count;
+        }
+    };
+
+    for (auto const& entry : renderBlocks) {
+        aggregate(byType, entry.block);
+        aggregate(byLiquidType, entry.liquid);
+    }
+
+    std::vector<MaterialRequirement> materials;
+    auto appendSorted = [&materials](auto& source) {
+        std::vector<MaterialRequirement> sorted;
+        sorted.reserve(source.size());
+        for (auto& entry : source) sorted.push_back(std::move(entry.second));
+        std::sort(sorted.begin(), sorted.end(), [](auto const& left, auto const& right) {
+            if (left.count != right.count) return left.count > right.count;
+            return left.typeName < right.typeName;
+        });
+        materials.insert(
+            materials.end(),
+            std::make_move_iterator(sorted.begin()),
+            std::make_move_iterator(sorted.end())
+        );
+    };
+    materials.reserve(byType.size() + byLiquidType.size());
+    appendSorted(byType);
+    appendSorted(byLiquidType);
+    return materials;
 }
 
 auto& logger() {
@@ -696,7 +794,6 @@ std::shared_ptr<LoadedStructure> loadMcstructure(std::filesystem::path const& pa
     }
     loaded->generation = gGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
     loaded->sourcePath = path;
-    loaded->rootTag = std::make_unique<CompoundTag>(std::move(*root));
     return loaded;
 }
 
@@ -879,6 +976,26 @@ std::string makeStatus(LoadedStructure const& loaded) {
 }
 
 } // namespace
+
+void requestMaterialList() {
+    gMaterialListRequested.store(true, std::memory_order_release);
+}
+
+void processPendingMaterialList() {
+    if (!gMaterialListRequested.exchange(false, std::memory_order_acq_rel)) return;
+
+    auto const loaded = getLoaded();
+    std::string localeCode;
+    if (auto client = ll::service::getClientInstance()) {
+        if (auto* player = client->getLocalPlayer()) localeCode = player->getLocaleCode();
+    }
+
+    std::vector<MaterialRequirement> materials;
+    if (loaded) materials = collectMaterials(loaded->renderBlocks, localeCode);
+
+    std::lock_guard lock(gMaterialMutex);
+    gMaterialRequirements = std::move(materials);
+}
 
 void requestOpenGui() {
     auto const opening = !gGuiVisible.load(std::memory_order_acquire);
@@ -1259,6 +1376,82 @@ void renderHud() {
     ImGui::PopStyleVar(2);
 }
 
+void renderMaterialPopup(float uiScale) {
+    bool popupOpen = true;
+    if (!ImGui::BeginPopupModal(
+            kMaterialPopupName,
+            &popupOpen,
+            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize
+        )) {
+        return;
+    }
+
+    ImGui::SetWindowFontScale(uiScale * 0.5f);
+    auto const loaded = getLoaded();
+    if (!loaded) {
+        ImGui::TextDisabled("尚未加载结构文件");
+    } else {
+        std::lock_guard materialLock(gMaterialMutex);
+        std::uint64_t total{};
+        for (auto const& material : gMaterialRequirements) {
+            if (std::numeric_limits<std::uint64_t>::max() - total < material.count) {
+                total = std::numeric_limits<std::uint64_t>::max();
+                break;
+            }
+            total += material.count;
+        }
+        ImGui::Text(
+            "共 %llu 个方块，%zu 种材料",
+            static_cast<unsigned long long>(total),
+            gMaterialRequirements.size()
+        );
+        ImGui::Separator();
+        if (ImGui::BeginChild(
+                "##LHoloMaterialList",
+                ImVec2(760.0f * uiScale, 360.0f * uiScale),
+                true,
+                ImGuiWindowFlags_None
+            )) {
+            if (gMaterialRequirements.empty()) {
+                ImGui::TextDisabled("没有可直接放置的实体方块");
+            } else if (ImGui::BeginTable(
+                           "##LHoloMaterialTable",
+                           3,
+                           ImGuiTableFlags_BordersInnerH
+                               | ImGuiTableFlags_RowBg
+                               | ImGuiTableFlags_SizingStretchProp
+                       )) {
+                ImGui::TableSetupColumn("名称");
+                ImGui::TableSetupColumn("标识符");
+                ImGui::TableSetupColumn("数量", ImGuiTableColumnFlags_WidthFixed, 110.0f * uiScale);
+                ImGui::TableHeadersRow();
+                for (auto const& material : gMaterialRequirements) {
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::TextUnformatted(material.displayName.c_str());
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::TextUnformatted(material.typeName.c_str());
+                    ImGui::TableSetColumnIndex(2);
+                    ImGui::Text("%llu", static_cast<unsigned long long>(material.count));
+                }
+                ImGui::EndTable();
+            }
+        }
+        ImGui::EndChild();
+    }
+
+    ImGui::Spacing();
+    auto const closeButtonWidth = 120.0f * uiScale;
+    auto const cursorX = ImGui::GetCursorPosX();
+    ImGui::SetCursorPosX(
+        cursorX + std::max(0.0f, ImGui::GetContentRegionAvail().x - closeButtonWidth)
+    );
+    if (ImGui::Button("关闭", ImVec2(closeButtonWidth, 0.0f))) {
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
 void renderGui() {
     if (!isGuiVisible()) return;
 
@@ -1406,6 +1599,11 @@ void renderGui() {
         if (ImGui::Button("关闭投影", ImVec2(130.0f * uiScale, 0.0f))) {
             projection::disable();
             clear();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("材料清单", ImVec2(130.0f * uiScale, 0.0f))) {
+            requestMaterialList();
+            ImGui::OpenPopup(kMaterialPopupName);
         }
         ImGui::Spacing();
         if (gHasSavedProjection.load(std::memory_order_acquire)) {
@@ -1770,6 +1968,7 @@ void renderGui() {
         ImGui::EndDisabled();
         ImGui::TextDisabled("HUD 仅在关闭投影菜单后显示");
         }
+        renderMaterialPopup(uiScale);
         ImGui::EndChild();
         ImGui::EndChild();
         ImGui::PopStyleVar();
@@ -2029,6 +2228,9 @@ void clear() {
     std::lock_guard lock(gLoadedMutex);
     gLoaded.reset();
     gStatus = "尚未加载结构文件";
+    gMaterialListRequested.store(false, std::memory_order_release);
+    std::lock_guard materialLock(gMaterialMutex);
+    gMaterialRequirements.clear();
 }
 
 } // namespace lholo::structure

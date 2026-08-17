@@ -76,7 +76,6 @@ bool endsWith(std::string const& s, std::string_view suffix) {
         && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
-bool isStairs(std::string const& name) { return endsWith(name, "_stairs"); }
 bool isTrapdoor(std::string const& name) {
     return endsWith(name, "_trapdoor") || name == "minecraft:trapdoor";
 }

@@ -23,14 +23,12 @@
 #include <string>
 #include <vector>
 
-class CompoundTag;
 class Block;
 
 namespace lholo::structure {
 
 struct LoadedStructure {
     std::filesystem::path                 sourcePath;
-    std::unique_ptr<CompoundTag>           rootTag;
     int                                  sizeX{};
     int                                  sizeY{};
     int                                  sizeZ{};
@@ -59,6 +57,8 @@ void processPendingHotkeyActions();
 bool hasHudInfo();
 void renderHud();
 void renderGui();
+void requestMaterialList();
+void processPendingMaterialList();
 void loadSettings();
 void saveSettings();
 std::shared_ptr<LoadedStructure const> getLoaded();

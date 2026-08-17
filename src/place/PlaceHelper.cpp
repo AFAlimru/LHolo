@@ -507,7 +507,7 @@ bool isFacingGate(Block const& block) {
 
 bool resolveOrientedPlacement(
     LocalPlayer& player, BlockSource& region, BlockPos const& cell,
-    Block const& ghost, int itemAux, bool requireExact, ProjectionTarget& out
+    Block const& ghost, int itemAux, ProjectionTarget& out
 ) {
     bool const typeOnly = isTypeOnlyGate(ghost);
 
@@ -580,12 +580,7 @@ bool resolveOrientedPlacement(
         return searchAnySupport();
     }
 
-    // Orientation-critical blocks: prefer an exact match. Manual mode
-    // (requireExact == false) still places best-effort so a deliberate
-    // right-click is never a no-op.
-    if (searchExact()) return true;
-    if (!requireExact) return searchAnySupport();
-    return false;
+    return searchExact();
 }
 
 void tickRangePlace(LocalPlayer& player) {
@@ -606,7 +601,7 @@ void tickRangePlace(LocalPlayer& player) {
         // ghost. The search also picks the support face / click point, replacing
         // the old approach-based support selection.
         ProjectionTarget target;
-        if (!resolveOrientedPlacement(player, region, cell, *cand.block, 0, true, target)) continue;
+        if (!resolveOrientedPlacement(player, region, cell, *cand.block, 0, target)) continue;
 
         auto const found = findItemSlot(player, *cand.block);
         if (found.slot < 0) continue;
@@ -630,6 +625,8 @@ void tickRangePlace(LocalPlayer& player) {
 }
 
 void tickEasyPlace() {
+    structure::processPendingMaterialList();
+
     auto client = ll::service::getClientInstance();
     if (!client) {
         updateAimedBlockEntityName(nullptr);
@@ -715,9 +712,8 @@ void tickEasyPlace() {
     // Orientation is angle-gated in both modes: an orientable block places only
     // when the current view would produce the ghost's facing (like pistons).
     // Type-only families (rails, redstone, comparators, ...) bypass this.
-    bool const requireExact = true;
     bool const resolved =
-        resolveOrientedPlacement(*player, region, target->cell, *target->block, 0, requireExact, placement);
+        resolveOrientedPlacement(*player, region, target->cell, *target->block, 0, placement);
     auto const found = resolved ? findItemSlot(*player, *target->block) : ItemFind{-1, nullptr};
     if (!resolved || found.slot < 0) return;
 
