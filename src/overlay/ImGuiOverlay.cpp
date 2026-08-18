@@ -42,6 +42,7 @@
 
 #include "plugin/LHolo.h"
 #include "structure/StructureLoader.h"
+#include "ui/FluentTheme.h"
 #include "ll/api/mod/NativeMod.h"
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
@@ -791,6 +792,7 @@ void shutdown() {
     if (gImGuiInitialized) {
         releaseGraphicsBackend();
         ImGui_ImplWin32_Shutdown();
+        ui::resetFluentTheme();
         ImGui::DestroyContext();
         gImGuiInitialized = false;
     }

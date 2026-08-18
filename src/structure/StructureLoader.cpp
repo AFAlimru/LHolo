@@ -17,6 +17,8 @@
 #include "structure/StructureLoader.h"
 
 #include "structure/JavaBlockMapping.h"
+#include "ui/FluentTheme.h"
+#include "ui/LHoloMenu.h"
 #include "place/PlaceHelper.h"
 #include "plugin/LHolo.h"
 #include "projection/Projection.h"
@@ -102,7 +104,7 @@ std::atomic_bool                 gHudShowWrongType{true};
 std::atomic_bool                 gHudShowBlockEntity{true};
 // 0: left-top, 1: left-bottom (default), 2: right-top, 3: right-bottom.
 std::atomic_int                  gHudPosition{1};
-std::atomic<float>              gUiScale{0.0f};
+std::atomic<float>              gUiScale{2.0f};
 std::atomic_uint                 gGuiHotkey{'M'};
 std::atomic_uint                 gGuiHotkeyModifiers{kHotkeyModifierAlt};
 std::atomic_bool                 gCapturingGuiHotkey{false};
@@ -161,6 +163,9 @@ struct MaterialRequirement {
 };
 
 std::vector<MaterialRequirement> gMaterialRequirements;
+std::array<char, 2048>          gPathBuffer{};
+bool                            gPathInitialized{};
+lholo::ui::MenuPage             gActivePage{lholo::ui::MenuPage::Projection};
 
 int maxLayerFor(LoadedStructure const& structure, int axis) {
     return std::max(0, (axis == 1 ? structure.sizeX : structure.sizeY) - 1);
@@ -1273,15 +1278,17 @@ void renderHud() {
         maxLayer = maxLayerFor(*gLoaded, layerAxis);
     }
 
+    auto const displaySize = ImGui::GetIO().DisplaySize;
     auto uiScale = gUiScale.load(std::memory_order_relaxed);
     if (uiScale <= 0.0f) {
-        auto const displaySize = ImGui::GetIO().DisplaySize;
         uiScale = std::clamp(
             std::min(displaySize.x / 1920.0f, displaySize.y / 1080.0f),
             1.0f,
             5.0f
         );
     }
+    auto const hudMetrics = lholo::ui::calculateMetrics(displaySize, uiScale);
+    lholo::ui::applyFluentTheme(hudMetrics);
     auto const layerMode = gLayerDisplayMode.load(std::memory_order_relaxed);
     auto const currentLayer = std::clamp(
         gDisplayLayer.load(std::memory_order_relaxed),
@@ -1289,21 +1296,20 @@ void renderHud() {
         maxLayer
     );
 
-    auto const displaySize = ImGui::GetIO().DisplaySize;
     auto const hudPosition = std::clamp(gHudPosition.load(std::memory_order_relaxed), 0, 3);
     auto const right = hudPosition >= 2;
     auto const bottom = (hudPosition & 1) != 0;
-    auto const margin = 16.0f * uiScale;
+    auto const margin = hudMetrics.outerPadding;
     ImGui::SetNextWindowPos(
         ImVec2(right ? displaySize.x - margin : margin, bottom ? displaySize.y - margin : margin),
         ImGuiCond_Always,
         ImVec2(right ? 1.0f : 0.0f, bottom ? 1.0f : 0.0f)
     );
     ImGui::SetNextWindowBgAlpha(0.68f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f * uiScale);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, hudMetrics.rounding * 0.7f);
     ImGui::PushStyleVar(
         ImGuiStyleVar_WindowPadding,
-        ImVec2(12.0f * uiScale, 8.0f * uiScale)
+        ImVec2(hudMetrics.sectionPadding, hudMetrics.gap)
     );
     constexpr auto flags = ImGuiWindowFlags_NoDecoration
         | ImGuiWindowFlags_AlwaysAutoResize
@@ -1314,7 +1320,6 @@ void renderHud() {
         | ImGuiWindowFlags_NoNavFocus
         | ImGuiWindowFlags_NoInputs;
     if (ImGui::Begin("##LHoloHud", nullptr, flags)) {
-        ImGui::SetWindowFontScale(uiScale * 0.5f);
         if (showFileName) ImGui::Text("投影：%s", fileName.c_str());
         if (showLayer && layerMode == 0) {
             ImGui::TextUnformatted("显示范围：完整结构");
@@ -1376,610 +1381,307 @@ void renderHud() {
     ImGui::PopStyleVar(2);
 }
 
-void renderMaterialPopup(float uiScale) {
-    bool popupOpen = true;
-    if (!ImGui::BeginPopupModal(
-            kMaterialPopupName,
-            &popupOpen,
-            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize
-        )) {
-        return;
-    }
+namespace {
 
-    ImGui::SetWindowFontScale(uiScale * 0.5f);
-    auto const loaded = getLoaded();
-    if (!loaded) {
-        ImGui::TextDisabled("尚未加载结构文件");
-    } else {
-        std::lock_guard materialLock(gMaterialMutex);
-        std::uint64_t total{};
-        for (auto const& material : gMaterialRequirements) {
-            if (std::numeric_limits<std::uint64_t>::max() - total < material.count) {
-                total = std::numeric_limits<std::uint64_t>::max();
-                break;
-            }
-            total += material.count;
-        }
-        ImGui::Text(
-            "共 %llu 个方块，%zu 种材料",
-            static_cast<unsigned long long>(total),
-            gMaterialRequirements.size()
-        );
-        ImGui::Separator();
-        if (ImGui::BeginChild(
-                "##LHoloMaterialList",
-                ImVec2(760.0f * uiScale, 360.0f * uiScale),
-                true,
-                ImGuiWindowFlags_None
-            )) {
-            if (gMaterialRequirements.empty()) {
-                ImGui::TextDisabled("没有可直接放置的实体方块");
-            } else if (ImGui::BeginTable(
-                           "##LHoloMaterialTable",
-                           3,
-                           ImGuiTableFlags_BordersInnerH
-                               | ImGuiTableFlags_RowBg
-                               | ImGuiTableFlags_SizingStretchProp
-                       )) {
-                ImGui::TableSetupColumn("名称");
-                ImGui::TableSetupColumn("标识符");
-                ImGui::TableSetupColumn("数量", ImGuiTableColumnFlags_WidthFixed, 110.0f * uiScale);
-                ImGui::TableHeadersRow();
-                for (auto const& material : gMaterialRequirements) {
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::TextUnformatted(material.displayName.c_str());
-                    ImGui::TableSetColumnIndex(1);
-                    ImGui::TextUnformatted(material.typeName.c_str());
-                    ImGui::TableSetColumnIndex(2);
-                    ImGui::Text("%llu", static_cast<unsigned long long>(material.count));
-                }
-                ImGui::EndTable();
-            }
-        }
-        ImGui::EndChild();
-    }
+struct UiHotkeyBinding {
+    std::atomic_uint* key{};
+    std::atomic_uint* modifiers{};
+    std::atomic_bool* capturing{};
+};
 
-    ImGui::Spacing();
-    auto const closeButtonWidth = 120.0f * uiScale;
-    auto const cursorX = ImGui::GetCursorPosX();
-    ImGui::SetCursorPosX(
-        cursorX + std::max(0.0f, ImGui::GetContentRegionAvail().x - closeButtonWidth)
-    );
-    if (ImGui::Button("关闭", ImVec2(closeButtonWidth, 0.0f))) {
-        ImGui::CloseCurrentPopup();
+UiHotkeyBinding hotkeyBinding(lholo::ui::HotkeyId id) {
+    switch (id) {
+    case lholo::ui::HotkeyId::Gui: return {&gGuiHotkey, &gGuiHotkeyModifiers, &gCapturingGuiHotkey};
+    case lholo::ui::HotkeyId::MoveXMinus: return {&gMoveHotkeys[0], &gMoveHotkeyModifiers[0], &gCapturingMoveHotkey[0]};
+    case lholo::ui::HotkeyId::MoveXPlus: return {&gMoveHotkeys[1], &gMoveHotkeyModifiers[1], &gCapturingMoveHotkey[1]};
+    case lholo::ui::HotkeyId::MoveZMinus: return {&gMoveHotkeys[2], &gMoveHotkeyModifiers[2], &gCapturingMoveHotkey[2]};
+    case lholo::ui::HotkeyId::MoveZPlus: return {&gMoveHotkeys[3], &gMoveHotkeyModifiers[3], &gCapturingMoveHotkey[3]};
+    case lholo::ui::HotkeyId::MoveYPlus: return {&gMoveHotkeys[4], &gMoveHotkeyModifiers[4], &gCapturingMoveHotkey[4]};
+    case lholo::ui::HotkeyId::MoveYMinus: return {&gMoveHotkeys[5], &gMoveHotkeyModifiers[5], &gCapturingMoveHotkey[5]};
+    case lholo::ui::HotkeyId::LayerIncrease: return {&gLayerIncreaseHotkey, &gLayerIncreaseHotkeyModifiers, &gCapturingLayerIncreaseHotkey};
+    case lholo::ui::HotkeyId::LayerDecrease: return {&gLayerDecreaseHotkey, &gLayerDecreaseHotkeyModifiers, &gCapturingLayerDecreaseHotkey};
     }
-    ImGui::EndPopup();
+    return {};
 }
 
-void renderGui() {
-    if (!isGuiVisible()) return;
+void stopHotkeyCapture() {
+    gCapturingGuiHotkey.store(false, std::memory_order_release);
+    gCapturingLayerIncreaseHotkey.store(false, std::memory_order_release);
+    gCapturingLayerDecreaseHotkey.store(false, std::memory_order_release);
+    for (auto& capturing : gCapturingMoveHotkey) capturing.store(false, std::memory_order_release);
+}
 
-    static char pathBuffer[2048]{};
-    static bool pathInitialized = false;
-    auto uiScale = gUiScale.load(std::memory_order_relaxed);
-    auto const displaySize = ImGui::GetIO().DisplaySize;
-    if (uiScale <= 0.0f) {
-        auto const automaticScale = std::min(displaySize.x / 1920.0f, displaySize.y / 1080.0f);
-        uiScale = std::clamp(automaticScale, 1.0f, 5.0f);
-        gUiScale.store(uiScale, std::memory_order_relaxed);
-    }
-    if (!pathInitialized) {
+struct HotkeyDefinition { lholo::ui::HotkeyId id; char const* label; };
+constexpr std::array<HotkeyDefinition, 9> kHotkeyDefinitions{{
+    {lholo::ui::HotkeyId::Gui, "打开投影菜单"},
+    {lholo::ui::HotkeyId::MoveXMinus, "结构偏移 X -1"},
+    {lholo::ui::HotkeyId::MoveXPlus, "结构偏移 X +1"},
+    {lholo::ui::HotkeyId::MoveZMinus, "结构偏移 Z -1"},
+    {lholo::ui::HotkeyId::MoveZPlus, "结构偏移 Z +1"},
+    {lholo::ui::HotkeyId::MoveYPlus, "结构偏移 Y +1"},
+    {lholo::ui::HotkeyId::MoveYMinus, "结构偏移 Y -1"},
+    {lholo::ui::HotkeyId::LayerIncrease, "显示层 +1"},
+    {lholo::ui::HotkeyId::LayerDecrease, "显示层 -1"}
+}};
+
+lholo::ui::MenuModel makeMenuModel(float effectiveUiScale) {
+    lholo::ui::MenuModel model;
+    model.page = gActivePage;
+    model.pathBuffer = gPathBuffer.data();
+    model.pathBufferSize = gPathBuffer.size();
+    model.blockOpeningInput = gOpeningInputBlockFrames.load(std::memory_order_acquire) > 0;
+    model.uiScale = effectiveUiScale;
+    model.layerAxis = std::clamp(gLayerAxis.load(std::memory_order_relaxed), 0, 1);
+
+    {
         std::lock_guard lock(gLoadedMutex);
-        std::snprintf(pathBuffer, sizeof(pathBuffer), "%s", gLastPath.c_str());
-        pathInitialized = true;
-    }
-
-    bool open = true;
-    // Full-screen ImGui canvas, matching ChiyanMap's proven layout. This only
-    // fills Minecraft's current client area; it does not change the OS/window
-    // fullscreen mode and therefore stays independent from the F11 lifecycle.
-    ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(displaySize, ImGuiCond_Always);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    if (ImGui::Begin(
-            "##LHoloFullscreen",
-            &open,
-            ImGuiWindowFlags_NoTitleBar
-                | ImGuiWindowFlags_NoCollapse
-                | ImGuiWindowFlags_NoResize
-                | ImGuiWindowFlags_NoMove
-                | ImGuiWindowFlags_NoBringToFrontOnFocus
-                | ImGuiWindowFlags_NoNavFocus
-                | ImGuiWindowFlags_NoSavedSettings
-        )) {
-        auto const panelWidth = ImGui::GetContentRegionAvail().x;
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.075f, 0.075f, 0.075f, 1.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
-        ImGui::BeginChild(
-            "##LHoloFrame",
-            ImVec2(0.0f, 0.0f),
-            false,
-            ImGuiWindowFlags_None
-        );
-        ImGui::SetWindowFontScale(uiScale * 0.5f);
-        auto const closeButtonWidth = 110.0f * uiScale;
-        auto const closeButtonHeight = 42.0f * uiScale;
-        // Larger title, vertically centered against the taller close button.
-        ImGui::SetWindowFontScale(uiScale * 0.9f);
-        float const titleHeight = ImGui::GetTextLineHeight();
-        float const titleOffset = std::max(0.0f, (closeButtonHeight - titleHeight) * 0.5f);
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + titleOffset);
-        ImGui::TextUnformatted("LHolo");
-        ImGui::SetWindowFontScale(uiScale * 0.5f);
-        ImGui::SameLine();
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() - titleOffset);
-        ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), panelWidth - closeButtonWidth - 20.0f));
-        if (ImGui::Button("关闭菜单", ImVec2(closeButtonWidth, closeButtonHeight))) open = false;
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        static int activePage = 0;
-        static char const* pageNames[]{"投影", "结构变换", "渲染设置", "快捷键", "HUD"};
-        auto const spacing = ImGui::GetStyle().ItemSpacing.x;
-        auto const pageCount = static_cast<float>(std::size(pageNames));
-        auto const tabWidth = std::max(
-            80.0f,
-            (ImGui::GetContentRegionAvail().x - spacing * (pageCount - 1.0f)) / pageCount
-        );
-        for (int page = 0; page < static_cast<int>(std::size(pageNames)); ++page) {
-            auto const selected = activePage == page;
-            if (selected) {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.42f, 0.68f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.48f, 0.76f, 1.0f));
-            }
-            if (ImGui::Button(pageNames[page], ImVec2(tabWidth, 42.0f * uiScale))) activePage = page;
-            if (selected) ImGui::PopStyleColor(2);
-            if (page + 1 < static_cast<int>(std::size(pageNames))) ImGui::SameLine();
+        model.status = gStatus;
+        model.hasLoadedStructure = static_cast<bool>(gLoaded);
+        model.hasSavedProjection = gHasSavedProjection.load(std::memory_order_relaxed);
+        model.savedAnchorX = gSavedAnchorX.load(std::memory_order_relaxed);
+        model.savedAnchorY = gSavedAnchorY.load(std::memory_order_relaxed);
+        model.savedAnchorZ = gSavedAnchorZ.load(std::memory_order_relaxed);
+        if (gLoaded) {
+            model.maxLayerY = maxLayerFor(*gLoaded, 0);
+            model.maxLayerX = maxLayerFor(*gLoaded, 1);
         }
-        ImGui::Separator();
-        ImGui::BeginChild(
-            "##LHoloPage",
-            ImVec2(0.0f, 0.0f),
-            false,
-            ImGuiWindowFlags_AlwaysVerticalScrollbar
+    }
+    model.structureBoundsEnabled = projection::getStructureBoundsEnabled();
+    model.easyPlaceEnabled = place::isEnabled();
+    model.manualPlace = place::isManualMode();
+    model.rangeEnabled = place::isRangeEnabled();
+    model.placementRadius = place::getPlacementRadius();
+    model.offsetX = gOffsetX.load(std::memory_order_relaxed);
+    model.offsetY = gOffsetY.load(std::memory_order_relaxed);
+    model.offsetZ = gOffsetZ.load(std::memory_order_relaxed);
+    model.rotation = std::clamp(gRotationQuarterTurns.load(std::memory_order_relaxed), 0, 3);
+    model.mirror = std::clamp(gMirrorMode.load(std::memory_order_relaxed), 0, 3);
+    model.opacity = projection::getOpacity();
+    model.correctionFillOpacity = projection::getCorrectionFillOpacity();
+    model.correctionOutlineOpacity = projection::getCorrectionOutlineOpacity();
+    model.layerDisplayMode = std::clamp(gLayerDisplayMode.load(std::memory_order_relaxed), 0, 3);
+    model.displayLayer = std::clamp(
+        gDisplayLayer.load(std::memory_order_relaxed), 0,
+        model.layerAxis == 1 ? model.maxLayerX : model.maxLayerY
+    );
+    model.hudEnabled = gHudEnabled.load(std::memory_order_relaxed);
+    model.hudPosition = std::clamp(gHudPosition.load(std::memory_order_relaxed), 0, 3);
+    model.hudShowFileName = gHudShowFileName.load(std::memory_order_relaxed);
+    model.hudShowLayer = gHudShowLayer.load(std::memory_order_relaxed);
+    model.hudShowProgress = gHudShowProgress.load(std::memory_order_relaxed);
+    model.hudShowWrongState = gHudShowWrongState.load(std::memory_order_relaxed);
+    model.hudShowWrongType = gHudShowWrongType.load(std::memory_order_relaxed);
+    model.hudShowBlockEntity = gHudShowBlockEntity.load(std::memory_order_relaxed);
+    for (auto const& definition : kHotkeyDefinitions) {
+        auto const binding = hotkeyBinding(definition.id);
+        auto& row = model.hotkeys[static_cast<std::size_t>(definition.id)];
+        row.id = definition.id;
+        row.label = definition.label;
+        row.display = hotkeyChordName(
+            binding.modifiers->load(std::memory_order_relaxed),
+            binding.key->load(std::memory_order_relaxed)
         );
-        ImGui::SetWindowFontScale(uiScale * 0.5f);
+        row.capturing = binding.capturing->load(std::memory_order_acquire);
+    }
+    {
+        std::lock_guard lock(gMaterialMutex);
+        model.materials.reserve(gMaterialRequirements.size());
+        for (auto const& material : gMaterialRequirements) {
+            model.materials.push_back({material.displayName, material.typeName, material.count});
+        }
+    }
+    return model;
+}
 
-        if (activePage == 0) {
-        ImGui::SeparatorText("投影文件");
+void applyMenuModel(lholo::ui::MenuModel const& model, float effectiveUiScale) {
+    bool changed = false;
+    auto update = [&changed](auto& target, auto value) {
+        if (target.load(std::memory_order_relaxed) == value) return;
+        target.store(value, std::memory_order_relaxed);
+        changed = true;
+    };
+    if (std::abs(model.uiScale - effectiveUiScale) > 0.001f) {
+        auto const scale = std::clamp(model.uiScale, 1.0f, 5.0f);
+        if (std::abs(gUiScale.load(std::memory_order_relaxed) - scale) > 0.001f) {
+            gUiScale.store(scale, std::memory_order_relaxed);
+            changed = true;
+        }
+    }
+    if (projection::getStructureBoundsEnabled() != model.structureBoundsEnabled) {
+        projection::setStructureBoundsEnabled(model.structureBoundsEnabled);
+        changed = true;
+    }
+    if (place::isEnabled() != model.easyPlaceEnabled) { place::setEnabled(model.easyPlaceEnabled); changed = true; }
+    if (place::isManualMode() != model.manualPlace) { place::setManualMode(model.manualPlace); changed = true; }
+    if (place::isRangeEnabled() != model.rangeEnabled) { place::setRangeEnabled(model.rangeEnabled); changed = true; }
+    auto const radius = std::clamp(model.placementRadius, 1, 4);
+    if (place::getPlacementRadius() != radius) { place::setPlacementRadius(radius); changed = true; }
+    update(gOffsetX, model.offsetX);
+    update(gOffsetY, model.offsetY);
+    update(gOffsetZ, model.offsetZ);
+    update(gRotationQuarterTurns, std::clamp(model.rotation, 0, 3));
+    update(gMirrorMode, std::clamp(model.mirror, 0, 3));
+
+    auto const opacity = std::clamp(model.opacity, 0.0f, 1.0f);
+    if (std::abs(projection::getOpacity() - opacity) > 0.0001f) { projection::setOpacity(opacity); changed = true; }
+    auto const fill = std::clamp(model.correctionFillOpacity, 0.0f, 1.0f);
+    if (std::abs(projection::getCorrectionFillOpacity() - fill) > 0.0001f) { projection::setCorrectionFillOpacity(fill); changed = true; }
+    auto const outline = std::clamp(model.correctionOutlineOpacity, 0.0f, 1.0f);
+    if (std::abs(projection::getCorrectionOutlineOpacity() - outline) > 0.0001f) { projection::setCorrectionOutlineOpacity(outline); changed = true; }
+    auto const layerAxis = std::clamp(model.layerAxis, 0, 1);
+    update(gLayerAxis, layerAxis);
+    update(gLayerDisplayMode, std::clamp(model.layerDisplayMode, 0, 3));
+    auto displayMax = 0;
+    {
+        std::lock_guard lock(gLoadedMutex);
+        if (gLoaded) displayMax = maxLayerFor(*gLoaded, layerAxis);
+    }
+    update(gDisplayLayer, std::clamp(model.displayLayer, 0, displayMax));
+    update(gHudEnabled, model.hudEnabled);
+    update(gHudPosition, std::clamp(model.hudPosition, 0, 3));
+    update(gHudShowFileName, model.hudShowFileName);
+    update(gHudShowLayer, model.hudShowLayer);
+    update(gHudShowProgress, model.hudShowProgress);
+    update(gHudShowWrongState, model.hudShowWrongState);
+    update(gHudShowWrongType, model.hudShowWrongType);
+    update(gHudShowBlockEntity, model.hudShowBlockEntity);
+    if (changed) saveSettings();
+}
+
+lholo::ui::MenuActions makeMenuActions(bool& refreshModel) {
+    lholo::ui::MenuActions actions;
+    actions.browseStructure = [](std::string_view current) -> std::optional<std::string> {
+        auto const selected = browseStructureFile(pathFromUtf8(current));
+        return selected ? std::optional<std::string>{pathToUtf8(*selected)} : std::nullopt;
+    };
+    actions.loadStructure = [&refreshModel](std::string_view pathValue) {
+        auto const pathText = std::string{pathValue};
+        if (pathText.empty()) {
+            std::lock_guard lock(gLoadedMutex);
+            gStatus = "请选择或输入 .mcstructure / .litematic 文件路径";
+            return;
+        }
+        std::string error;
+        auto loaded = loadStructure(pathFromUtf8(pathText), error);
+        if (!loaded) {
+            std::lock_guard lock(gLoadedMutex);
+            gStatus = "加载失败: " + error;
+            logger().error("Could not load structure {}: {}", pathText, error);
+            return;
+        }
         std::string status;
         {
             std::lock_guard lock(gLoadedMutex);
+            gLastPath = pathText;
+            gStatus = makeStatus(*loaded);
             status = gStatus;
+            gLoaded = std::move(loaded);
         }
-        ImGui::TextWrapped("%s", status.c_str());
-        ImGui::Separator();
-        ImGui::TextUnformatted("结构文件路径（.mcstructure / .litematic）");
-        ImGui::SetNextItemWidth(-115.0f * uiScale);
-        auto const blockOpeningInput = gOpeningInputBlockFrames.load(std::memory_order_acquire) > 0;
-        ImGui::InputText(
-            "##structure_path",
-            pathBuffer,
-            sizeof(pathBuffer),
-            blockOpeningInput ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_None
-        );
-        ImGui::SameLine();
-        if (ImGui::Button("浏览", ImVec2(105.0f * uiScale, 0.0f))) {
-            if (auto selected = browseStructureFile(pathFromUtf8(pathBuffer))) {
-                auto const value = pathToUtf8(*selected);
-                std::snprintf(pathBuffer, sizeof(pathBuffer), "%s", value.c_str());
-            }
-        }
-
-        if (ImGui::Button("加载", ImVec2(130.0f * uiScale, 0.0f))) {
-            std::string pathValue{pathBuffer};
-            if (pathValue.empty()) {
-                std::lock_guard lock(gLoadedMutex);
-                gStatus = "请选择或输入 .mcstructure / .litematic 文件路径";
-            } else {
-                std::string error;
-                auto loaded = loadStructure(pathFromUtf8(pathValue), error);
-                if (loaded) {
-                    std::string loadedStatus;
-                    {
-                        std::lock_guard lock(gLoadedMutex);
-                        gLastPath = pathValue;
-                        gStatus = makeStatus(*loaded);
-                        loadedStatus = gStatus;
-                        gLoaded = std::move(loaded);
-                    }
-                    saveSettings();
-                    logger().info("{}", loadedStatus);
-                } else {
-                    std::lock_guard lock(gLoadedMutex);
-                    gStatus = "加载失败: " + error;
-                    logger().error("Could not load structure {}: {}", pathValue, error);
-                }
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("关闭投影", ImVec2(130.0f * uiScale, 0.0f))) {
-            projection::disable();
-            clear();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("材料清单", ImVec2(130.0f * uiScale, 0.0f))) {
-            requestMaterialList();
-            ImGui::OpenPopup(kMaterialPopupName);
-        }
-        ImGui::Spacing();
-        if (gHasSavedProjection.load(std::memory_order_acquire)) {
-            auto const savedX = gSavedAnchorX.load(std::memory_order_relaxed);
-            auto const savedY = gSavedAnchorY.load(std::memory_order_relaxed);
-            auto const savedZ = gSavedAnchorZ.load(std::memory_order_relaxed);
-            if (ImGui::Button("恢复上次投影", ImVec2(180.0f * uiScale, 0.0f))) {
-                std::string savedPath;
-                {
-                    std::lock_guard lock(gLoadedMutex);
-                    savedPath = gSavedStructurePath;
-                }
-                std::string error;
-                auto loaded = loadStructure(pathFromUtf8(savedPath), error);
-                if (loaded) {
-                    gRotationQuarterTurns.store(gSavedRotation.load(std::memory_order_relaxed), std::memory_order_relaxed);
-                    gMirrorMode.store(gSavedMirror.load(std::memory_order_relaxed), std::memory_order_relaxed);
-                    gOffsetX.store(gSavedOffsetX.load(std::memory_order_relaxed), std::memory_order_relaxed);
-                    gOffsetY.store(gSavedOffsetY.load(std::memory_order_relaxed), std::memory_order_relaxed);
-                    gOffsetZ.store(gSavedOffsetZ.load(std::memory_order_relaxed), std::memory_order_relaxed);
-                    gLayerDisplayMode.store(gSavedLayerDisplayMode.load(std::memory_order_relaxed), std::memory_order_relaxed);
-                    gDisplayLayer.store(gSavedDisplayLayer.load(std::memory_order_relaxed), std::memory_order_relaxed);
-                    gLayerAxis.store(gSavedLayerAxis.load(std::memory_order_relaxed), std::memory_order_relaxed);
-                    projection::requestNextStructureAnchor(savedX, savedY, savedZ);
-                    std::lock_guard lock(gLoadedMutex);
-                    gLastPath = savedPath;
-                    gStatus = "已恢复上次投影记录，等待进入渲染";
-                    gLoaded = std::move(loaded);
-                    logger().info(
-                        "Restoring projection {} at ({}, {}, {})",
-                        savedPath,
-                        savedX,
-                        savedY,
-                        savedZ
-                    );
-                } else {
-                    std::lock_guard lock(gLoadedMutex);
-                    gStatus = "恢复失败: " + error;
-                    logger().error("Could not restore structure {}: {}", savedPath, error);
-                }
-            }
-            ImGui::TextDisabled(
-                "上次投影原点：X %d  Y %d  Z %d",
-                savedX,
-                savedY,
-                savedZ
-            );
-        } else {
-            ImGui::TextDisabled("没有可恢复的上次投影记录");
-        }
-        ImGui::Separator();
-        ImGui::SetNextItemWidth(260.0f * uiScale);
-        if (ImGui::InputFloat("界面缩放（范围 1～5）", &uiScale, 0.0f, 0.0f, "%.1f")) {
-            uiScale = std::clamp(uiScale, 1.0f, 5.0f);
-            gUiScale.store(uiScale, std::memory_order_relaxed);
-            saveSettings();
-        }
-        auto structureBoundsEnabled = projection::getStructureBoundsEnabled();
-        if (ImGui::Checkbox("显示整体结构边框", &structureBoundsEnabled)) {
-            projection::setStructureBoundsEnabled(structureBoundsEnabled);
-            saveSettings();
-        }
-        // 轻松放置 / 手动放置 / 范围放置 are mutually exclusive placement modes:
-        // enabling one clears the others so only a single mode is ever active.
-        auto easyPlaceEnabled = place::isEnabled();
-        if (ImGui::Checkbox("轻松放置（准心对准投影方块自动放置）", &easyPlaceEnabled)) {
-            place::setEnabled(easyPlaceEnabled);
-            if (easyPlaceEnabled) { place::setManualMode(false); place::setRangeEnabled(false); }
-            saveSettings();
-        }
-        auto manualPlace = place::isManualMode();
-        if (ImGui::Checkbox("手动放置（右键放置·按住连放）", &manualPlace)) {
-            place::setManualMode(manualPlace);
-            if (manualPlace) { place::setEnabled(false); place::setRangeEnabled(false); }
-            saveSettings();
-        }
-        auto rangeEnabled = place::isRangeEnabled();
-        if (ImGui::Checkbox("范围放置（自动放置周围投影缺块）", &rangeEnabled)) {
-            place::setRangeEnabled(rangeEnabled);
-            if (rangeEnabled) { place::setEnabled(false); place::setManualMode(false); }
-            saveSettings();
-        }
-        auto placementRadius = place::getPlacementRadius();
-        ImGui::SetNextItemWidth(260.0f * uiScale);
-        if (ImGui::SliderInt("放置半径（范围 1～4）", &placementRadius, 1, 4)) {
-            place::setPlacementRadius(placementRadius);
-            saveSettings();
-        }
-        }
-
-        if (activePage == 1) {
-        ImGui::SeparatorText("结构变换");
-        static char const* rotationNames[]{"0°", "90°", "180°", "270°"};
-        auto rotation = gRotationQuarterTurns.load(std::memory_order_relaxed);
-        ImGui::SetNextItemWidth(260.0f * uiScale);
-        if (ImGui::Combo("结构旋转", &rotation, rotationNames, 4)) {
-            gRotationQuarterTurns.store(rotation, std::memory_order_relaxed);
-            saveSettings();
-        }
-        static char const* mirrorNames[]{"不镜像", "X 轴镜像", "Z 轴镜像", "X + Z 镜像"};
-        auto mirror = gMirrorMode.load(std::memory_order_relaxed);
-        ImGui::SetNextItemWidth(260.0f * uiScale);
-        if (ImGui::Combo("结构镜像", &mirror, mirrorNames, 4)) {
-            gMirrorMode.store(mirror, std::memory_order_relaxed);
-            saveSettings();
-        }
-        }
-
-        if (activePage == 2) {
-        ImGui::SeparatorText("投影样式");
-        auto opacityPercent = static_cast<int>(std::lround(projection::getOpacity() * 100.0f));
-        ImGui::SetNextItemWidth(260.0f * uiScale);
-        if (ImGui::InputInt("投影透明度（范围 0～100）", &opacityPercent, 0, 0)) {
-            opacityPercent = std::clamp(opacityPercent, 0, 100);
-            projection::setOpacity(static_cast<float>(opacityPercent) / 100.0f);
-            saveSettings();
-        }
-        ImGui::SeparatorText("分层显示");
-        static char const* layerAxisNames[]{"Y 轴（水平分层）", "X 轴（纵向切片）"};
-        auto layerAxis = gLayerAxis.load(std::memory_order_relaxed);
-        ImGui::SetNextItemWidth(260.0f * uiScale);
-        if (ImGui::Combo("分层轴", &layerAxis, layerAxisNames, 2)) {
-            gLayerAxis.store(layerAxis, std::memory_order_relaxed);
-            saveSettings();
-        }
-        static char const* layerModeNames[]{"完整结构", "单层", "当前层及以下", "当前层及以上"};
-        auto layerMode = gLayerDisplayMode.load(std::memory_order_relaxed);
-        ImGui::SetNextItemWidth(260.0f * uiScale);
-        if (ImGui::Combo("显示范围", &layerMode, layerModeNames, 4)) {
-            gLayerDisplayMode.store(layerMode, std::memory_order_relaxed);
-            saveSettings();
-        }
-        auto maxLayer = 0;
+        saveSettings();
+        refreshModel = true;
+        logger().info("{}", status);
+    };
+    actions.restoreProjection = [&refreshModel] {
+        std::string savedPath;
         {
             std::lock_guard lock(gLoadedMutex);
-            if (gLoaded) maxLayer = maxLayerFor(*gLoaded, layerAxis);
+            savedPath = gSavedStructurePath;
         }
-        auto displayLayer = std::clamp(gDisplayLayer.load(std::memory_order_relaxed), 0, maxLayer);
-        if (displayLayer != gDisplayLayer.load(std::memory_order_relaxed)) {
-            gDisplayLayer.store(displayLayer, std::memory_order_relaxed);
+        auto const x = gSavedAnchorX.load(std::memory_order_relaxed);
+        auto const y = gSavedAnchorY.load(std::memory_order_relaxed);
+        auto const z = gSavedAnchorZ.load(std::memory_order_relaxed);
+        std::string error;
+        auto loaded = loadStructure(pathFromUtf8(savedPath), error);
+        if (!loaded) {
+            std::lock_guard lock(gLoadedMutex);
+            gStatus = "恢复失败: " + error;
+            logger().error("Could not restore structure {}: {}", savedPath, error);
+            return;
         }
-        ImGui::TextUnformatted("当前层");
-        ImGui::SameLine(90.0f * uiScale);
-        bool layerChanged{};
-        if (ImGui::Button("-##layer", ImVec2(48.0f * uiScale, 0.0f))) {
-            displayLayer = std::max(0, displayLayer - 1);
-            layerChanged = true;
+        gRotationQuarterTurns.store(gSavedRotation.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        gMirrorMode.store(gSavedMirror.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        gOffsetX.store(gSavedOffsetX.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        gOffsetY.store(gSavedOffsetY.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        gOffsetZ.store(gSavedOffsetZ.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        gLayerDisplayMode.store(gSavedLayerDisplayMode.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        gDisplayLayer.store(gSavedDisplayLayer.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        gLayerAxis.store(gSavedLayerAxis.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        projection::requestNextStructureAnchor(x, y, z);
+        {
+            std::lock_guard lock(gLoadedMutex);
+            gLastPath = savedPath;
+            gStatus = "已恢复上次投影记录，等待进入渲染";
+            gLoaded = std::move(loaded);
         }
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(120.0f * uiScale);
-        if (ImGui::InputInt("##display_layer", &displayLayer, 0, 0)) {
-            displayLayer = std::clamp(displayLayer, 0, maxLayer);
-            layerChanged = true;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("+##layer", ImVec2(48.0f * uiScale, 0.0f))) {
-            displayLayer = std::min(maxLayer, displayLayer + 1);
-            layerChanged = true;
-        }
-        ImGui::SameLine();
-        ImGui::TextDisabled(
-            "0 - %d（结构 %s 轴起点为 0）",
-            maxLayer,
-            layerAxis == 1 ? "X" : "Y"
-        );
-        if (layerChanged) {
-            gDisplayLayer.store(displayLayer, std::memory_order_relaxed);
+        std::snprintf(gPathBuffer.data(), gPathBuffer.size(), "%s", savedPath.c_str());
+        refreshModel = true;
+        logger().info("Restoring projection {} at ({}, {}, {})", savedPath, x, y, z);
+    };
+    actions.closeProjection = [] { projection::disable(); clear(); };
+    actions.requestMaterials = [] { requestMaterialList(); };
+    actions.beginHotkeyCapture = [](lholo::ui::HotkeyId id) {
+        stopHotkeyCapture();
+        if (auto const binding = hotkeyBinding(id); binding.capturing) binding.capturing->store(true, std::memory_order_release);
+    };
+    actions.clearHotkey = [](lholo::ui::HotkeyId id) {
+        if (auto const binding = hotkeyBinding(id); binding.key && binding.modifiers) {
+            binding.key->store(0, std::memory_order_release);
+            binding.modifiers->store(0, std::memory_order_release);
+            if (binding.capturing) binding.capturing->store(false, std::memory_order_release);
             saveSettings();
         }
-        ImGui::SeparatorText("纠错样式");
-        auto correctionFillOpacityPercent = static_cast<int>(
-            std::lround(projection::getCorrectionFillOpacity() * 100.0f)
-        );
-        ImGui::SetNextItemWidth(260.0f * uiScale);
-        if (ImGui::InputInt("纠错提示透明度（范围 0～100）", &correctionFillOpacityPercent, 0, 0)) {
-            correctionFillOpacityPercent = std::clamp(correctionFillOpacityPercent, 0, 100);
-            projection::setCorrectionFillOpacity(static_cast<float>(correctionFillOpacityPercent) / 100.0f);
-            saveSettings();
+    };
+    actions.resetHotkeys = [] {
+        gGuiHotkey.store('M', std::memory_order_relaxed);
+        gGuiHotkeyModifiers.store(kHotkeyModifierAlt, std::memory_order_relaxed);
+        static unsigned int const moveKeys[]{VK_LEFT, VK_RIGHT, VK_UP, VK_DOWN, VK_UP, VK_DOWN};
+        static unsigned int const moveModifiers[]{kHotkeyModifierControl, kHotkeyModifierControl, kHotkeyModifierControl, kHotkeyModifierControl, kHotkeyModifierShift, kHotkeyModifierShift};
+        for (std::size_t index = 0; index < gMoveHotkeys.size(); ++index) {
+            gMoveHotkeys[index].store(moveKeys[index], std::memory_order_relaxed);
+            gMoveHotkeyModifiers[index].store(moveModifiers[index], std::memory_order_relaxed);
         }
-        auto correctionOutlineOpacityPercent = static_cast<int>(
-            std::lround(projection::getCorrectionOutlineOpacity() * 100.0f)
-        );
-        ImGui::SetNextItemWidth(260.0f * uiScale);
-        if (ImGui::InputInt("描边透明度（范围 0～100）", &correctionOutlineOpacityPercent, 0, 0)) {
-            correctionOutlineOpacityPercent = std::clamp(correctionOutlineOpacityPercent, 0, 100);
-            projection::setCorrectionOutlineOpacity(
-                static_cast<float>(correctionOutlineOpacityPercent) / 100.0f
-            );
-            saveSettings();
-        }
-        if (ImGui::Button("恢复默认纠错样式", ImVec2(210.0f * uiScale, 0.0f))) {
-            projection::setCorrectionFillOpacity(0.15f);
-            projection::setCorrectionOutlineOpacity(1.0f);
-            saveSettings();
-        }
-        }
+        gLayerIncreaseHotkey.store(VK_UP, std::memory_order_relaxed);
+        gLayerDecreaseHotkey.store(VK_DOWN, std::memory_order_relaxed);
+        gLayerIncreaseHotkeyModifiers.store(kHotkeyModifierAlt, std::memory_order_relaxed);
+        gLayerDecreaseHotkeyModifiers.store(kHotkeyModifierAlt, std::memory_order_relaxed);
+        stopHotkeyCapture();
+        resetHotkeyState();
+        saveSettings();
+    };
+    actions.resetCorrectionStyle = [] {
+        projection::setCorrectionFillOpacity(0.15f);
+        projection::setCorrectionOutlineOpacity(1.0f);
+        saveSettings();
+    };
+    return actions;
+}
 
-        if (activePage == 1) {
-        auto offsetControl = [uiScale](char const* axis, std::atomic_int& value) {
-            bool changed{};
-            ImGui::PushID(axis);
-            ImGui::TextUnformatted(axis);
-            ImGui::SameLine(45.0f * uiScale);
-            if (ImGui::Button("-", ImVec2(48.0f * uiScale, 0.0f))) {
-                value.fetch_sub(1, std::memory_order_relaxed);
-                changed = true;
-            }
-            ImGui::SameLine();
-            auto current = value.load(std::memory_order_relaxed);
-            ImGui::SetNextItemWidth(120.0f * uiScale);
-            if (ImGui::InputInt("##value", &current, 0, 0)) {
-                value.store(current, std::memory_order_relaxed);
-                changed = true;
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("+", ImVec2(48.0f * uiScale, 0.0f))) {
-                value.fetch_add(1, std::memory_order_relaxed);
-                changed = true;
-            }
-            ImGui::PopID();
-            return changed;
-        };
-        ImGui::SeparatorText("结构偏移");
-        auto offsetsChanged = offsetControl("X", gOffsetX);
-        offsetsChanged = offsetControl("Y", gOffsetY) || offsetsChanged;
-        offsetsChanged = offsetControl("Z", gOffsetZ) || offsetsChanged;
-        if (offsetsChanged) saveSettings();
-        }
+} // namespace
 
-        if (activePage == 3) {
-        ImGui::SeparatorText("快捷键");
-        auto hotkeyControl = [uiScale](
-            char const* label,
-            std::atomic_uint& key,
-            std::atomic_uint& modifiers,
-            std::atomic_bool& capturing,
-            char const* id
-        ) {
-            ImGui::PushID(id);
-            auto const isCapturing = capturing.load(std::memory_order_acquire);
-            auto const buttonLabel = isCapturing
-                ? std::string{"请按组合键（支持 Ctrl / Alt / Shift）"}
-                : std::string{label} + "：" + hotkeyChordName(
-                    modifiers.load(std::memory_order_relaxed),
-                    key.load(std::memory_order_relaxed)
-                );
-            if (ImGui::Button(buttonLabel.c_str(), ImVec2(500.0f * uiScale, 0.0f)) && !isCapturing) {
-                gCapturingGuiHotkey.store(false, std::memory_order_release);
-                gCapturingLayerIncreaseHotkey.store(false, std::memory_order_release);
-                gCapturingLayerDecreaseHotkey.store(false, std::memory_order_release);
-                for (auto& other : gCapturingMoveHotkey) {
-                    other.store(false, std::memory_order_release);
-                }
-                capturing.store(true, std::memory_order_release);
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("清除", ImVec2(90.0f * uiScale, 0.0f))) {
-                key.store(0, std::memory_order_release);
-                modifiers.store(0, std::memory_order_release);
-                capturing.store(false, std::memory_order_release);
-                saveSettings();
-            }
-            ImGui::PopID();
-        };
-        hotkeyControl("打开投影菜单", gGuiHotkey, gGuiHotkeyModifiers, gCapturingGuiHotkey, "gui_hotkey");
-        hotkeyControl("结构偏移 X -1", gMoveHotkeys[0], gMoveHotkeyModifiers[0], gCapturingMoveHotkey[0], "move_x_minus");
-        hotkeyControl("结构偏移 X +1", gMoveHotkeys[1], gMoveHotkeyModifiers[1], gCapturingMoveHotkey[1], "move_x_plus");
-        hotkeyControl("结构偏移 Z -1", gMoveHotkeys[2], gMoveHotkeyModifiers[2], gCapturingMoveHotkey[2], "move_z_minus");
-        hotkeyControl("结构偏移 Z +1", gMoveHotkeys[3], gMoveHotkeyModifiers[3], gCapturingMoveHotkey[3], "move_z_plus");
-        hotkeyControl("结构偏移 Y +1", gMoveHotkeys[4], gMoveHotkeyModifiers[4], gCapturingMoveHotkey[4], "move_y_plus");
-        hotkeyControl("结构偏移 Y -1", gMoveHotkeys[5], gMoveHotkeyModifiers[5], gCapturingMoveHotkey[5], "move_y_minus");
-        hotkeyControl(
-            "显示层 +1",
-            gLayerIncreaseHotkey,
-            gLayerIncreaseHotkeyModifiers,
-            gCapturingLayerIncreaseHotkey,
-            "layer_increase_hotkey"
-        );
-        hotkeyControl(
-            "显示层 -1",
-            gLayerDecreaseHotkey,
-            gLayerDecreaseHotkeyModifiers,
-            gCapturingLayerDecreaseHotkey,
-            "layer_decrease_hotkey"
-        );
-        if (ImGui::Button("恢复默认快捷键", ImVec2(220.0f * uiScale, 0.0f))) {
-            gGuiHotkey.store('M', std::memory_order_relaxed);
-            gGuiHotkeyModifiers.store(kHotkeyModifierAlt, std::memory_order_relaxed);
-            static unsigned int const moveKeys[]{VK_LEFT, VK_RIGHT, VK_UP, VK_DOWN, VK_UP, VK_DOWN};
-            static unsigned int const moveModifiers[]{
-                kHotkeyModifierControl,
-                kHotkeyModifierControl,
-                kHotkeyModifierControl,
-                kHotkeyModifierControl,
-                kHotkeyModifierShift,
-                kHotkeyModifierShift
-            };
-            for (std::size_t index = 0; index < gMoveHotkeys.size(); ++index) {
-                gMoveHotkeys[index].store(moveKeys[index], std::memory_order_relaxed);
-                gMoveHotkeyModifiers[index].store(moveModifiers[index], std::memory_order_relaxed);
-                gCapturingMoveHotkey[index].store(false, std::memory_order_relaxed);
-            }
-            gLayerIncreaseHotkey.store(VK_UP, std::memory_order_relaxed);
-            gLayerDecreaseHotkey.store(VK_DOWN, std::memory_order_relaxed);
-            gLayerIncreaseHotkeyModifiers.store(kHotkeyModifierAlt, std::memory_order_relaxed);
-            gLayerDecreaseHotkeyModifiers.store(kHotkeyModifierAlt, std::memory_order_relaxed);
-            gCapturingGuiHotkey.store(false, std::memory_order_relaxed);
-            gCapturingLayerIncreaseHotkey.store(false, std::memory_order_relaxed);
-            gCapturingLayerDecreaseHotkey.store(false, std::memory_order_relaxed);
-            resetHotkeyState();
-            saveSettings();
-        }
-        ImGui::TextDisabled("“完整结构”模式下，显示层快捷键无效");
-        ImGui::TextDisabled("可在聊天栏输入 LHolo 打开投影菜单");
-        }
-
-        if (activePage == 4) {
-        ImGui::SeparatorText("HUD 信息显示");
-        auto hudEnabled = gHudEnabled.load(std::memory_order_relaxed);
-        if (ImGui::Checkbox("启用 HUD", &hudEnabled)) {
-            gHudEnabled.store(hudEnabled, std::memory_order_relaxed);
-            saveSettings();
-        }
-        ImGui::BeginDisabled(!hudEnabled);
-        static char const* hudPositionNames[]{"左上", "左下", "右上", "右下"};
-        auto hudPosition = std::clamp(gHudPosition.load(std::memory_order_relaxed), 0, 3);
-        ImGui::SetNextItemWidth(260.0f * uiScale);
-        if (ImGui::Combo("HUD 位置", &hudPosition, hudPositionNames, 4)) {
-            gHudPosition.store(hudPosition, std::memory_order_relaxed);
-            saveSettings();
-        }
-        auto showFileName = gHudShowFileName.load(std::memory_order_relaxed);
-        if (ImGui::Checkbox("显示投影文件名", &showFileName)) {
-            gHudShowFileName.store(showFileName, std::memory_order_relaxed);
-            saveSettings();
-        }
-        auto showLayer = gHudShowLayer.load(std::memory_order_relaxed);
-        if (ImGui::Checkbox("显示渲染层信息", &showLayer)) {
-            gHudShowLayer.store(showLayer, std::memory_order_relaxed);
-            saveSettings();
-        }
-        auto showProgress = gHudShowProgress.load(std::memory_order_relaxed);
-        if (ImGui::Checkbox("显示建造进度", &showProgress)) {
-            gHudShowProgress.store(showProgress, std::memory_order_relaxed);
-            saveSettings();
-        }
-        auto showWrongState = gHudShowWrongState.load(std::memory_order_relaxed);
-        if (ImGui::Checkbox("显示朝向错误", &showWrongState)) {
-            gHudShowWrongState.store(showWrongState, std::memory_order_relaxed);
-            saveSettings();
-        }
-        auto showWrongType = gHudShowWrongType.load(std::memory_order_relaxed);
-        if (ImGui::Checkbox("显示放置错误", &showWrongType)) {
-            gHudShowWrongType.store(showWrongType, std::memory_order_relaxed);
-            saveSettings();
-        }
-        auto showBlockEntity = gHudShowBlockEntity.load(std::memory_order_relaxed);
-        if (ImGui::Checkbox("显示方块实体名称", &showBlockEntity)) {
-            gHudShowBlockEntity.store(showBlockEntity, std::memory_order_relaxed);
-            saveSettings();
-        }
-        ImGui::EndDisabled();
-        ImGui::TextDisabled("HUD 仅在关闭投影菜单后显示");
-        }
-        renderMaterialPopup(uiScale);
-        ImGui::EndChild();
-        ImGui::EndChild();
-        ImGui::PopStyleVar();
-        ImGui::PopStyleColor();
+void renderGui() {
+    if (!isGuiVisible()) return;
+    auto const displaySize = ImGui::GetIO().DisplaySize;
+    auto const configuredScale = gUiScale.load(std::memory_order_relaxed);
+    auto const effectiveScale = configuredScale > 0.0f
+        ? std::clamp(configuredScale, 1.0f, 5.0f)
+        : std::clamp(std::min(displaySize.x / 1920.0f, displaySize.y / 1080.0f), 1.0f, 5.0f);
+    if (!gPathInitialized) {
+        std::lock_guard lock(gLoadedMutex);
+        std::snprintf(gPathBuffer.data(), gPathBuffer.size(), "%s", gLastPath.c_str());
+        gPathInitialized = true;
     }
-    ImGui::End();
-    ImGui::PopStyleVar(2);
+    auto const metrics = lholo::ui::calculateMetrics(displaySize, effectiveScale);
+    lholo::ui::applyFluentTheme(metrics);
+    auto model = makeMenuModel(effectiveScale);
+    bool refreshModel = false;
+    auto const actions = makeMenuActions(refreshModel);
+    lholo::ui::renderMenu(model, actions, metrics);
+    gActivePage = model.page;
+    if (!refreshModel) applyMenuModel(model, effectiveScale);
     if (gOpeningInputBlockFrames.load(std::memory_order_acquire) > 0) {
         gOpeningInputBlockFrames.fetch_sub(1, std::memory_order_acq_rel);
     }
-    if (!open) {
+    if (model.closeRequested) {
         gGuiVisible.store(false, std::memory_order_release);
         gBlockGameInputUntil.store(GetTickCount64() + 180, std::memory_order_release);
     }
@@ -1997,7 +1699,7 @@ void loadSettings() {
         auto const json = nlohmann::json::parse(input, nullptr, true, true);
         std::lock_guard lock(gLoadedMutex);
         gLastPath = json.value("lastStructurePath", gLastPath);
-        gUiScale.store(std::clamp(json.value("uiScale", 0.0f), 0.0f, 5.0f), std::memory_order_relaxed);
+        gUiScale.store(std::clamp(json.value("uiScale", 2.0f), 0.0f, 5.0f), std::memory_order_relaxed);
         projection::setOpacity(json.value("opacity", 1.0f));
         projection::setCorrectionFillOpacity(json.value("correctionFillOpacity", 0.15f));
         projection::setCorrectionOutlineOpacity(json.value("correctionOutlineOpacity", 1.0f));
