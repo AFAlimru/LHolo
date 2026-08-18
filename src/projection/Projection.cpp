@@ -70,7 +70,8 @@
 #include "mc/world/level/block/Block.h"
 #include "mc/world/level/block/BlockRenderLayer.h"
 #include "mc/world/level/block/VanillaStates.h"
-#include "mc/world/level/block/states/VanillaBlockStateTransformUtils.h"
+#include "mc/world/level/levelgen/structure/LegacyStructureSettings.h"
+#include "mc/world/level/levelgen/structure/LegacyStructureTemplate.h"
 #include "mc/world/level/material/Material.h"
 #include "mc/util/Mirror.h"
 #include "mc/util/Rotation.h"
@@ -326,9 +327,11 @@ bool enableStructureProjection(
         };
     } else {
         auto const& position = player->getPosition();
+        // Player position is the feet/air cell. Default a newly loaded
+        // structure to the supporting ground cell directly below it.
         next.anchor = BlockPos(
             std::floor(position.x),
-            std::floor(position.y),
+            std::floor(position.y) - 1,
             std::floor(position.z)
         );
     }
@@ -352,17 +355,18 @@ bool contextIsValid(IClientInstance& client, Actor* player) {
         && gState.dimension == &player->getDimension();
 }
 
-Mirror getProjectionMirror() {
-    switch (structure::getMirrorMode()) {
-    case 1: return Mirror::X;
-    case 2: return Mirror::Z;
-    case 3: return Mirror::Xz;
+Mirror getProjectionMirror(int mirrorMode) {
+    switch (mirrorMode) {
+    // LHolo's UI names the coordinate being flipped. Bedrock names Mirror by
+    // the axis kept fixed: Mirror::Z flips X, while Mirror::X flips Z.
+    case 1: return Mirror::Z;
+    case 2: return Mirror::X;
     default: return Mirror::None;
     }
 }
 
-Rotation getProjectionRotation() {
-    switch (structure::getRotationQuarterTurns()) {
+Rotation getProjectionRotation(int quarterTurns) {
+    switch (quarterTurns & 3) {
     case 1: return Rotation::Clockwise90;
     case 2: return Rotation::Clockwise180;
     case 3: return Rotation::CounterClockwise90;
@@ -370,10 +374,12 @@ Rotation getProjectionRotation() {
     }
 }
 
-Block const* transformExpectedBlock(Block const* block, Rotation rotation, Mirror mirror) {
+Block const* transformExpectedBlock(Block const* block, LegacyStructureSettings const& settings) {
     if (!block) return nullptr;
-    auto const* transformed = VanillaBlockStateTransformUtils::transformBlock(*block, rotation, mirror);
-    return transformed ? transformed : block;
+    // Use the same generic permutation mapping as vanilla structure placement.
+    // The engine owns the complete set of transformable states, so new or
+    // uncommon directional blocks require no LHolo-side block/state table.
+    return &LegacyStructureTemplate::_mapToData(*block, settings);
 }
 
 bool projectionStatesMatch(Block const& expected, Block const& actual) {
@@ -450,8 +456,8 @@ BlockPos transformStructurePosition(
 ) {
     int x = entry.x;
     int z = entry.z;
-    if (mirrorMode == 1 || mirrorMode == 3) x = loaded.sizeX - 1 - x;
-    if (mirrorMode == 2 || mirrorMode == 3) z = loaded.sizeZ - 1 - z;
+    if (mirrorMode == 1) x = loaded.sizeX - 1 - x;
+    if (mirrorMode == 2) z = loaded.sizeZ - 1 - z;
     switch (rotation) {
     case 1: return BlockPos{loaded.sizeZ - 1 - z, entry.y, x};
     case 2: return BlockPos{loaded.sizeX - 1 - x, entry.y, loaded.sizeZ - 1 - z};
@@ -478,8 +484,11 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
     if (!renderAlphaLayer) {
         auto const mirrorMode = structure::getMirrorMode();
         auto const rotationTurns = structure::getRotationQuarterTurns();
-        auto const mirror = getProjectionMirror();
-        auto const rotation = getProjectionRotation();
+        auto const mirror = getProjectionMirror(mirrorMode);
+        auto const rotation = getProjectionRotation(rotationTurns);
+        LegacyStructureSettings transformSettings;
+        transformSettings.setMirror(mirror);
+        transformSettings.setRotation(rotation);
         auto const offsetX = structure::getOffsetX();
         auto const offsetY = structure::getOffsetY();
         auto const offsetZ = structure::getOffsetZ();
@@ -604,7 +613,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 auto const transformed = transformStructurePosition(
                     entry, *gState.structure, mirrorMode, rotationTurns
                 );
-                auto const* transformedBlock = transformExpectedBlock(entry.block, rotation, mirror);
+                auto const* transformedBlock = transformExpectedBlock(entry.block, transformSettings);
                 auto const worldKey = std::tuple{
                     gState.anchor.x + offsetX + transformed.x,
                     gState.anchor.y + offsetY + transformed.y,
@@ -615,7 +624,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 } else {
                     // Liquids join the virtual world so vanilla liquid-height
                     // queries see stacked virtual water (full-cell columns).
-                    auto const* transformedLiquid = transformExpectedBlock(entry.liquid, rotation, mirror);
+                    auto const* transformedLiquid = transformExpectedBlock(entry.liquid, transformSettings);
                     if (transformedLiquid) gState.expectedWorldBlocks.emplace(worldKey, transformedLiquid);
                 }
                 gState.expectedWorldBlockIndices.emplace(worldKey, index);
@@ -666,8 +675,8 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 gState.anchor.y + offsetY + transformed.y,
                 gState.anchor.z + offsetZ + transformed.z
             };
-            auto const* expected = transformExpectedBlock(entry.block, rotation, mirror);
-            auto const* expectedLiquid = transformExpectedBlock(entry.liquid, rotation, mirror);
+            auto const* expected = transformExpectedBlock(entry.block, transformSettings);
+            auto const* expectedLiquid = transformExpectedBlock(entry.liquid, transformSettings);
             auto const& actual = region.getBlock(position);
             auto const& actualLiquid = region.getLiquidBlock(position);
             auto const bodyMissing = expected && actual.isAir();
@@ -770,7 +779,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     gState.anchor.z + offsetZ + transformed.z
                 };
                 auto const appendBlock = [&](Block const* source) {
-                    auto const* transformedBlock = transformExpectedBlock(source, rotation, mirror);
+                    auto const* transformedBlock = transformExpectedBlock(source, transformSettings);
                     if (!transformedBlock) return;
                     auto const* graphics = BlockGraphics::getForBlock(*transformedBlock);
                     auto const layer = graphics
@@ -873,7 +882,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 ));
                 for (auto const index : liquidProxyIndices) {
                     auto const& entry = gState.structure->renderBlocks[index];
-                    auto const* expectedLiquid = transformExpectedBlock(entry.liquid, rotation, mirror);
+                    auto const* expectedLiquid = transformExpectedBlock(entry.liquid, transformSettings);
                     if (!expectedLiquid) continue;
                     auto const* graphics = BlockGraphics::getForBlock(*expectedLiquid);
                     auto const* uvSet = graphics ? &graphics->getTexture(0, 0) : nullptr;
@@ -894,7 +903,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     auto const neighborIsSameLiquid = [&](int dx, int dy, int dz) {
                         auto const* neighbor = neighborEntry(dx, dy, dz);
                         if (!neighbor || !neighbor->liquid) return false;
-                        auto const* transformed = transformExpectedBlock(neighbor->liquid, rotation, mirror);
+                        auto const* transformed = transformExpectedBlock(neighbor->liquid, transformSettings);
                         return transformed && transformed->getTypeName() == expectedLiquid->getTypeName();
                     };
                     // Vanilla source liquids render at 8/9 of a block.
@@ -976,7 +985,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 auto const tint = 0x00FFFFFFU | (alpha << 24U);
                 for (auto const index : blockEntityIndices) {
                     auto const& entry = gState.structure->renderBlocks[index];
-                    auto const* expectedBlock = transformExpectedBlock(entry.block, rotation, mirror);
+                    auto const* expectedBlock = transformExpectedBlock(entry.block, transformSettings);
                     if (!expectedBlock) continue;
                     auto const* graphics = BlockGraphics::getForBlock(*expectedBlock);
                     auto const* uvSet = graphics ? &graphics->getTexture(0, 0) : nullptr;
@@ -1725,9 +1734,14 @@ BuildProgress getBuildProgress() {
     return result;
 }
 
-ProjectionQuery queryProjection(BlockPos const& worldPos) {
+ProjectionQuery queryProjection(LocalPlayer& player, BlockPos const& worldPos) {
     std::lock_guard lock(gStateMutex);
     if (!gState.enabled || !gState.structure) return {nullptr, false};
+    if (gState.level != &player.getLevel() || gState.dimension != &player.getDimension()) {
+        clearProjectionStateLocked();
+        structure::clear();
+        return {nullptr, false};
+    }
     auto const key = std::tuple{worldPos.x, worldPos.y, worldPos.z};
     auto const foundIndex = gState.expectedWorldBlockIndices.find(key);
     if (foundIndex == gState.expectedWorldBlockIndices.end()) return {nullptr, false};
@@ -1740,10 +1754,15 @@ ProjectionQuery queryProjection(BlockPos const& worldPos) {
     return {block, missing};
 }
 
-std::vector<RangeCandidate> queryMissingCellsInRange(Vec3 const& center, float radius) {
+std::vector<RangeCandidate> queryMissingCellsInRange(LocalPlayer& player, Vec3 const& center, float radius) {
     std::vector<RangeCandidate> result;
     std::lock_guard lock(gStateMutex);
     if (!gState.enabled || !gState.structure) return result;
+    if (gState.level != &player.getLevel() || gState.dimension != &player.getDimension()) {
+        clearProjectionStateLocked();
+        structure::clear();
+        return result;
+    }
     // Only visit cells in the axis-aligned box around the center: with a small
     // radius this is far cheaper than walking the whole virtual-world map.
     int const r = static_cast<int>(std::ceil(radius));

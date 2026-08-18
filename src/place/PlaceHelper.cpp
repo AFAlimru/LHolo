@@ -84,6 +84,11 @@ constexpr std::uint64_t kMinSendIntervalMs = 40;
 // Backoff for a rejected inventory swap. Without it a failed swap retries every
 // tick and spams the server.
 constexpr std::uint64_t kSwapRetryMs = 50;
+// Bound expensive getPlacementBlock planning in range mode. Failed plans are
+// cached by target, exact block state, item aux, eye position and view vector;
+// changing the player's aim invalidates the cache immediately.
+constexpr int           kRangePlanBudgetPerTick = 16;
+constexpr std::uint64_t kFailedPlanCacheMs      = 250;
 // Manual-mode typematic repeat: after the first block on press, holding pauses
 // for kManualInitialDelayMs and then auto-repeats every kManualRepeatIntervalMs
 // (like keyboard key-repeat), so a tap places one and a hold streams at a steady
@@ -120,6 +125,52 @@ std::atomic_uint64_t gNextSwapAt{0};
 std::mutex                                      gRecentMutex;
 std::unordered_map<std::int64_t, std::uint64_t> gRecentPlacements;
 
+struct FailedPlanKey {
+    std::int64_t cell;
+    uint         runtimeId;
+    int          itemAux;
+    int          eyeX;
+    int          eyeY;
+    int          eyeZ;
+    int          viewX;
+    int          viewY;
+    int          viewZ;
+
+    bool operator==(FailedPlanKey const&) const = default;
+};
+
+struct PlacementContext {
+    Vec3  eye;
+    float reachSquared;
+    int   eyeX;
+    int   eyeY;
+    int   eyeZ;
+    int   viewX;
+    int   viewY;
+    int   viewZ;
+};
+
+struct FailedPlanKeyHash {
+    std::size_t operator()(FailedPlanKey const& key) const noexcept {
+        std::size_t result = std::hash<std::int64_t>{}(key.cell);
+        auto const combine = [&result](auto value) {
+            std::size_t const hash = std::hash<decltype(value)>{}(value);
+            result ^= hash + 0x9e3779b9U + (result << 6U) + (result >> 2U);
+        };
+        combine(key.runtimeId);
+        combine(key.itemAux);
+        combine(key.eyeX);
+        combine(key.eyeY);
+        combine(key.eyeZ);
+        combine(key.viewX);
+        combine(key.viewY);
+        combine(key.viewZ);
+        return result;
+    }
+};
+
+std::unordered_map<FailedPlanKey, std::uint64_t, FailedPlanKeyHash> gFailedRangePlans;
+
 std::int64_t packBlockPos(BlockPos const& p) {
     return (static_cast<std::int64_t>(p.x) & 0x3FFFFFF) << 38
          | (static_cast<std::int64_t>(p.z) & 0x3FFFFFF) << 12
@@ -141,6 +192,7 @@ void markPlaced(BlockPos const& cell, std::uint64_t now) {
     }
     gRecentPlacements[packBlockPos(cell)] = now + kCellLockMs;
 }
+
 // Name of the block-entity block the crosshair currently points at, shown in
 // the HUD so projected chests/signs/hoppers/... can be identified.
 std::string gAimedBlockEntityName;
@@ -178,18 +230,100 @@ char const* placingItemName(std::string const& blockName) {
     return nullptr;
 }
 
+ItemStack makePlacingItem(Block const& block) {
+    char const* const itemName = placingItemName(block.getTypeName());
+    // Construct the inventory form by item name with neutral aux. Constructing
+    // ItemStack directly from an oriented Block copies legacy placement bits
+    // (stairs direction/half, pillar axis, ...), but inventory items do not
+    // carry those world-state bits and therefore never matched.
+    std::string_view const name = itemName ? std::string_view{itemName} : std::string_view{block.getTypeName()};
+    return ItemStack(name, 1, 0, nullptr);
+}
+
+PlacementContext makePlacementContext(Vec3 const& eye, Vec3 const& view, float reach) {
+    auto const quantize = [](float value, float scale) {
+        return static_cast<int>(std::lround(value * scale));
+    };
+    return {
+        eye,
+        reach * reach,
+        quantize(eye.x, 4.0f),
+        quantize(eye.y, 4.0f),
+        quantize(eye.z, 4.0f),
+        quantize(view.x, 32.0f),
+        quantize(view.y, 32.0f),
+        quantize(view.z, 32.0f),
+    };
+}
+
+FailedPlanKey makeFailedPlanKey(
+    PlacementContext const& context,
+    BlockPos const&         cell,
+    Block const&            block,
+    int                     itemAux
+) {
+    return {
+        packBlockPos(cell),
+        block.getRuntimeId(),
+        itemAux,
+        context.eyeX,
+        context.eyeY,
+        context.eyeZ,
+        context.viewX,
+        context.viewY,
+        context.viewZ,
+    };
+}
+
+bool isFailedPlanCached(FailedPlanKey const& key, std::uint64_t now) {
+    auto const found = gFailedRangePlans.find(key);
+    return found != gFailedRangePlans.end() && now < found->second;
+}
+
+void cacheFailedPlan(FailedPlanKey const& key, std::uint64_t now) {
+    if (gFailedRangePlans.size() > 256) {
+        for (auto it = gFailedRangePlans.begin(); it != gFailedRangePlans.end();) {
+            it = now >= it->second ? gFailedRangePlans.erase(it) : std::next(it);
+        }
+    }
+    gFailedRangePlans[key] = now + kFailedPlanCacheMs;
+}
+
 // Find an inventory slot holding the item that places `block`. Match on item +
 // aux only (ignoring block/placement data): a plain inventory comparator or
 // redstone item carries no placement state, so the stricter
 // sameItemAndAuxAndBlockData never matched a ghost that does.
 ItemFind findItemSlot(Player& player, Block const& block) {
-    char const* const itemName = placingItemName(block.getTypeName());
-    ItemStack const want = itemName ? ItemStack(std::string_view{itemName}, 1, 0, nullptr)
-                                    : ItemStack(block, 1, nullptr);
+    ItemStack const want = makePlacingItem(block);
     auto& inventory = player.getInventory();
     for (int slot = 0; slot < kInventorySlots; ++slot) {
         auto const& item = inventory.getItem(slot);
         if (item.sameItemAndAux(want)) return {slot, &item};
+    }
+    return {-1, nullptr};
+}
+
+// Range placement may inspect hundreds of cells in one tick. Index the 36
+// inventory slots once by the official combined item/aux key, then verify the
+// final match with sameItemAndAux so hash collisions cannot select a wrong item.
+using InventorySnapshot = std::unordered_multimap<int, ItemFind>;
+
+InventorySnapshot snapshotInventory(Player& player) {
+    InventorySnapshot snapshot;
+    snapshot.reserve(kInventorySlots);
+    auto& inventory = player.getInventory();
+    for (int slot = 0; slot < kInventorySlots; ++slot) {
+        auto const& item = inventory.getItem(slot);
+        snapshot.emplace(item.getIdAux(), ItemFind{slot, &item});
+    }
+    return snapshot;
+}
+
+ItemFind findItemSlot(InventorySnapshot const& snapshot, Block const& block) {
+    ItemStack const want = makePlacingItem(block);
+    auto const [first, last] = snapshot.equal_range(want.getIdAux());
+    for (auto it = first; it != last; ++it) {
+        if (it->second.item->sameItemAndAux(want)) return it->second;
     }
     return {-1, nullptr};
 }
@@ -321,13 +455,13 @@ std::optional<ProjectionTarget> findProjectionTarget(
             // (the vanilla placement position) fills an adjacent ghost. Never
             // target the cell the camera itself is standing in.
             BlockPos const neighbor = cell.neighbor(entryFace);
-            auto const query = projection::queryProjection(neighbor);
+            auto const query = projection::queryProjection(player, neighbor);
             if (neighbor != originCell && query.block && query.missing) {
                 return ProjectionTarget{neighbor, cell, entryFace, query.block};
             }
             break;
         }
-        auto const query = projection::queryProjection(cell);
+        auto const query = projection::queryProjection(player, cell);
         if (!query.block || !query.missing) continue;
 
         // The ghost itself is the target; reuse the shared support selection
@@ -358,9 +492,15 @@ void placeBlock(LocalPlayer& player, ProjectionTarget const& target, int slot, I
     // hotbar items are selected directly, backpack items were swapped in.
     transaction.mSlot = slot;
     transaction.mFromPos = player.getPosition();
-    // Click point chosen by the orientation search so the server reproduces the
-    // ghost's placement state (which face/half it resolves to).
-    transaction.mClickPos = target.clickPos;
+    // ItemUseInventoryTransaction serializes the hit location relative to the
+    // clicked block (mPos), while the planner stores an absolute world point for
+    // reach checks. Sending the absolute coordinate made the server resolve the
+    // stair half differently at some world heights.
+    transaction.mClickPos = Vec3{
+        target.clickPos.x - static_cast<float>(target.at.x),
+        target.clickPos.y - static_cast<float>(target.at.y),
+        target.clickPos.z - static_cast<float>(target.at.z),
+    };
     transaction.mClientPredictedResult = ItemUseInventoryTransaction::PredictedResult::Success;
     transaction.mClientCooldownState = ItemUseInventoryTransaction::ClientCooldownState::Off;
     transaction.setTargetBlock(region.getBlock(target.at));
@@ -410,37 +550,25 @@ void forEachClickCandidate(BlockPos const& cell, uchar sf, F&& fn) {
     }
 }
 
-// Orientation gate (easy-place "place only when the orientation is right"). Ask
-// vanilla getPlacementBlock what block WOULD result from each reachable
-// placement (support face + click point), using the player's current facing,
-// and accept the first combo that reproduces the ghost exactly. Returns false
-// when nothing reachable matches, so the caller leaves the cell for later rather
-// than placing a wrong orientation. This reproduces the game's own computation,
-// so face-mounted blocks (torches/levers/buttons) and top/bottom halves are
-// solved automatically; rotational blocks (stairs/pistons/...) pass only while
-// the player looks the right way.
-// Centre of the face of `cell` shared with the support in direction `sf`.
-Vec3 sharedFaceCenter(BlockPos const& cell, uchar sf) {
-    float const cx = static_cast<float>(cell.x);
-    float const cy = static_cast<float>(cell.y);
-    float const cz = static_cast<float>(cell.z);
-    switch (static_cast<Facing::Name>(sf)) {
-    case Facing::Name::Down:  return Vec3{cx + 0.5f, cy + 0.0f, cz + 0.5f};
-    case Facing::Name::Up:    return Vec3{cx + 0.5f, cy + 1.0f, cz + 0.5f};
-    case Facing::Name::North: return Vec3{cx + 0.5f, cy + 0.5f, cz + 0.0f};
-    case Facing::Name::South: return Vec3{cx + 0.5f, cy + 0.5f, cz + 1.0f};
-    case Facing::Name::West:  return Vec3{cx + 0.0f, cy + 0.5f, cz + 0.5f};
-    case Facing::Name::East:  return Vec3{cx + 1.0f, cy + 0.5f, cz + 0.5f};
-    default:                  return Vec3{cx + 0.5f, cy + 0.5f, cz + 0.5f};
-    }
+// Ask vanilla getPlacementBlock what block WOULD result from each reachable
+// support/click point using the player's real current rotation. Placements that
+// need another facing are left for the player to aim correctly; no movement or
+// input packet is altered.
+bool isWithinPlacementReach(PlacementContext const& context, Vec3 const& clickPos) {
+    float const dx = clickPos.x - context.eye.x;
+    float const dy = clickPos.y - context.eye.y;
+    float const dz = clickPos.z - context.eye.z;
+    return dx * dx + dy * dy + dz * dz <= context.reachSquared;
 }
 
-// Read one serialized state of a block as a string ("" if absent).
+// Read a serialized Bedrock block-state value using the official Block API.
+// Empty means the state is absent (all relevant numeric/string values below are
+// non-empty, including zero as "0").
 std::string serializedState(Block const& block, char const* key) {
-    for (auto const& [k, v] : block.getSerializationId()) {
-        if (k != "states") continue;
-        if (!v.hold<::CompoundTag>()) break;
-        for (auto const& [stateKey, stateValue] : v.get<::CompoundTag>()) {
+    for (auto const& [rootKey, rootValue] : block.getSerializationId()) {
+        if (rootKey != "states") continue;
+        if (!rootValue.hold<::CompoundTag>()) break;
+        for (auto const& [stateKey, stateValue] : rootValue.get<::CompoundTag>()) {
             if (stateKey != key) continue;
             switch (stateValue.getId()) {
             case ::Tag::Type::Byte:   return std::to_string(static_cast<int>(stateValue.get<::ByteTag>().data));
@@ -454,142 +582,154 @@ std::string serializedState(Block const& block, char const* key) {
     return {};
 }
 
-// Blocks whose final state comes from neighbours (rail curves auto-connect) or
-// is purely cosmetic-after-the-fact. The placed block can never equal the ghost
-// exactly, so easy-place gates these on the block type only.
-bool isTypeOnlyGate(Block const& block) {
-    auto const& name = block.getTypeName();
-    return name == "minecraft:rail" || name == "minecraft:golden_rail"
-        || name == "minecraft:detector_rail" || name == "minecraft:activator_rail"
-        // Redstone dust connections form from neighbours, so the placed cross/dot
-        // never equals the ghost's connection state.
-        || name == "minecraft:redstone_wire";
+bool sameSerializedState(Block const& predicted, Block const& ghost, char const* key) {
+    std::string const expected = serializedState(ghost, key);
+    return !expected.empty() && serializedState(predicted, key) == expected;
 }
 
-// The block's single facing value (prefixed by which state carries it, so a
-// predicted/ghost comparison uses the same one). Empty if the block has no
-// facing state.
-std::string facingValue(Block const& block) {
-    std::string v = serializedState(block, "facing_direction");
-    if (!v.empty()) return "fd:" + v;
-    v = serializedState(block, "minecraft:cardinal_direction");
-    if (!v.empty()) return "cd:" + v;
-    v = serializedState(block, "minecraft:facing_direction");
-    if (!v.empty()) return "mf:" + v;
-    return {};
+bool isTwoBlockDoor(Block const& block) {
+    return block.getBlockType().isDoorBlock() && !serializedState(block, "upper_block_bit").empty();
 }
 
-// Blocks whose only relevant orientation is a single facing (no top/bottom half,
-// hinge, or stair shape): dispensers, droppers, observers, pistons, comparators,
-// repeaters, chests, furnaces, ... They gate on facing alone; other states
-// (triggered_bit, subtract mode, delay, lit) are set or derived after placement,
-// so an exact match would fail. Detected from the block's own states.
-bool isFacingGate(Block const& block) {
-    bool hasFacing = false;
-    for (auto const& [k, v] : block.getSerializationId()) {
-        if (k != "states") continue;
-        if (!v.hold<::CompoundTag>()) break;
-        for (auto const& [stateKey, stateValue] : v.get<::CompoundTag>()) {
-            if (stateKey == "facing_direction" || stateKey == "minecraft:cardinal_direction"
-                || stateKey == "minecraft:facing_direction") {
-                hasFacing = true;
-            } else if (stateKey == "upside_down_bit" || stateKey == "upper_block_bit"
-                || stateKey == "minecraft:vertical_half" || stateKey == "top_slot_bit"
-                || stateKey == "open_bit" || stateKey == "door_hinge_bit"
-                || stateKey == "weirdo_direction") {
-                return false;  // has half/hinge/stair shape -> needs the exact gate
-            }
-        }
-        break;
+// RuntimeId is intentionally retained for ordinary blocks. For the three
+// reported placement-controlled families, compare only the states that the
+// click face/player rotation determines. Other permutation bits may be updated
+// from neighbours after placement and must not suppress a correct action.
+bool placementPredictionMatches(
+    Block const& predicted,
+    Block const& ghost,
+    Block const* expectedDoorUpper = nullptr
+) {
+    if (predicted.getTypeName() != ghost.getTypeName()) return false;
+
+    auto const& name = ghost.getTypeName();
+    if (name.ends_with("_stairs")) {
+        return sameSerializedState(predicted, ghost, "weirdo_direction")
+            && sameSerializedState(predicted, ghost, "upside_down_bit");
     }
-    return hasFacing;
+    if (!serializedState(ghost, "torch_facing_direction").empty()) {
+        return sameSerializedState(predicted, ghost, "torch_facing_direction");
+    }
+    if (!serializedState(ghost, "pillar_axis").empty()) {
+        return sameSerializedState(predicted, ghost, "pillar_axis");
+    }
+    if (expectedDoorUpper) {
+        // A door item places both cells. The lower ghost owns direction/open,
+        // while the upper ghost owns the hinge. Require the official predictor
+        // to expose all of those values; if it cannot, leave the door for manual
+        // placement rather than risking a two-cell wrong result.
+        std::string const expectedHinge = serializedState(*expectedDoorUpper, "door_hinge_bit");
+        return sameSerializedState(predicted, ghost, "upper_block_bit")
+            && sameSerializedState(predicted, ghost, "direction")
+            && sameSerializedState(predicted, ghost, "open_bit")
+            && !expectedHinge.empty()
+            && serializedState(predicted, "door_hinge_bit") == expectedHinge;
+    }
+    return predicted.getRuntimeId() == ghost.getRuntimeId();
 }
 
 bool resolveOrientedPlacement(
-    LocalPlayer& player, BlockSource& region, BlockPos const& cell,
-    Block const& ghost, int itemAux, ProjectionTarget& out
+    LocalPlayer&            player,
+    BlockSource&            region,
+    PlacementContext const& context,
+    BlockPos const&         cell,
+    Block const&            ghost,
+    int                     itemAux,
+    ProjectionTarget&       out
 ) {
-    bool const typeOnly = isTypeOnlyGate(ghost);
+    Block const* expectedDoorUpper = nullptr;
 
-    // Exact placement: find the support face + click point whose predicted block
-    // reproduces the ghost (orientation and all). Uses getPlacementBlock, which
-    // is reliable for the orientation-critical full blocks (stairs, slabs,
-    // pistons, ...) this path is meant for.
-    auto const searchExact = [&]() -> bool {
-        auto const tryPlacement = [&](BlockPos const& at, uchar face, Vec3 const& clickPos) {
-            Block const& predicted = ghost.getPlacementBlock(player, cell, face, clickPos, itemAux);
-            if (!(predicted == ghost)) return false;
-            out = ProjectionTarget{cell, at, face, &ghost, clickPos};
-            return true;
+    if (isTwoBlockDoor(ghost)) {
+        // The upper projected half is never an independent placement target.
+        // One DoorItem use on the lower cell creates both halves.
+        if (serializedState(ghost, "upper_block_bit") != "0") return false;
+        BlockPos const upperCell = cell.neighbor(static_cast<uchar>(Facing::Name::Up));
+        auto const upper = projection::queryProjection(player, upperCell);
+        if (!upper.block || !upper.missing || upper.block->getTypeName() != ghost.getTypeName()
+            || serializedState(*upper.block, "upper_block_bit") != "1"
+            || !region.getBlock(upperCell).isAir()) {
+            return false;
+        }
+        // DoorBlock::mayPlace is the official two-cell/support validation. It is
+        // intentionally used only for doors; treating it as a universal gate
+        // previously rejected valid stairs and wall-mounted blocks.
+        if (!ghost.mayPlace(region, cell)) return false;
+        expectedDoorUpper = upper.block;
+    }
+
+    // Only accept a real support and a click point for which the official
+    // placement predictor reproduces the complete projected block state.
+    // Do not call BlockSource::mayPlace here: LHolo sends a legacy transaction
+    // directly, while mayPlace belongs to the full vanilla interaction path;
+    // treating its result as a hard gate blocked valid torch/stair placements.
+    auto const tryPlacement = [&](BlockPos const& at, uchar face, Vec3 const& clickPos, ProjectionTarget& result) {
+        if (!isWithinPlacementReach(context, clickPos)) return false;
+
+        // Mirror the official use-on chain: `at` is the block being clicked,
+        // matching GameMode::useItemOn(... at, face, hit ...) and the
+        // transaction's mPos. Passing the target air cell here made mounted
+        // blocks see no support and gave stairs the wrong placement context.
+        Vec3 const relativeClick{
+            clickPos.x - static_cast<float>(at.x),
+            clickPos.y - static_cast<float>(at.y),
+            clickPos.z - static_cast<float>(at.z),
         };
-        for (uchar sf = 0; sf < 6; ++sf) {
+        // BlockItem first converts the clicked support position to the target
+        // placement cell, then asks the block for its permutation. Feed the same
+        // target position and relative hit vector used by the item-use path.
+        Block const& predicted = ghost.getPlacementBlock(player, cell, face, relativeClick, itemAux);
+        if (!placementPredictionMatches(predicted, ghost, expectedDoorUpper)) return false;
+
+        result = ProjectionTarget{cell, at, face, &ghost, clickPos};
+        return true;
+    };
+
+    auto const searchCurrentRotation = [&](ProjectionTarget& result) {
+        uchar const firstSupport = expectedDoorUpper ? static_cast<uchar>(Facing::Name::Down) : 0;
+        uchar const supportEnd   = expectedDoorUpper ? firstSupport + 1 : 6;
+        for (uchar sf = firstSupport; sf < supportEnd; ++sf) {
             BlockPos const at = cell.neighbor(sf);
             if (region.getBlock(at).isAir()) continue;
+
             uchar const face = Facing::getOpposite(sf);
             bool matched = false;
             forEachClickCandidate(cell, sf, [&](Vec3 const& clickPos) {
-                if (!matched && tryPlacement(at, face, clickPos)) matched = true;
+                if (!matched && tryPlacement(at, face, clickPos, result)) matched = true;
             });
             if (matched) return true;
         }
+
+        // Preserve the original LHolo air-mPos path even when an adjacent
+        // support exists. A support below can only yield a vertical pillar;
+        // using the air target itself lets the official predictor select a side
+        // face for horizontal logs and other face-dependent states. Exact
+        // RuntimeId matching still prevents an incorrect placement.
+        // DoorItem only accepts a floor-supported lower cell and creates its
+        // upper half itself; never use the floating/air-mPos fallback for doors.
+        if (expectedDoorUpper) return false;
+
         float const cx = static_cast<float>(cell.x);
         float const cy = static_cast<float>(cell.y);
         float const cz = static_cast<float>(cell.z);
         for (uchar face = 0; face < 6; ++face) {
-            if (tryPlacement(cell, face, Vec3{cx + 0.5f, cy + 0.25f, cz + 0.5f})) return true;
-            if (tryPlacement(cell, face, Vec3{cx + 0.5f, cy + 0.75f, cz + 0.5f})) return true;
+            if (tryPlacement(cell, face, Vec3{cx + 0.5f, cy + 0.25f, cz + 0.5f}, result)) return true;
+            if (tryPlacement(cell, face, Vec3{cx + 0.5f, cy + 0.75f, cz + 0.5f}, result)) return true;
         }
         return false;
     };
 
-    // Best-effort placement: pick the first real solid support (the block below
-    // is preferred) and let the server resolve the block. getPlacementBlock is
-    // NOT consulted here -- it returns air/defaults for several redstone
-    // components (comparator, redstone dust, hopper, ...), which would otherwise
-    // make them impossible to place.
-    auto const searchAnySupport = [&]() -> bool {
-        for (uchar sf = 0; sf < 6; ++sf) {
-            BlockPos const at = cell.neighbor(sf);
-            if (region.getBlock(at).isAir()) continue;
-            out = ProjectionTarget{cell, at, Facing::getOpposite(sf), &ghost, sharedFaceCenter(cell, sf)};
-            return true;
-        }
-        return false;
-    };
-
-    // Type-only families never orient exactly; place them on any real support.
-    if (typeOnly) return searchAnySupport();
-
-    // Comparators/repeaters: gate on facing only (mode/delay are toggled after).
-    // Facing comes from the player's view, so one support is enough to read the
-    // predicted facing. If getPlacementBlock cannot produce the block at all,
-    // fall back to placing it rather than getting stuck.
-    if (isFacingGate(ghost)) {
-        std::string const wantFacing = facingValue(ghost);
-        for (uchar sf = 0; sf < 6; ++sf) {
-            BlockPos const at = cell.neighbor(sf);
-            if (region.getBlock(at).isAir()) continue;
-            uchar const face = Facing::getOpposite(sf);
-            Vec3 const cp = sharedFaceCenter(cell, sf);
-            Block const& predicted = ghost.getPlacementBlock(player, cell, face, cp, itemAux);
-            if (predicted.getTypeName() != ghost.getTypeName()) continue;
-            if (facingValue(predicted) != wantFacing) return false;  // wrong facing
-            out = ProjectionTarget{cell, at, face, &ghost, cp};
-            return true;
-        }
-        return searchAnySupport();
-    }
-
-    return searchExact();
+    return searchCurrentRotation(out);
 }
 
-void tickRangePlace(LocalPlayer& player) {
+void tickRangePlace(LocalPlayer& player, PlacementContext const& placementContext) {
     auto const now = GetTickCount64();
     Vec3 const center = player.getPosition();
     float const radius = static_cast<float>(gPlacementRadius.load(std::memory_order_relaxed));
     auto& region = player.getDimensionBlockSource();
 
-    auto candidates = projection::queryMissingCellsInRange(center, radius);
+    auto candidates = projection::queryMissingCellsInRange(player, center, radius);
+    auto const inventorySnapshot = snapshotInventory(player);
+    int plannedCandidates = 0;
     for (auto const& cand : candidates) {
         BlockPos const cell{cand.x, cand.y, cand.z};
 
@@ -597,14 +737,30 @@ void tickRangePlace(LocalPlayer& player) {
         // cell is never placed twice mid-round-trip (the slab double-place).
         if (recentlyPlaced(cell, now)) continue;
 
-        // Orientation gate: only place when the resulting block would match the
-        // ghost. The search also picks the support face / click point, replacing
-        // the old approach-based support selection.
-        ProjectionTarget target;
-        if (!resolveOrientedPlacement(player, region, cell, *cand.block, 0, target)) continue;
-
-        auto const found = findItemSlot(player, *cand.block);
+        auto const found = findItemSlot(inventorySnapshot, *cand.block);
         if (found.slot < 0) continue;
+
+        FailedPlanKey const failedKey =
+            makeFailedPlanKey(placementContext, cell, *cand.block, found.item->getAuxValue());
+        if (isFailedPlanCached(failedKey, now)) continue;
+        if (plannedCandidates >= kRangePlanBudgetPerTick) return;
+        ++plannedCandidates;
+
+        // Use the actual inventory stack's aux value for the same prediction
+        // the server will perform. Reject impossible placements before sending.
+        ProjectionTarget target;
+        if (!resolveOrientedPlacement(
+                player,
+                region,
+                placementContext,
+                cell,
+                *cand.block,
+                found.item->getAuxValue(),
+                target
+            )) {
+            cacheFailedPlan(failedKey, now);
+            continue;
+        }
 
         if (found.slot >= kHotbarSlots) {
             // Back off a rejected swap; see sendInventorySwap and the same
@@ -644,6 +800,13 @@ void tickEasyPlace() {
         return;
     }
 
+    if (!gEnabled.load(std::memory_order_acquire)
+        && !gManualMode.load(std::memory_order_acquire)
+        && !gRangeEnabled.load(std::memory_order_acquire)) {
+        updateAimedBlockEntityName(nullptr);
+        return;
+    }
+
     // Ray from the camera eye along the view direction against the projection.
     Vec3 const origin = player->getEyePos();
     Vec3 const rawDir = player->getViewVector(1.0f);
@@ -654,20 +817,16 @@ void tickEasyPlace() {
     }
     Vec3 const dir{rawDir.x / length, rawDir.y / length, rawDir.z / length};
 
-    auto target = findProjectionTarget(*player, origin, dir, player->getPickRange());
-    // Keep the HUD informed even when easy-place is disabled.
+    float const pickRange = player->getPickRange();
+    auto target = findProjectionTarget(*player, origin, dir, pickRange);
+    PlacementContext const placementContext = makePlacementContext(origin, dir, pickRange);
     updateAimedBlockEntityName(target ? target->block : nullptr);
-
-    if (!gEnabled.load(std::memory_order_acquire)
-        && !gManualMode.load(std::memory_order_acquire)
-        && !gRangeEnabled.load(std::memory_order_acquire)) {
-        return;
-    }
-    if (GetTickCount64() < gNextPlaceAt.load(std::memory_order_acquire)) return;
+    auto const tickNow = GetTickCount64();
+    if (tickNow < gNextPlaceAt.load(std::memory_order_acquire)) return;
 
     // Range placement scans everything within the configured radius.
     if (gRangeEnabled.load(std::memory_order_acquire)) {
-        tickRangePlace(*player);
+        tickRangePlace(*player, placementContext);
         return;
     }
 
@@ -704,23 +863,28 @@ void tickEasyPlace() {
     auto const now = GetTickCount64();
     if (recentlyPlaced(target->cell, now)) return;
 
-    // Orientation gate: only place when the resulting block would match the
-    // ghost. The search picks the click point / support face that reproduces
-    // it; rotational blocks pass only while the player looks the right way.
+    auto const found = findItemSlot(*player, *target->block);
+    if (found.slot < 0) return;
+
+    // Only send a placement whose full predicted state and official placement
+    // checks match the projection, using the real stack's aux value.
     auto& region = player->getDimensionBlockSource();
     ProjectionTarget placement;
-    // Orientation is angle-gated in both modes: an orientable block places only
-    // when the current view would produce the ghost's facing (like pistons).
-    // Type-only families (rails, redstone, comparators, ...) bypass this.
-    bool const resolved =
-        resolveOrientedPlacement(*player, region, target->cell, *target->block, 0, placement);
-    auto const found = resolved ? findItemSlot(*player, *target->block) : ItemFind{-1, nullptr};
-    if (!resolved || found.slot < 0) return;
+    if (!resolveOrientedPlacement(
+            *player,
+            region,
+            placementContext,
+            target->cell,
+            *target->block,
+            found.item->getAuxValue(),
+            placement
+        )) {
+        return;
+    }
 
     if (found.slot >= kHotbarSlots) {
         // Back off a rejected swap so it never retries more often than
         // kSwapRetryMs.
-        auto const now = GetTickCount64();
         if (now < gNextSwapAt.load(std::memory_order_acquire)) return;
         // The server only accepts placements from the selected hotbar slot.
         // Swap the backpack item into the currently selected slot through a
@@ -857,6 +1021,14 @@ int getPlacementRadius() {
 }
 
 void setManualMode(bool manual) {
+    if (!manual) {
+        // A release hook can be missed while menus or mode switches are active.
+        // Never carry a stale press/hold request into the next manual session.
+        gManualHeld.store(false, std::memory_order_release);
+        gManualPlaceRequested.store(false, std::memory_order_release);
+        gManualPressAt.store(0, std::memory_order_release);
+        gLastManualPlaceAt.store(0, std::memory_order_release);
+    }
     gManualMode.store(manual, std::memory_order_release);
 }
 

@@ -21,6 +21,7 @@
 
 class Block;
 class BlockPos;
+class LocalPlayer;
 class Vec3;
 
 namespace lholo::projection {
@@ -55,7 +56,7 @@ struct ProjectionQuery {
                           // (liquid-only cells and hidden layers excluded)
     bool missing;         // correction state is Missing, i.e. worth placing
 };
-ProjectionQuery queryProjection(BlockPos const& worldPos);
+ProjectionQuery queryProjection(LocalPlayer& player, BlockPos const& worldPos);
 
 // Range-place support: all missing projection cells within `radius` blocks of
 // `center`, sorted nearest-first. `block` is the transformed expected block
@@ -66,6 +67,6 @@ struct RangeCandidate {
     int          z;
     Block const* block;
 };
-std::vector<RangeCandidate> queryMissingCellsInRange(Vec3 const& center, float radius);
+std::vector<RangeCandidate> queryMissingCellsInRange(LocalPlayer& player, Vec3 const& center, float radius);
 
 } // namespace lholo::projection

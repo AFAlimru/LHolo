@@ -322,10 +322,10 @@ void renderExperimentalPage(MenuModel& model, UiMetrics const& metrics) {
 void renderTransformPage(MenuModel& model, UiMetrics const& metrics) {
     renderSection("##Transform", "结构变换", metrics, [&] {
         static char const* rotationNames[]{"0°", "90°", "180°", "270°"};
-        static char const* mirrorNames[]{"无", "X", "Z", "X + Z"};
+        static char const* mirrorNames[]{"无", "X", "Z"};
         auto const transformComboWidth = std::max(
             adaptiveComboWidth(rotationNames, 4),
-            adaptiveComboWidth(mirrorNames, 4)
+            adaptiveComboWidth(mirrorNames, 3)
         );
         renderValueRow("结构旋转", metrics, [&] {
             ImGui::SetNextItemWidth(transformComboWidth);
@@ -333,7 +333,7 @@ void renderTransformPage(MenuModel& model, UiMetrics const& metrics) {
         });
         renderValueRow("结构镜像", metrics, [&] {
             ImGui::SetNextItemWidth(transformComboWidth);
-            ImGui::Combo("##Mirror", &model.mirror, mirrorNames, 4);
+            ImGui::Combo("##Mirror", &model.mirror, mirrorNames, 3);
         });
         ImGui::Separator();
         renderSteppedInt("OffsetX", "X 轴偏移", model.offsetX, std::numeric_limits<int>::min(), std::numeric_limits<int>::max(), metrics);

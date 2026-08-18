@@ -1455,7 +1455,7 @@ lholo::ui::MenuModel makeMenuModel(float effectiveUiScale) {
     model.offsetY = gOffsetY.load(std::memory_order_relaxed);
     model.offsetZ = gOffsetZ.load(std::memory_order_relaxed);
     model.rotation = std::clamp(gRotationQuarterTurns.load(std::memory_order_relaxed), 0, 3);
-    model.mirror = std::clamp(gMirrorMode.load(std::memory_order_relaxed), 0, 3);
+    model.mirror = std::clamp(gMirrorMode.load(std::memory_order_relaxed), 0, 2);
     model.opacity = projection::getOpacity();
     model.correctionFillOpacity = projection::getCorrectionFillOpacity();
     model.correctionOutlineOpacity = projection::getCorrectionOutlineOpacity();
@@ -1520,7 +1520,7 @@ void applyMenuModel(lholo::ui::MenuModel const& model, float effectiveUiScale) {
     update(gOffsetY, model.offsetY);
     update(gOffsetZ, model.offsetZ);
     update(gRotationQuarterTurns, std::clamp(model.rotation, 0, 3));
-    update(gMirrorMode, std::clamp(model.mirror, 0, 3));
+    update(gMirrorMode, std::clamp(model.mirror, 0, 2));
 
     auto const opacity = std::clamp(model.opacity, 0.0f, 1.0f);
     if (std::abs(projection::getOpacity() - opacity) > 0.0001f) { projection::setOpacity(opacity); changed = true; }
@@ -1599,7 +1599,10 @@ lholo::ui::MenuActions makeMenuActions(bool& refreshModel) {
             return;
         }
         gRotationQuarterTurns.store(gSavedRotation.load(std::memory_order_relaxed), std::memory_order_relaxed);
-        gMirrorMode.store(gSavedMirror.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        gMirrorMode.store(
+            std::clamp(gSavedMirror.load(std::memory_order_relaxed), 0, 2),
+            std::memory_order_relaxed
+        );
         gOffsetX.store(gSavedOffsetX.load(std::memory_order_relaxed), std::memory_order_relaxed);
         gOffsetY.store(gSavedOffsetY.load(std::memory_order_relaxed), std::memory_order_relaxed);
         gOffsetZ.store(gSavedOffsetZ.load(std::memory_order_relaxed), std::memory_order_relaxed);
@@ -1787,7 +1790,7 @@ void loadSettings() {
         gSavedAnchorY.store(json.value("savedAnchorY", 0), std::memory_order_relaxed);
         gSavedAnchorZ.store(json.value("savedAnchorZ", 0), std::memory_order_relaxed);
         gSavedRotation.store(json.value("savedRotation", 0), std::memory_order_relaxed);
-        gSavedMirror.store(json.value("savedMirror", 0), std::memory_order_relaxed);
+        gSavedMirror.store(std::clamp(json.value("savedMirror", 0), 0, 2), std::memory_order_relaxed);
         gSavedOffsetX.store(json.value("savedOffsetX", 0), std::memory_order_relaxed);
         gSavedOffsetY.store(json.value("savedOffsetY", 0), std::memory_order_relaxed);
         gSavedOffsetZ.store(json.value("savedOffsetZ", 0), std::memory_order_relaxed);
@@ -1807,9 +1810,16 @@ void saveSettings() {
         std::error_code error;
         std::filesystem::create_directories(path.parent_path(), error);
         if (error) throw std::runtime_error(error.message());
-        if (gHasSavedProjection.load(std::memory_order_acquire)) {
-            // Keep the saved session parameters current while retaining the
-            // original structure path and projection anchor.
+        bool hasActiveProjection = false;
+        {
+            std::lock_guard lock(gLoadedMutex);
+            hasActiveProjection = static_cast<bool>(gLoaded);
+        }
+        if (hasActiveProjection && gHasSavedProjection.load(std::memory_order_acquire)) {
+            // Only an active projection may update its restore snapshot. At
+            // startup the session-local transform/layer values intentionally
+            // reset to defaults; copying those values before the user restores
+            // a structure would silently destroy the saved state.
             gSavedRotation.store(gRotationQuarterTurns.load(std::memory_order_relaxed), std::memory_order_relaxed);
             gSavedMirror.store(gMirrorMode.load(std::memory_order_relaxed), std::memory_order_relaxed);
             gSavedOffsetX.store(gOffsetX.load(std::memory_order_relaxed), std::memory_order_relaxed);
@@ -1896,7 +1906,7 @@ int getRotationQuarterTurns() {
 }
 
 int getMirrorMode() {
-    return gMirrorMode.load(std::memory_order_relaxed);
+    return std::clamp(gMirrorMode.load(std::memory_order_relaxed), 0, 2);
 }
 
 int getOffsetX() { return gOffsetX.load(std::memory_order_relaxed); }

@@ -81,26 +81,11 @@ bool             gImGuiInitialized{};
 bool             gGraphicsInitialized{};
 bool             gGuiVisibleLastFrame{};
 std::atomic_bool gMouseHandoffActive{};
-
-// ShowCursor is a per-input-queue counter (>= 0 displays the OS cursor).
-// While the LHolo menu is open it swallows all mouse messages, and Bedrock's
-// input state machine can decide mid-menu that it returned to gameplay and
-// hide the system cursor. After closing the menu neither cursor would be
-// visible, stranding the player. The counter is therefore snapshotted when
-// the menu opens and restored on the first window message after it closes:
-// the normal gameplay path snapshots -1 and restores -1 (a no-op), while a
-// menu opened from a cursor-showing UI keeps its visible cursor.
-// -999 means "no restore pending".
-std::atomic_int gSavedCursorDisplay{-999};
-// Custom messages posted to the game window so the cursor counter is managed
-// on the window's input thread for every open/close path (hotkey, command,
-// close button, Esc), not just the hotkey path.
-constexpr UINT kMsgMenuOpened = WM_APP + 0x101;
-constexpr UINT kMsgMenuClosed = WM_APP + 0x102;
-// After the menu closes, the game's WM_SETCURSOR handler may set the cursor to
-// NULL (it thinks we returned to gameplay), undoing ImGui's SetCursor(arrow).
-// Intercept WM_SETCURSOR for a short window so the cursor stays visible.
-std::atomic_uint64_t gRestoreCursorUntil{0};
+// ImGui's Win32 backend sets the native cursor handle to null while drawing
+// its software cursor. LHolo can skip NewFrame entirely after the menu closes,
+// so restore the arrow handle on the window thread without touching the
+// ShowCursor display counter owned by Minecraft.
+constexpr UINT kMsgRestoreNativeCursor = WM_APP + 0x101;
 std::array<bool, 256> gGameKeysDown{};
 std::array<bool, 5>   gGameMouseButtonsDown{};
 std::atomic_bool      gConsumeEscapeRelease{false};
@@ -209,31 +194,6 @@ LRESULT forwardToGame(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
                             : DefWindowProcW(window, message, wParam, lParam);
 }
 
-// Restore the OS cursor display counter to the value snapshot on menu open.
-// ShowCursor is a per-input-queue counter (cursor visible only while >= 0);
-// Bedrock may hide the cursor mid-menu, so the close path brings the counter
-// back exactly, both raising it (was hidden too much) and lowering it (was
-// shown too much). The snapshot is consumed here only, once.
-void restoreCursorDisplay() {
-    if (auto const saved = gSavedCursorDisplay.exchange(-999, std::memory_order_acq_rel);
-        saved != -999) {
-        int const current = ::ShowCursor(TRUE) - 1;
-        ::ShowCursor(FALSE);
-        if (current < saved) {
-            for (int count = current; count < saved; ++count) ::ShowCursor(TRUE);
-        } else if (current > saved) {
-            for (int count = saved; count < current; ++count) ::ShowCursor(FALSE);
-        }
-    }
-}
-
-void snapshotCursorDisplay() {
-    int const probed = ::ShowCursor(TRUE) - 1;
-    ::ShowCursor(FALSE);
-    gSavedCursorDisplay.store(probed, std::memory_order_release);
-    if (probed >= 0) ::ShowCursor(FALSE);
-}
-
 void releaseGameInput(HWND window) {
     // Minecraft has already seen these down events. Send matching releases
     // before the menu starts swallowing input, otherwise movement/use remains
@@ -269,11 +229,20 @@ void releaseGameInput(HWND window) {
         forwardToGame(window, upMessages[button], buttonParam, mousePosition);
     }
 
-    // Snapshot the OS cursor display counter (runs on the window's input
-    // thread, which owns the counter). If the game was showing its cursor
-    // (chat, pause, inventory), hide it once so the ImGui software cursor is
-    // the only one on screen; the close path restores the snapshot.
-    snapshotCursorDisplay();
+}
+
+bool confineMouseToClientCenter(HWND window) {
+    RECT clientRect{};
+    if (!window || !GetClientRect(window, &clientRect)) return false;
+    POINT topLeft{clientRect.left, clientRect.top};
+    POINT bottomRight{clientRect.right, clientRect.bottom};
+    if (!ClientToScreen(window, &topLeft) || !ClientToScreen(window, &bottomRight)) return false;
+    RECT screenRect{topLeft.x, topLeft.y, bottomRight.x, bottomRight.y};
+    if (!ClipCursor(&screenRect)) return false;
+    return SetCursorPos(
+        (screenRect.left + screenRect.right) / 2,
+        (screenRect.top + screenRect.bottom) / 2
+    ) != FALSE;
 }
 
 void prepareMouseHandoff(HWND window) {
@@ -295,19 +264,7 @@ void prepareMouseHandoff(HWND window) {
     // converts that absolute position back to relative-look input when it
     // captures the mouse again; centering first prevents a one-frame camera
     // jump proportional to the distance from the menu button to the center.
-    RECT clientRect{};
-    if (GetClientRect(window, &clientRect)) {
-        POINT topLeft{clientRect.left, clientRect.top};
-        POINT bottomRight{clientRect.right, clientRect.bottom};
-        ClientToScreen(window, &topLeft);
-        ClientToScreen(window, &bottomRight);
-        RECT screenRect{topLeft.x, topLeft.y, bottomRight.x, bottomRight.y};
-        ClipCursor(&screenRect);
-        POINT center{
-            (screenRect.left + screenRect.right) / 2,
-            (screenRect.top + screenRect.bottom) / 2
-        };
-        SetCursorPos(center.x, center.y);
+    if (confineMouseToClientCenter(window)) {
         gMouseHandoffActive.store(true, std::memory_order_release);
     }
 }
@@ -315,60 +272,24 @@ void prepareMouseHandoff(HWND window) {
 void maintainMouseHandoff(HWND window) {
     if (!gMouseHandoffActive.load(std::memory_order_acquire) || !window) return;
     if (!structure::isInputTransitionBlocked()) {
-        // Release the temporary transition clip. Bedrock uses raw input for
-        // gameplay mouse look (unaffected by ClipCursor), while UI screens
-        // need a free cursor; leaving our clip in place traps the cursor in
-        // the window.
+        // Keep the client-area clip installed after the transition. Minecraft
+        // replaces it itself when opening one of its own UI screens, while
+        // releasing it here left the cursor free to reach the title-bar close
+        // button before gameplay input had recaptured it.
         gMouseHandoffActive.store(false, std::memory_order_release);
-        ClipCursor(nullptr);
         return;
     }
-    RECT clientRect{};
-    if (!GetClientRect(window, &clientRect)) return;
-    POINT topLeft{clientRect.left, clientRect.top};
-    POINT bottomRight{clientRect.right, clientRect.bottom};
-    ClientToScreen(window, &topLeft);
-    ClientToScreen(window, &bottomRight);
-    RECT screenRect{topLeft.x, topLeft.y, bottomRight.x, bottomRight.y};
-    ClipCursor(&screenRect);
-    SetCursorPos(
-        (screenRect.left + screenRect.right) / 2,
-        (screenRect.top + screenRect.bottom) / 2
-    );
+    confineMouseToClientCenter(window);
 }
 
 LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
-    // Cursor counter management for every open/close path: the render loop
-    // posts these messages, which arrive on the window's input thread (the
-    // thread that owns the ShowCursor counter).
-    if (message == kMsgMenuOpened) {
-        // Skip if a snapshot is already pending (the hotkey path snapshots
-        // synchronously in releaseGameInput); command/button paths need one.
-        if (gSavedCursorDisplay.load(std::memory_order_acquire) == -999) snapshotCursorDisplay();
-        return 0;
-    }
-    if (message == kMsgMenuClosed) {
-        restoreCursorDisplay();
-        // The mouse click that closed the menu re-triggers WM_SETCURSOR; keep
-        // the cursor visible for a short window so the game's handler cannot
-        // overwrite ImGui's arrow cursor with NULL.
-        gRestoreCursorUntil.store(GetTickCount64() + 500, std::memory_order_release);
-        return 0;
-    }
-    if (message == WM_SETCURSOR
-        && GetTickCount64() < gRestoreCursorUntil.load(std::memory_order_acquire)) {
+    if (message == kMsgRestoreNativeCursor) {
         ::SetCursor(::LoadCursorW(nullptr, IDC_ARROW));
-        return 1;
+        return 0;
     }
-    // Fallback: restore the cursor counter once the menu is actually closed.
-    // The snapshot must never be consumed while the menu is still open: every
-    // message arriving during the menu used to clear it via exchange() without
-    // restoring, stranding the cursor after close.
-    if (!structure::isGuiVisible()) restoreCursorDisplay();
     if (message == WM_KILLFOCUS || (message == WM_ACTIVATEAPP && wParam == FALSE)) {
         structure::resetHotkeyState();
         gMouseHandoffActive.store(false, std::memory_order_release);
-        restoreCursorDisplay();
         ClipCursor(nullptr);
     }
     if (!gShuttingDown.load(std::memory_order_acquire)
@@ -390,6 +311,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         && (message == WM_KEYDOWN || message == WM_SYSKEYDOWN)
         && structure::handleGuiHotkeyKeyDown(static_cast<unsigned int>(wParam))) {
         if (!guiWasVisible && structure::isGuiVisible()) releaseGameInput(window);
+        if (guiWasVisible && !structure::isGuiVisible()) confineMouseToClientCenter(window);
         return 1;
     }
     if (!gShuttingDown.load(std::memory_order_acquire) && gImGuiInitialized
@@ -415,6 +337,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         if (message == WM_KEYDOWN && wParam == VK_ESCAPE) {
             gConsumeEscapeRelease.store(true, std::memory_order_release);
             structure::requestOpenGui();
+            confineMouseToClientCenter(window);
             return 1;
         }
         switch (message) {
@@ -553,17 +476,17 @@ void render(IDXGISwapChain* swapChain) {
     auto const showGui = structure::isGuiVisible();
     auto const showHud = !showGui && structure::hasHudInfo();
     if (gGuiVisibleLastFrame != showGui) {
-        // Any open/close path (hotkey, command, Esc) lands here; the posted
-        // message runs the cursor counter management on the window thread.
-        PostMessageW(gWindow, showGui ? kMsgMenuOpened : kMsgMenuClosed, 0, 0);
-        if (!showGui) prepareMouseHandoff(gWindow);
+        if (!showGui) {
+            prepareMouseHandoff(gWindow);
+            PostMessageW(gWindow, kMsgRestoreNativeCursor, 0, 0);
+        }
     }
     gGuiVisibleLastFrame = showGui;
     if (!showGui) maintainMouseHandoff(gWindow);
+    ImGui::GetIO().MouseDrawCursor = showGui;
     if (!showGui && !showHud) return;
 
     if (showGui) ClipCursor(nullptr);
-    ImGui::GetIO().MouseDrawCursor = showGui;
 
     auto draw = [](ID3D11RenderTargetView* target) {
         gDeviceContext->OMSetRenderTargets(1, &target, nullptr);
@@ -575,8 +498,8 @@ void render(IDXGISwapChain* swapChain) {
             // The close button changes visibility during this render call,
             // after the frame-level transition check above.
             if (!structure::isGuiVisible()) {
-                PostMessageW(gWindow, kMsgMenuClosed, 0, 0);
                 prepareMouseHandoff(gWindow);
+                PostMessageW(gWindow, kMsgRestoreNativeCursor, 0, 0);
                 gGuiVisibleLastFrame = false;
             }
         } else structure::renderHud();
@@ -774,9 +697,6 @@ bool ensureInstalled() {
 void shutdown() {
     gShuttingDown.store(true, std::memory_order_release);
     gMouseHandoffActive.store(false, std::memory_order_release);
-    // If the menu was open at shutdown, restore the snapshot so the OS cursor
-    // is not stranded.
-    restoreCursorDisplay();
     ClipCursor(nullptr);
     removeHook(gExecuteTarget);
     removeHook(gPresent1Target);
@@ -789,14 +709,13 @@ void shutdown() {
 
     std::lock_guard lock(gResourceMutex);
     invalidateBackBuffers();
+    releaseGraphicsBackend();
     if (gImGuiInitialized) {
-        releaseGraphicsBackend();
         ImGui_ImplWin32_Shutdown();
         ui::resetFluentTheme();
         ImGui::DestroyContext();
         gImGuiInitialized = false;
     }
-    releaseGraphicsBackend();
     if (gGameQueue) gGameQueue->Release();
     gGameQueue = nullptr;
     gWindow = nullptr;
