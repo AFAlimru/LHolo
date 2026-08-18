@@ -51,6 +51,18 @@ float fieldWidth(UiMetrics const& metrics) {
     return std::max(0.0f, std::min(std::max(preferred, minimum), maximum));
 }
 
+float numericFieldWidth(UiMetrics const& metrics) {
+    auto const available = std::max(0.0f, ImGui::GetContentRegionAvail().x);
+    auto const framePadding = ImGui::GetStyle().FramePadding.x * 2.0f;
+    // These rows contain percentages, not free-form long integers.  Reserve
+    // room for a sign while sizing from the value itself instead of making a
+    // numeric editor consume the whole form column.
+    auto const contentWidth = ImGui::CalcTextSize("-000").x + framePadding;
+    auto const minimum = ImGui::CalcTextSize("00").x + framePadding;
+    auto const maximum = available * (metrics.compact ? 1.0f : 0.22f);
+    return std::min(available, std::max(minimum, std::min(contentWidth, maximum)));
+}
+
 float adaptiveComboWidth(char const* const* items, int count) {
     auto longest = 0.0f;
     for (int index = 0; index < count; ++index) {
@@ -60,7 +72,7 @@ float adaptiveComboWidth(char const* const* items, int count) {
     // from the actual option text, so short choices no longer create a wide
     // empty field while long localized choices remain readable.
     auto const desired = longest + ImGui::GetStyle().FramePadding.x * 2.0f
-        + ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x;
+        + ImGui::GetFrameHeight();
     return std::min(desired, ImGui::GetContentRegionAvail().x);
 }
 
@@ -73,6 +85,21 @@ void renderValueRow(char const* label, UiMetrics const& metrics, Control&& contr
         return;
     }
     ImGui::SetNextItemWidth(fieldWidth(metrics));
+    control();
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(label);
+}
+
+template <typename Control>
+void renderNumericValueRow(char const* label, UiMetrics const& metrics, Control&& control) {
+    if (metrics.compact) {
+        ImGui::TextUnformatted(label);
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        control();
+        return;
+    }
+    ImGui::SetNextItemWidth(numericFieldWidth(metrics));
     control();
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
@@ -113,25 +140,35 @@ void renderSteppedInt(
     UiMetrics const& metrics
 ) {
     ImGui::PushID(id);
-    if (metrics.compact) ImGui::TextUnformatted(label);
     auto const buttonWidth = ImGui::GetFrameHeight();
-    auto const available = metrics.compact ? ImGui::GetContentRegionAvail().x : fieldWidth(metrics);
-    auto const spacing = ImGui::GetStyle().ItemSpacing.x;
-    auto const inputMaximum = std::max(0.0f, available - buttonWidth * 2.0f - spacing * 2.0f);
+    // The global spacing is intentionally generous for ordinary rows.  A
+    // stepped editor is one control group, so use a tighter local rhythm to
+    // keep '-' value '+' visually connected.
+    auto const spacing = ImGui::GetStyle().ItemSpacing.x * 0.55f;
+    if (metrics.compact) {
+        ImGui::TextUnformatted(label);
+    } else {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(label);
+        ImGui::SameLine(0.0f, spacing);
+    }
+    auto const available = ImGui::GetContentRegionAvail().x;
+    auto const controlWidth = metrics.compact ? available : fieldWidth(metrics);
+    auto const inputMaximum = std::max(0.0f, controlWidth - buttonWidth * 2.0f - spacing * 2.0f);
     char valueText[16]{};
     std::snprintf(valueText, sizeof(valueText), "%d", value);
     auto const framePadding = ImGui::GetStyle().FramePadding.x * 2.0f;
-    auto const minimumInputWidth = ImGui::CalcTextSize("-0000").x + framePadding;
+    auto const minimumInputWidth = ImGui::CalcTextSize("-0").x + framePadding;
     auto const desiredInputWidth = ImGui::CalcTextSize(valueText).x + framePadding;
     auto const inputWidth = std::min(inputMaximum, std::max(minimumInputWidth, desiredInputWidth));
     auto const groupWidth = buttonWidth * 2.0f + inputWidth + spacing * 2.0f;
-    if (metrics.compact && available > groupWidth) {
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (available - groupWidth) * 0.5f);
+    if (metrics.compact && controlWidth > groupWidth) {
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (controlWidth - groupWidth) * 0.5f);
     }
     if (ImGui::Button("-", ImVec2(buttonWidth, 0.0f))) {
         if (value > minimum) --value;
     }
-    ImGui::SameLine();
+    ImGui::SameLine(0.0f, spacing);
     // Dear ImGui's numeric input is left-aligned.  Keep the widget for
     // keyboard editing but paint its resting value in the centre of the
     // compact, auto-sized number field.
@@ -143,17 +180,12 @@ void renderSteppedInt(
     ImGui::PopStyleColor();
     auto const inputRectMinimum = ImGui::GetItemRectMin();
     auto const inputRectMaximum = ImGui::GetItemRectMax();
-    ImGui::SameLine();
+    ImGui::SameLine(0.0f, spacing);
     if (ImGui::Button("+", ImVec2(buttonWidth, 0.0f))) {
         if (value < maximum) ++value;
     }
     std::snprintf(valueText, sizeof(valueText), "%d", value);
     drawCenteredInputValue(valueText, inputRectMinimum, inputRectMaximum);
-    if (!metrics.compact) {
-        ImGui::SameLine();
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(label);
-    }
     ImGui::PopID();
 }
 
@@ -167,11 +199,18 @@ void renderSteppedFloat(
     UiMetrics const& metrics
 ) {
     ImGui::PushID(id);
-    if (metrics.compact) ImGui::TextUnformatted(label);
     auto const buttonWidth = ImGui::GetFrameHeight();
-    auto const available = metrics.compact ? ImGui::GetContentRegionAvail().x : fieldWidth(metrics);
-    auto const spacing = ImGui::GetStyle().ItemSpacing.x;
-    auto const inputMaximum = std::max(0.0f, available - buttonWidth * 2.0f - spacing * 2.0f);
+    auto const spacing = ImGui::GetStyle().ItemSpacing.x * 0.55f;
+    if (metrics.compact) {
+        ImGui::TextUnformatted(label);
+    } else {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(label);
+        ImGui::SameLine(0.0f, spacing);
+    }
+    auto const available = ImGui::GetContentRegionAvail().x;
+    auto const controlWidth = metrics.compact ? available : fieldWidth(metrics);
+    auto const inputMaximum = std::max(0.0f, controlWidth - buttonWidth * 2.0f - spacing * 2.0f);
     char valueText[16]{};
     std::snprintf(valueText, sizeof(valueText), "%.1f", value);
     auto const framePadding = ImGui::GetStyle().FramePadding.x * 2.0f;
@@ -179,31 +218,26 @@ void renderSteppedFloat(
     auto const desiredInputWidth = ImGui::CalcTextSize(valueText).x + framePadding;
     auto const inputWidth = std::min(inputMaximum, std::max(minimumInputWidth, desiredInputWidth));
     auto const groupWidth = buttonWidth * 2.0f + inputWidth + spacing * 2.0f;
-    if (metrics.compact && available > groupWidth) {
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (available - groupWidth) * 0.5f);
+    if (metrics.compact && controlWidth > groupWidth) {
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (controlWidth - groupWidth) * 0.5f);
     }
     if (ImGui::Button("-", ImVec2(buttonWidth, 0.0f))) {
         value = std::max(minimum, value - step);
     }
-    ImGui::SameLine();
+    ImGui::SameLine(0.0f, spacing);
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
     ImGui::SetNextItemWidth(inputWidth);
     ImGui::InputFloat("##Value", &value, 0.0f, 0.0f, "%.1f");
     ImGui::PopStyleColor();
     auto const inputRectMinimum = ImGui::GetItemRectMin();
     auto const inputRectMaximum = ImGui::GetItemRectMax();
-    ImGui::SameLine();
+    ImGui::SameLine(0.0f, spacing);
     if (ImGui::Button("+", ImVec2(buttonWidth, 0.0f))) {
         value = std::min(maximum, value + step);
     }
     value = std::clamp(std::round(value * 10.0f) / 10.0f, minimum, maximum);
     std::snprintf(valueText, sizeof(valueText), "%.1f", value);
     drawCenteredInputValue(valueText, inputRectMinimum, inputRectMaximum);
-    if (!metrics.compact) {
-        ImGui::SameLine();
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(label);
-    }
     ImGui::PopID();
 }
 
@@ -275,10 +309,10 @@ void renderProjectionPage(MenuModel& model, MenuActions const& actions, UiMetric
 
 void renderExperimentalPage(MenuModel& model, UiMetrics const& metrics) {
     renderSection("##AssistedPlacement", "辅助放置", metrics, [&] {
-        renderCheckboxRow("##EasyPlace", "轻松放置（准心对准投影方块自动放置）", model.easyPlaceEnabled, metrics);
-        if (model.easyPlaceEnabled) { model.manualPlace = false; model.rangeEnabled = false; }
         renderCheckboxRow("##ManualPlace", "手动放置（右键放置·按住连放）", model.manualPlace, metrics);
         if (model.manualPlace) { model.easyPlaceEnabled = false; model.rangeEnabled = false; }
+        renderCheckboxRow("##EasyPlace", "轻松放置（准心对准投影方块自动放置）", model.easyPlaceEnabled, metrics);
+        if (model.easyPlaceEnabled) { model.manualPlace = false; model.rangeEnabled = false; }
         renderCheckboxRow("##RangePlace", "范围放置（自动放置周围投影缺块）", model.rangeEnabled, metrics);
         if (model.rangeEnabled) { model.easyPlaceEnabled = false; model.manualPlace = false; }
         renderSteppedInt("PlacementRadius", "放置半径（范围 1～4）", model.placementRadius, 1, 4, metrics);
@@ -288,13 +322,17 @@ void renderExperimentalPage(MenuModel& model, UiMetrics const& metrics) {
 void renderTransformPage(MenuModel& model, UiMetrics const& metrics) {
     renderSection("##Transform", "结构变换", metrics, [&] {
         static char const* rotationNames[]{"0°", "90°", "180°", "270°"};
+        static char const* mirrorNames[]{"无", "X", "Z", "X + Z"};
+        auto const transformComboWidth = std::max(
+            adaptiveComboWidth(rotationNames, 4),
+            adaptiveComboWidth(mirrorNames, 4)
+        );
         renderValueRow("结构旋转", metrics, [&] {
-            ImGui::SetNextItemWidth(adaptiveComboWidth(rotationNames, 4));
+            ImGui::SetNextItemWidth(transformComboWidth);
             ImGui::Combo("##Rotation", &model.rotation, rotationNames, 4);
         });
-        static char const* mirrorNames[]{"无", "X", "Z", "X + Z"};
         renderValueRow("结构镜像", metrics, [&] {
-            ImGui::SetNextItemWidth(adaptiveComboWidth(mirrorNames, 4));
+            ImGui::SetNextItemWidth(transformComboWidth);
             ImGui::Combo("##Mirror", &model.mirror, mirrorNames, 4);
         });
         ImGui::Separator();
@@ -307,7 +345,7 @@ void renderTransformPage(MenuModel& model, UiMetrics const& metrics) {
 void renderRenderPage(MenuModel& model, MenuActions const& actions, UiMetrics const& metrics) {
     renderSection("##ProjectionStyle", "投影显示设置", metrics, [&] {
         auto opacity = static_cast<int>(std::lround(model.opacity * 100.0f));
-        renderValueRow("投影透明度（范围 0～100）", metrics, [&] {
+        renderNumericValueRow("投影透明度（范围 0～100）", metrics, [&] {
             if (ImGui::InputInt("##Opacity", &opacity, 0, 0)) {
                 model.opacity = static_cast<float>(std::clamp(opacity, 0, 100)) / 100.0f;
             }
@@ -317,30 +355,33 @@ void renderRenderPage(MenuModel& model, MenuActions const& actions, UiMetrics co
 
     renderSection("##LayerSettings", "分层显示设置", metrics, [&] {
         static char const* axisNames[]{"Y 轴（水平分层）", "X 轴（纵向切片）"};
+        static char const* modeNames[]{"完整结构", "单层", "当前层及以下", "当前层及以上"};
         renderValueRow("分层轴", metrics, [&] {
             ImGui::SetNextItemWidth(adaptiveComboWidth(axisNames, 2));
             if (ImGui::Combo("##LayerAxis", &model.layerAxis, axisNames, 2)) {
                 model.displayLayer = std::clamp(model.displayLayer, 0, maxLayer(model));
             }
         });
-        static char const* modeNames[]{"完整结构", "单层", "当前层及以下", "当前层及以上"};
         renderValueRow("显示范围", metrics, [&] {
             ImGui::SetNextItemWidth(adaptiveComboWidth(modeNames, 4));
             ImGui::Combo("##LayerMode", &model.layerDisplayMode, modeNames, 4);
         });
         renderSteppedInt("DisplayLayer", "当前层", model.displayLayer, 0, maxLayer(model), metrics);
+        if (!metrics.compact) ImGui::SameLine(0.0f, metrics.gap * 0.55f);
+        ImGui::PushTextWrapPos(-1.0f);
         ImGui::TextDisabled("0 - %d（结构 %s 轴起点为 0）", maxLayer(model), model.layerAxis == 1 ? "X" : "Y");
+        ImGui::PopTextWrapPos();
     });
 
     renderSection("##CorrectionStyle", "纠错提示样式", metrics, [&] {
         auto fill = static_cast<int>(std::lround(model.correctionFillOpacity * 100.0f));
-        renderValueRow("纠错填充透明度（范围 0～100）", metrics, [&] {
+        renderNumericValueRow("纠错填充透明度（范围 0～100）", metrics, [&] {
             if (ImGui::InputInt("##CorrectionFill", &fill, 0, 0)) {
                 model.correctionFillOpacity = static_cast<float>(std::clamp(fill, 0, 100)) / 100.0f;
             }
         });
         auto outline = static_cast<int>(std::lround(model.correctionOutlineOpacity * 100.0f));
-        renderValueRow("纠错描边透明度（范围 0～100）", metrics, [&] {
+        renderNumericValueRow("纠错描边透明度（范围 0～100）", metrics, [&] {
             if (ImGui::InputInt("##CorrectionOutline", &outline, 0, 0)) {
                 model.correctionOutlineOpacity = static_cast<float>(std::clamp(outline, 0, 100)) / 100.0f;
             }
@@ -356,9 +397,15 @@ void renderRenderPage(MenuModel& model, MenuActions const& actions, UiMetrics co
 void renderHotkeysPage(MenuModel& model, MenuActions const& actions, UiMetrics const& metrics) {
     renderSection("##Hotkeys", "快捷键", metrics, [&] {
         auto maxLabelWidth = 0.0f;
+        auto maxBindingWidth = ImGui::CalcTextSize("请按组合键").x;
         for (auto const& hotkey : model.hotkeys) {
             maxLabelWidth = std::max(maxLabelWidth, ImGui::CalcTextSize(hotkey.label.c_str()).x);
+            maxBindingWidth = std::max(maxBindingWidth, ImGui::CalcTextSize(hotkey.display.c_str()).x);
         }
+        auto const bindingPadding = ImGui::GetStyle().FramePadding.x * 2.0f;
+        auto const preferredBindingWidth = maxBindingWidth + bindingPadding;
+        auto const rowSpacing = metrics.gap * 0.70f;
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, rowSpacing));
         for (auto const& hotkey : model.hotkeys) {
             ImGui::PushID(static_cast<int>(hotkey.id));
             auto const rowStart = ImGui::GetCursorPosX();
@@ -377,12 +424,10 @@ void renderHotkeysPage(MenuModel& model, MenuActions const& actions, UiMetrics c
             }
             auto const clearWidth = ImGui::CalcTextSize("清除").x + ImGui::GetStyle().FramePadding.x * 2.0f;
             auto const available = ImGui::GetContentRegionAvail().x;
-            auto const minimumBindingWidth = ImGui::CalcTextSize("Ctrl + Right").x
-                + ImGui::GetStyle().FramePadding.x * 2.0f;
-            auto const totalWidth = metrics.compact
-                ? available
-                : std::min(available, std::max(available * 0.42f, minimumBindingWidth + clearWidth + metrics.gap));
-            auto const bindWidth = std::max(0.0f, totalWidth - clearWidth - ImGui::GetStyle().ItemSpacing.x);
+            auto const controlSpacing = ImGui::GetStyle().ItemSpacing.x;
+            auto const requiredWidth = preferredBindingWidth + clearWidth + controlSpacing;
+            auto const totalWidth = std::min(available, requiredWidth);
+            auto const bindWidth = std::max(0.0f, totalWidth - clearWidth - controlSpacing);
             auto const label = hotkey.capturing ? "请按组合键" : hotkey.display.c_str();
             if (ImGui::Button(label, ImVec2(bindWidth, 0.0f)) && !hotkey.capturing && actions.beginHotkeyCapture) {
                 actions.beginHotkeyCapture(hotkey.id);
@@ -391,6 +436,7 @@ void renderHotkeysPage(MenuModel& model, MenuActions const& actions, UiMetrics c
             if (ImGui::Button("清除") && actions.clearHotkey) actions.clearHotkey(hotkey.id);
             ImGui::PopID();
         }
+        ImGui::PopStyleVar();
         if (ImGui::Button("恢复默认快捷键") && actions.resetHotkeys) actions.resetHotkeys();
         ImGui::TextDisabled("可在聊天栏输入 LHolo 打开投影菜单");
     });

@@ -1420,8 +1420,8 @@ constexpr std::array<HotkeyDefinition, 9> kHotkeyDefinitions{{
     {lholo::ui::HotkeyId::MoveZPlus, "结构偏移 Z +1"},
     {lholo::ui::HotkeyId::MoveYPlus, "结构偏移 Y +1"},
     {lholo::ui::HotkeyId::MoveYMinus, "结构偏移 Y -1"},
-    {lholo::ui::HotkeyId::LayerIncrease, "显示层 +1"},
-    {lholo::ui::HotkeyId::LayerDecrease, "显示层 -1"}
+    {lholo::ui::HotkeyId::LayerIncrease, "上一层"},
+    {lholo::ui::HotkeyId::LayerDecrease, "下一层"}
 }};
 
 lholo::ui::MenuModel makeMenuModel(float effectiveUiScale) {
