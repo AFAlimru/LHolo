@@ -20,6 +20,7 @@
 #include "projection/Projection.h"
 #include "overlay/ImGuiOverlay.h"
 #include "structure/StructureLoader.h"
+#include "input/MenuInputGuard.h"
 
 #include "ll/api/mod/NativeMod.h"
 #include "ll/api/mod/RegisterHelper.h"
@@ -50,6 +51,10 @@ bool LHolo::enable() {
         mSelf.getLogger().warn("Failed to install easy-place hooks");
     }
 
+    if (!input::installMenuInputGuard()) {
+        mSelf.getLogger().warn("Failed to install menu block-destroy guard");
+    }
+
     if (!overlay::ensureInstalled()) {
         mSelf.getLogger().warn("GUI overlay hotkey hooks are not ready; lholo will retry initialization");
     }
@@ -61,6 +66,7 @@ bool LHolo::enable() {
 bool LHolo::disable() {
     structure::saveSettings();
     projection::disable();
+    input::uninstallMenuInputGuard();
     place::uninstallHook();
     overlay::shutdown();
     structure::clear();

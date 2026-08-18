@@ -31,6 +31,7 @@ LHolo 只在客户端绘制虚拟结构，不向世界写入方块，不产生�
 - HUD 可显示文件名、显示层、建造进度、放置错误数和朝向错误数；支持四角定位和单项关闭，两类错误可分别配置。
 - GUI 使用外部注入 Dear ImGui，不使用游戏表单。
 - 默认 `Alt + M` 打开菜单；聊天栏输入 `LHolo`（ASCII 大小写不敏感）也可打开，消息在客户端拦截，不发往服务器。
+- LHolo 菜单打开及关闭过渡期间，客户端阻止本地控制玩家开始或继续破坏方块；本地存档和远程服务器均有效，服务器无需安装 LHolo。
 - 默认结构移动：`Ctrl + 方向键` 调整 X/Z，`Shift + ↑/↓` 调整 Y。
 - 默认显示层：`Alt + ↑/↓`；“完整结构”模式下按键无效。
 - 支持保存和恢复上次投影文件、锚点及当时的变换/分层参数。
@@ -63,9 +64,12 @@ LHolo/Windows/26.20/LHolo/
 │  ├─ projection/
 │  │  ├─ Projection.cpp         投影网格、纠错、分区缓存、渲染 Hook
 │  │  └─ Projection.h           GUI/HUD 使用的投影控制接口
-│  └─ place/
-│     ├─ PlaceHelper.cpp        轻松放置：准心定位、投影查表、快捷栏取物、useItemOn 放置
-│     └─ PlaceHelper.h          配置开关与 Hook 生命周期接口
+│  ├─ place/
+│  │  ├─ PlaceHelper.cpp        轻松放置：准心定位、投影查表、快捷栏取物、useItemOn 放置
+│  │  └─ PlaceHelper.h          配置开关与 Hook 生命周期接口
+│  └─ input/
+│     ├─ MenuInputGuard.cpp     菜单期间阻止本地玩家开始/持续破坏方块
+│     └─ MenuInputGuard.h       破坏拦截 Hook 生命周期接口
 ├─ manifest.json                Mod Packer 模板
 ├─ xmake.lua                    依赖、编译选项和发布规则
 ├─ DEVELOPMENT.md               本文档
@@ -81,6 +85,7 @@ LHolo/Windows/26.20/LHolo/
 - `projection` 负责“结构如何出现在世界中”，不弹文件选择框、不直接操作 ImGui。
 - `overlay` 负责“外部 GUI 如何安全进入游戏图形链”，不解析结构或扫描世界方块。
 - `place` 负责“轻松放置”：只读准心结果、调用 projection 导出接口、取快捷栏物品并走 `GameMode::useItemOn`，不碰渲染与配置。
+- `input` 负责菜单期间的最小游戏动作保护；当前只拦截本地玩家破坏方块，不扩展为移动冻结或全交互封锁。
 - `plugin` 只组织生命周期，不承载业务逻辑。
 
 ---
@@ -93,7 +98,8 @@ LHolo/Windows/26.20/LHolo/
 
 1. 安装投影相关 LeviLamina Hook。
 2. 安装轻松放置 `LocalPlayer::tickWorld` Hook（失败仅告警，不阻断）。
-3. 尝试安装 ImGui/DXGI Hook；图形环境尚未可用时允许后续 `Present` 重试。
+3. 安装菜单破坏保护的 `GameMode::$startDestroyBlock` / `$continueDestroyBlock` Hook（失败仅告警，不阻断）。
+4. 尝试安装 ImGui/DXGI Hook；图形环境尚未可用时允许后续 `Present` 重试。
 
 配置由 `LHolo::load()` 在 enable 之前从 `mods/LHolo/config/config.json` 读取。当前没有单独依赖世界退出事件；投影渲染入口通过 `client/level/dimension` 身份变化检测世界切换，并在上下文失效时调用 `projection::disable()` 等价的状态清理和 `structure::clear()`。
 
@@ -110,9 +116,10 @@ LHolo/Windows/26.20/LHolo/
 
 1. 保存配置。
 2. 清理投影状态和 GPU 网格。
-3. 卸载轻松放置 Hook。
-4. 卸载投影 Hook。
-5. 关闭 ImGui 图形后端、恢复原 WndProc、移除 MinHook。
+3. 卸载菜单破坏保护 Hook。
+4. 卸载轻松放置 Hook。
+5. 卸载投影 Hook。
+6. 关闭 ImGui 图形后端、恢复原 WndProc、移除 MinHook。
 
 ### 3.3 世界切换
 
@@ -367,6 +374,12 @@ HUD 每帧只读取原子计数，不查询世界、不遍历结构。
 3. 同一表面是否由投影模型、纠错面和 hit-select 重复绘制。
 4. 材质是否写深度、混合状态是否被其他 Hook 污染。
 
+### 8.6 菜单破坏保护开销
+
+`input/MenuInputGuard.cpp` 只 Hook 开始破坏和持续破坏两个动作。菜单关闭时仅检查 GUI 原子状态和关闭过渡时间戳后立即进入原函数；不扫描方块、不分配内存、不加锁、不写逐次日志，也不注册每帧事件。菜单打开后，仅在玩家实际尝试破坏方块时查询当前 `ClientInstance`/`LocalPlayer` 并比较 `GameMode::mPlayer`，因此长按破坏的每 tick 调用也不会形成可测量的持续负载。
+
+不要为节省这一次条件查询长期缓存 `LocalPlayer*`；退出世界、切换存档或服务器后裸指针可能失效。
+
 ---
 
 ## 9. GUI、快捷键与输入交接
@@ -392,7 +405,20 @@ GUI 是全屏 ImGui 窗口，不是切换 Minecraft 窗口模式。
 
 不要依赖“消息积压”解释输入 bug；应检查鼠标坐标、Capture/ClipCursor、按键状态和 Raw Input 所有权。
 
-### 9.3 快捷键配置
+### 9.3 菜单期间的方块破坏保护
+
+WndProc/Raw Input 属于界面输入交接，不能作为阻止游戏动作的唯一保证。当前采用最小客户端动作保护：
+
+- Hook `GameMode::$startDestroyBlock(BlockPos const&, uchar, bool&)`，覆盖初次左键和创造模式瞬间破坏入口。
+- Hook `GameMode::$continueDestroyBlock(BlockPos const&, uchar, Vec3 const&, bool&)`，覆盖生存模式长按破坏。
+- 仅当 `structure::isGuiVisible()` 或关闭过渡仍在阻断期，并且 `GameMode::mPlayer` 等于 `ClientInstance::getLocalPlayer()` 时，将 `hasDestroyedBlock` 设为 `false` 并返回 `false`。
+- 拦截发生在客户端破坏流程继续和正常破坏请求发送之前，因此进入远程服务器也有效，不要求服务器安装插件；“本地玩家”表示本机控制的玩家，不等于“本地存档”。
+- 不拦截其他玩家，不冻结移动，不阻止放置、使用物品、攻击实体、切换物品栏或背包操作。
+- 当前不 Hook `LocalPlayer::$swing`，所以手臂挥动动画仍可能出现；方块裂纹进度和实际破坏被阻止。不要为了隐藏手臂动画扩大动作拦截范围，除非产品需求明确改变。
+
+API 签名以当前 `LeviLamina/src/mc/world/gamemode/GameMode.h` 的 26.20 生成头为准。升级版本时必须重新核对两个 `$` thunk 的参数、返回值和 `GameMode::mPlayer` 可用性，禁止按旧版本猜签名。
+
+### 9.4 快捷键配置
 
 修饰键位图：Ctrl=1、Alt=2、Shift=4。捕获快捷键时忽略单独修饰键，F11 不允许成为模组快捷键。
 
@@ -484,6 +510,7 @@ WndProc 收到首次 `WM_KEYDOWN + VK_F11`，在消息交回 Minecraft 前：
 - `LevelRendererPlayer::renderHitSelect`：避免红/黄纠错与原版选中覆盖共面闪烁。
 - `LevelRendererPlayer::$renderBlockEntities`：在原版调用后更新/提交投影。
 - `LocalPlayer::$tickWorld`（`place` 模块）：轻松放置的每 tick 驱动。
+- `GameMode::$startDestroyBlock` / `$continueDestroyBlock`（`input` 模块）：菜单期间阻止本地玩家开始或持续破坏方块。
 
 新版本最容易变化的是成员函数符号、签名、调用层次和 render pass 时序，必须逐一验证，不能只以“Hook 安装成功”判断适配完成。
 
@@ -687,6 +714,8 @@ D:\games\LeviLauncher\MC\versions\1.26.20.04\mods\LHolo
 - [ ] 首次进游戏无需先打开其他界面，Alt+M 可打开菜单。
 - [ ] `LHolo`、`lholo`、混合大小写均打开菜单且不发送聊天。
 - [ ] 菜单打开时鼠标不转视角、按键不移动玩家。
+- [ ] 菜单打开时，在本地存档与远程服务器分别短按/长按左键，方块均无裂纹进度且不会被破坏；其他玩家不受影响。
+- [ ] 菜单关闭后立即恢复正常破坏；关闭菜单的同一次鼠标操作不破坏方块。
 - [ ] 移动中打开菜单，关闭后不会自动移动。
 - [ ] 关闭菜单后鼠标位于游戏客户区，右键不会触发暂停/ESC 效果。
 - [ ] 输入框、浏览对话框、缩放 1～5、顶部导航正常。
