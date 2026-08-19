@@ -45,6 +45,8 @@
 #include "mc/client/renderer/TextureGroup.h"
 #include "mc/client/renderer/block/BlockTessellator.h"
 #include "mc/client/renderer/block/BlockGraphics.h"
+#include "mc/client/renderer/blockactor/BlockActorRenderDispatcher.h"
+#include "mc/deps/minecraft_renderer/framebuilder/dragon/RenderMetadata.h"
 #include "mc/client/renderer/game/ItemInHandRenderer.h"
 #include "mc/client/renderer/game/LevelRenderer.h"
 #include "mc/client/renderer/game/LevelRendererPlayer.h"
@@ -64,12 +66,18 @@
 #include "mc/deps/nbt/IntTag.h"
 #include "mc/deps/nbt/StringTag.h"
 #include "mc/deps/nbt/Tag.h"
+#include "mc/dataloadhelper/NewUniqueIdsDataLoadHelper.h"
 #include "mc/world/actor/Actor.h"
 #include "mc/world/Facing.h"
+#include "mc/world/level/ILevel.h"
+#include "mc/world/level/Level.h"
 #include "mc/world/level/BlockSource.h"
 #include "mc/world/level/block/Block.h"
 #include "mc/world/level/block/BlockRenderLayer.h"
+#include "mc/world/level/block/BlockType.h"
 #include "mc/world/level/block/VanillaStates.h"
+#include "mc/world/level/block/actor/BlockActor.h"
+#include "mc/world/level/block/actor/BlockActorType.h"
 #include "mc/world/level/levelgen/structure/LegacyStructureSettings.h"
 #include "mc/world/level/levelgen/structure/LegacyStructureTemplate.h"
 #include "mc/world/level/material/Material.h"
@@ -113,6 +121,12 @@ auto& logger() {
 struct ProjectionState {
     enum class CorrectionState : uchar { Unknown, Missing, Correct, WrongType, WrongState };
     enum class RenderBucket : uchar { Opaque, Alpha, AlphaOneSided, Blend, Count };
+    struct ProjectedBlockActor {
+        BlockPos   position{};
+        Block const* block{};
+        BlockActor* actor{};
+        std::size_t structureIndex{};
+    };
     bool                         enabled{};
     BlockPos                     anchor{};
     IClientInstance*             client{};
@@ -130,6 +144,7 @@ struct ProjectionState {
     // 0 = no placement error, 1 = wrong block type, 2 = wrong state/direction.
     // Updating one byte and two counters keeps the HUD O(1) per frame.
     std::vector<uchar>             progressErrorKind;
+    std::vector<uchar>             blockActorRendererAvailable;
     std::uint64_t                  progressCorrectCount{};
     std::uint64_t                  progressWrongTypeCount{};
     std::uint64_t                  progressWrongStateCount{};
@@ -158,24 +173,35 @@ struct ProjectionState {
     std::vector<std::size_t>       blockToSection;
     std::size_t                    dirtySectionCursor{};
     std::map<std::tuple<int, int, int>, Block const*> expectedWorldBlocks;
+    std::map<std::tuple<int, int, int>, std::shared_ptr<BlockActor>> expectedWorldBlockActors;
+    std::vector<ProjectedBlockActor> projectedBlockActors;
     std::map<std::tuple<int, int, int>, std::size_t>  expectedWorldBlockIndices;
 };
 
 thread_local std::map<std::tuple<int, int, int>, Block const*> const* gTessellationBlocks{};
+thread_local std::map<std::tuple<int, int, int>, std::shared_ptr<BlockActor>> const*
+    gTessellationBlockActors{};
 
 class ScopedTessellationBlocks {
 public:
     explicit ScopedTessellationBlocks(
-        std::map<std::tuple<int, int, int>, Block const*> const& blocks
-    ) : mPrevious(std::exchange(gTessellationBlocks, &blocks)) {}
+        std::map<std::tuple<int, int, int>, Block const*> const& blocks,
+        std::map<std::tuple<int, int, int>, std::shared_ptr<BlockActor>> const& blockActors
+    )
+    : mPreviousBlocks(std::exchange(gTessellationBlocks, &blocks)),
+      mPreviousBlockActors(std::exchange(gTessellationBlockActors, &blockActors)) {}
 
-    ~ScopedTessellationBlocks() { gTessellationBlocks = mPrevious; }
+    ~ScopedTessellationBlocks() {
+        gTessellationBlocks      = mPreviousBlocks;
+        gTessellationBlockActors = mPreviousBlockActors;
+    }
 
     ScopedTessellationBlocks(ScopedTessellationBlocks const&) = delete;
     ScopedTessellationBlocks& operator=(ScopedTessellationBlocks const&) = delete;
 
 private:
-    std::map<std::tuple<int, int, int>, Block const*> const* mPrevious{};
+    std::map<std::tuple<int, int, int>, Block const*> const* mPreviousBlocks{};
+    std::map<std::tuple<int, int, int>, std::shared_ptr<BlockActor>> const* mPreviousBlockActors{};
 };
 
 ProjectionState::RenderBucket renderBucketFor(BlockRenderLayer layer) {
@@ -229,6 +255,8 @@ void clearProjectionStateLocked() {
     gState.enabled       = false;
     gState.structure.reset();
     gState.blockTessellator.reset();
+    gState.projectedBlockActors.clear();
+    gState.expectedWorldBlockActors.clear();
     gState.structureGeneration = 0;
 }
 
@@ -291,6 +319,7 @@ bool enableStructureProjection(
     );
     next.progressCorrect.resize(next.structure->renderBlocks.size(), 0);
     next.progressErrorKind.resize(next.structure->renderBlocks.size(), 0);
+    next.blockActorRendererAvailable.resize(next.structure->renderBlocks.size(), 0);
     // Force the first render pass to build the transformed virtual-world lookup.
     next.cachedRotation = -1;
     next.cachedMirror = -1;
@@ -599,6 +628,13 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     &player->getDimensionBlockSource()
                 );
                 gState.expectedWorldBlocks.clear();
+                gState.expectedWorldBlockActors.clear();
+                gState.projectedBlockActors.clear();
+                std::fill(
+                    gState.blockActorRendererAvailable.begin(),
+                    gState.blockActorRendererAvailable.end(),
+                    0
+                );
                 gState.expectedWorldBlockIndices.clear();
                 std::vector<Vec3> centerSums(gState.sectionCenters.size(), Vec3{});
                 std::vector<std::size_t> centerCounts(gState.sectionCenters.size(), 0);
@@ -614,13 +650,35 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     entry, *gState.structure, mirrorMode, rotationTurns
                 );
                 auto const* transformedBlock = transformExpectedBlock(entry.block, transformSettings);
-                auto const worldKey = std::tuple{
+                BlockPos const worldPosition{
                     gState.anchor.x + offsetX + transformed.x,
                     gState.anchor.y + offsetY + transformed.y,
                     gState.anchor.z + offsetZ + transformed.z
                 };
+                auto const worldKey = std::tuple{worldPosition.x, worldPosition.y, worldPosition.z};
                 if (transformedBlock) {
                     gState.expectedWorldBlocks.emplace(worldKey, transformedBlock);
+                    if (transformedBlock->getBlockEntityType() != BlockActorType::Undefined) {
+                        auto blockActor = transformedBlock->getBlockType().newBlockEntity(
+                            worldPosition, *transformedBlock
+                        );
+                        if (blockActor) {
+                            if (entry.blockEntityNbt) {
+                                NewUniqueIdsDataLoadHelper dataLoadHelper{*gState.level};
+                                blockActor->load(*gState.level, *entry.blockEntityNbt, dataLoadHelper);
+                                blockActor->moveTo(worldPosition);
+                            }
+                            auto* actor = blockActor.get();
+                            gState.expectedWorldBlockActors.emplace(worldKey, std::move(blockActor));
+                            auto& dispatcher = renderContext.mBlockEntityRenderDispatcher;
+                            if (dispatcher.getRenderer(*actor)) {
+                                gState.projectedBlockActors.push_back({
+                                    worldPosition, transformedBlock, actor, index
+                                });
+                                gState.blockActorRendererAvailable[index] = 1;
+                            }
+                        }
+                    }
                 } else {
                     // Liquids join the virtual world so vanilla liquid-height
                     // queries see stacked virtual water (full-cell columns).
@@ -803,7 +861,10 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     "LHoloAlphaOneSided",
                     "LHoloBlend"
                 };
-            ScopedTessellationBlocks tessellationBlocksScope(gState.expectedWorldBlocks);
+            ScopedTessellationBlocks tessellationBlocksScope(
+                gState.expectedWorldBlocks,
+                gState.expectedWorldBlockActors
+            );
             for (std::size_t bucketIndex = 0; bucketIndex < gState.sectionMeshes.size(); ++bucketIndex) {
                 tessellator.cancel();
                 tessellator.begin(
@@ -970,6 +1031,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
             std::vector<std::size_t> blockEntityIndices;
             for (auto const index : failedTessellationIndices) {
                 if (gState.correctionStates[index] != ProjectionState::CorrectionState::Missing) continue;
+                if (gState.blockActorRendererAvailable[index]) continue;
                 blockEntityIndices.push_back(index);
             }
             if (!blockEntityIndices.empty()) {
@@ -1237,6 +1299,37 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
         // The transparent pass only submits meshes built during the preceding
         // opaque pass. Do not leave the shared immediate tessellator active.
         tessellator.cancel();
+    }
+
+    if (!gState.projectedBlockActors.empty()) {
+        alignas(mce::MaterialPtr) static const std::byte sNoForcedMaterialStorage[sizeof(mce::MaterialPtr)]{};
+        auto const& noForcedMaterial = *reinterpret_cast<mce::MaterialPtr const*>(sNoForcedMaterialStorage);
+        auto& dispatcher = renderContext.mBlockEntityRenderDispatcher;
+        auto& region = player->getDimensionBlockSource();
+        ScopedTessellationBlocks blockActorWorldScope(
+            gState.expectedWorldBlocks,
+            gState.expectedWorldBlockActors
+        );
+        for (auto const& projected : gState.projectedBlockActors) {
+            auto const state = gState.correctionStates[projected.structureIndex];
+            if (state == ProjectionState::CorrectionState::Correct
+                || state == ProjectionState::CorrectionState::WrongType
+                || state == ProjectionState::CorrectionState::WrongState
+                || !projected.actor->isWithinRenderDistance(camera)) {
+                continue;
+            }
+            dispatcher.render(
+                renderContext,
+                region,
+                *projected.actor,
+                *projected.block,
+                renderAlphaLayer,
+                noForcedMaterial,
+                nullptr,
+                -1,
+                std::nullopt
+            );
+        }
     }
 
     auto matrix = renderContext.getWorldMatrix().push(false);
@@ -1552,6 +1645,21 @@ LL_TYPE_INSTANCE_HOOK(
 }
 
 LL_TYPE_INSTANCE_HOOK(
+    BlockSourceGetBlockEntityHook,
+    ll::memory::HookPriority::Normal,
+    BlockSource,
+    static_cast<BlockActor const* (BlockSource::*)(BlockPos const&) const>(&BlockSource::$getBlockEntity),
+    BlockActor const*,
+    BlockPos const& position
+) {
+    if (gTessellationBlockActors) {
+        auto const found = gTessellationBlockActors->find(std::tuple{position.x, position.y, position.z});
+        if (found != gTessellationBlockActors->end()) return found->second.get();
+    }
+    return origin(position);
+}
+
+LL_TYPE_INSTANCE_HOOK(
     LoopbackPacketSenderSendToServerHook,
     ll::memory::HookPriority::Normal,
     LoopbackPacketSender,
@@ -1641,13 +1749,20 @@ bool installHook() {
         BlockSourceGetBlockHook::unhook();
         return false;
     }
+    if (BlockSourceGetBlockEntityHook::hook() < 0) {
+        BlockSourceGetBlockLayerHook::unhook();
+        BlockSourceGetBlockHook::unhook();
+        return false;
+    }
     if (LoopbackPacketSenderSendToServerHook::hook() < 0) {
+        BlockSourceGetBlockEntityHook::unhook();
         BlockSourceGetBlockLayerHook::unhook();
         BlockSourceGetBlockHook::unhook();
         return false;
     }
     if (LoopbackPacketSenderSendHook::hook() < 0) {
         LoopbackPacketSenderSendToServerHook::unhook();
+        BlockSourceGetBlockEntityHook::unhook();
         BlockSourceGetBlockLayerHook::unhook();
         BlockSourceGetBlockHook::unhook();
         return false;
@@ -1655,6 +1770,7 @@ bool installHook() {
     if (LevelRendererPlayerRenderHitSelectHook::hook() < 0) {
         LoopbackPacketSenderSendHook::unhook();
         LoopbackPacketSenderSendToServerHook::unhook();
+        BlockSourceGetBlockEntityHook::unhook();
         BlockSourceGetBlockLayerHook::unhook();
         BlockSourceGetBlockHook::unhook();
         return false;
@@ -1663,6 +1779,7 @@ bool installHook() {
         LevelRendererPlayerRenderHitSelectHook::unhook();
         LoopbackPacketSenderSendHook::unhook();
         LoopbackPacketSenderSendToServerHook::unhook();
+        BlockSourceGetBlockEntityHook::unhook();
         BlockSourceGetBlockLayerHook::unhook();
         BlockSourceGetBlockHook::unhook();
         return false;
@@ -1675,6 +1792,7 @@ void uninstallHook() {
     LevelRendererPlayerRenderHitSelectHook::unhook();
     LoopbackPacketSenderSendHook::unhook();
     LoopbackPacketSenderSendToServerHook::unhook();
+    BlockSourceGetBlockEntityHook::unhook();
     BlockSourceGetBlockLayerHook::unhook();
     BlockSourceGetBlockHook::unhook();
 }

@@ -24,6 +24,7 @@
 #include <vector>
 
 class Block;
+class CompoundTag;
 
 namespace lholo::structure {
 
@@ -43,6 +44,7 @@ struct LoadedStructure {
         int          z{};
         Block const* block{};
         Block const* liquid{};
+        std::shared_ptr<CompoundTag const> blockEntityNbt;
     };
     std::vector<RenderBlock>              renderBlocks;
 };

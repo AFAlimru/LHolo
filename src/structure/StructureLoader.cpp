@@ -722,6 +722,8 @@ std::shared_ptr<LoadedStructure> loadMcstructure(std::filesystem::path const& pa
     auto const* palette = findCompound(*structure, "palette");
     auto const* defaultPalette = palette ? findCompound(*palette, "default") : nullptr;
     auto const* blockPalette = defaultPalette ? findList(*defaultPalette, "block_palette") : nullptr;
+    auto const* blockPositionData = defaultPalette
+        ? findCompound(*defaultPalette, "block_position_data") : nullptr;
     if (!blockPalette) {
         error = "缺少 palette.default.block_palette";
         return nullptr;
@@ -793,8 +795,16 @@ std::shared_ptr<LoadedStructure> loadMcstructure(std::filesystem::path const& pa
         auto const remainder = index % yz;
         auto const y = remainder / static_cast<std::uint64_t>(loaded->sizeZ);
         auto const z = remainder % static_cast<std::uint64_t>(loaded->sizeZ);
+        std::shared_ptr<CompoundTag const> blockEntityNbt;
+        if (blockPositionData) {
+            auto const* positionData = findCompound(*blockPositionData, std::to_string(index));
+            auto const* entityData = positionData
+                ? findCompound(*positionData, "block_entity_data") : nullptr;
+            if (entityData) blockEntityNbt = std::make_shared<CompoundTag const>(*entityData);
+        }
         loaded->renderBlocks.push_back({
-            static_cast<int>(x), static_cast<int>(y), static_cast<int>(z), block, liquid
+            static_cast<int>(x), static_cast<int>(y), static_cast<int>(z), block, liquid,
+            std::move(blockEntityNbt)
         });
     }
     loaded->generation = gGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
