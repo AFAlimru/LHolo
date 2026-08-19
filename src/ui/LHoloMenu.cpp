@@ -395,16 +395,13 @@ bool renderCapturePoint(
 void renderCreateStructurePage(MenuModel& model, MenuActions const& actions, UiMetrics const& metrics) {
     renderSection("##CaptureSource", "捕获来源", metrics, [&] {
         model.capture.mode = 0;
-        static char const* modeNames[]{"客户端模式", "单人存档模式（开发中）"};
+        static char const* modeNames[]{"客户端模式"};
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted("模式");
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(adaptiveComboWidth(modeNames, 2));
+        ImGui::SetNextItemWidth(adaptiveComboWidth(modeNames, 1));
         if (ImGui::BeginCombo("##CaptureMode", modeNames[0])) {
             ImGui::Selectable(modeNames[0], true);
-            ImGui::BeginDisabled();
-            ImGui::Selectable(modeNames[1], false);
-            ImGui::EndDisabled();
             ImGui::EndCombo();
         }
         ImGui::TextDisabled("客户端模式只能保存当前已加载的世界范围，且容器内容和实体数据可能不完整");
