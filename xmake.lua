@@ -30,7 +30,6 @@ target("LHolo")
     add_cxflags(
         "/utf-8",
         "/W4",
-        "/wd4702",
         "/w44265",
         "/w44289",
         "/w44296",

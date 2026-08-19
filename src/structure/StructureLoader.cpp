@@ -996,10 +996,18 @@ std::shared_ptr<LoadedStructure> loadStructure(std::filesystem::path const& path
     std::transform(extension.begin(), extension.end(), extension.begin(), [](wchar_t value) {
         return static_cast<wchar_t>(std::towlower(value));
     });
-    if (extension == L".litematic") return loadLitematic(path, error);
-    if (extension == L".mcstructure") return loadMcstructure(path, error);
-    error = "不支持的文件格式，请选择 .mcstructure 或 .litematic";
-    return nullptr;
+    std::shared_ptr<LoadedStructure> loaded;
+    if (extension == L".litematic") loaded = loadLitematic(path, error);
+    else if (extension == L".mcstructure") loaded = loadMcstructure(path, error);
+    else {
+        error = "不支持的文件格式，请选择 .mcstructure 或 .litematic";
+        return nullptr;
+    }
+    if (loaded && loaded->renderBlocks.empty()) {
+        error = "结构中没有可投影方块";
+        return nullptr;
+    }
+    return loaded;
 }
 
 std::string makeStatus(LoadedStructure const& loaded) {

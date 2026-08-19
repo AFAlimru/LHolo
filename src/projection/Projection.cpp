@@ -177,6 +177,7 @@ struct ProjectionState {
     std::map<std::tuple<int, int, int>, std::shared_ptr<BlockActor>> expectedWorldBlockActors;
     std::vector<ProjectedBlockActor> projectedBlockActors;
     std::map<std::tuple<int, int, int>, std::size_t>  expectedWorldBlockIndices;
+    bool meshPreflightDone{};
 };
 
 thread_local std::map<std::tuple<int, int, int>, Block const*> const* gTessellationBlocks{};
@@ -249,20 +250,7 @@ void clearProjectionStateLocked() {
     gBuildProgressWrongType.store(0, std::memory_order_relaxed);
     gBuildProgressWrongState.store(0, std::memory_order_relaxed);
     gBuildProgressTotal.store(0, std::memory_order_release);
-    // Withdraw nothing: liquids are drawn by LHolo's own meshes and never
-    // touch the vanilla chunk pipeline.
-    gState.terrainTexture.reset();
-    gState.terrainTextureVariant.reset();
-    gState.dimension     = nullptr;
-    gState.level         = nullptr;
-    gState.client        = nullptr;
-    gState.anchor        = {};
-    gState.enabled       = false;
-    gState.structure.reset();
-    gState.blockTessellator.reset();
-    gState.projectedBlockActors.clear();
-    gState.expectedWorldBlockActors.clear();
-    gState.structureGeneration = 0;
+    gState = ProjectionState{};
 }
 
 void clearProjectionState() {
@@ -561,6 +549,9 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
             = std::abs(gState.cachedCorrectionFillOpacity - correctionFillOpacity) > 0.0001f
             || std::abs(gState.cachedCorrectionOutlineOpacity - correctionOutlineOpacity) > 0.0001f;
         if (geometryTransformChanged || placementMoved || layerChanged || opacityChanged || correctionStyleChanged) {
+            if (geometryTransformChanged || layerChanged || opacityChanged || correctionStyleChanged) {
+                gState.meshPreflightDone = false;
+            }
             if (geometryTransformChanged || opacityChanged || correctionStyleChanged) {
                 std::fill(gState.sectionDirty.begin(), gState.sectionDirty.end(), true);
             }
@@ -1399,6 +1390,25 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
         tessellator.cancel();
         logger().error("Projection terrain texture is not available");
         return;
+    }
+
+    if (!gState.meshPreflightDone) {
+        auto const countValid = [](auto const& meshes) {
+            return std::count_if(meshes.begin(), meshes.end(), [](auto const& mesh) {
+                return mesh && mesh->isValid();
+            });
+        };
+        std::size_t normalMeshes{};
+        for (auto const& meshes : gState.sectionMeshes) {
+            normalMeshes += countValid(meshes);
+        }
+        auto const warningMeshes = countValid(gState.warningFillSectionMeshes);
+        auto const outlineMeshes = countValid(gState.correctionOutlineSectionMeshes);
+        auto const liquidMeshes = countValid(gState.liquidProxySectionMeshes);
+        auto const placeholderMeshes = countValid(gState.blockEntityPlaceholderSectionMeshes);
+        if (normalMeshes + warningMeshes + outlineMeshes + liquidMeshes + placeholderMeshes != 0) {
+            gState.meshPreflightDone = true;
+        }
     }
 
     try {
