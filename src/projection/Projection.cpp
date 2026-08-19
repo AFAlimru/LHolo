@@ -75,6 +75,7 @@
 #include "mc/world/level/block/Block.h"
 #include "mc/world/level/block/BlockRenderLayer.h"
 #include "mc/world/level/block/BlockType.h"
+#include "mc/world/level/block/VanillaBlockTypeIds.h"
 #include "mc/world/level/block/VanillaStates.h"
 #include "mc/world/level/block/actor/BlockActor.h"
 #include "mc/world/level/block/actor/BlockActorType.h"
@@ -879,6 +880,11 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 auto const appendBlock = [&](Block const* source) {
                     auto const* transformedBlock = transformExpectedBlock(source, transformSettings);
                     if (!transformedBlock) return;
+                    auto const& typeName = transformedBlock->getTypeName();
+                    if (typeName == VanillaBlockTypeIds::PistonArmCollision().getString()
+                        || typeName == VanillaBlockTypeIds::StickyPistonArmCollision().getString()) {
+                        return;
+                    }
                     auto const* graphics = BlockGraphics::getForBlock(*transformedBlock);
                     auto const layer = graphics
                         ? graphics->getRenderLayer(region, position)
