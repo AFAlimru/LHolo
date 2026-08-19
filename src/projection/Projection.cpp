@@ -53,7 +53,9 @@
 #include "mc/client/renderer/game/LevelRenderer.h"
 #include "mc/client/renderer/game/LevelRendererPlayer.h"
 #include "mc/client/renderer/texture/TextureUVCoordinateSet.h"
+#include "mc/client/world/level/biome/biome_color_sampling/TessellationPolicy.h"
 #include "mc/client/player/LocalPlayer.h"
+#include "mc/deps/core/math/Color.h"
 #include "mc/deps/minecraft_renderer/resources/ClientTexture.h"
 #include "mc/deps/minecraft_renderer/resources/ServerTexture.h"
 #include "mc/deps/minecraft_renderer/renderer/IsMissingTexture.h"
@@ -81,6 +83,7 @@
 #include "mc/world/level/block/VanillaStates.h"
 #include "mc/world/level/block/actor/BlockActor.h"
 #include "mc/world/level/block/actor/BlockActorType.h"
+#include "mc/world/level/biome/biome_color_sampling/BiomeColorSampling.h"
 #include "mc/world/level/levelgen/structure/LegacyStructureSettings.h"
 #include "mc/world/level/levelgen/structure/LegacyStructureTemplate.h"
 #include "mc/world/level/material/Material.h"
@@ -112,6 +115,14 @@ constexpr std::uint32_t LiquidLavaTintAbgrRgb  = 0x00FFFFFFU; // white
 std::uint32_t withAlpha(std::uint32_t colorAbgrRgb, float opacity) {
     auto const alpha = static_cast<std::uint32_t>(std::lround(std::clamp(opacity, 0.0f, 1.0f) * 255.0f));
     return colorAbgrRgb | (alpha << 24U);
+}
+
+std::uint32_t modulateAbgr(std::uint32_t color, std::uint32_t tint) {
+    auto const channel = [&](unsigned int shift) {
+        auto const value = ((color >> shift) & 0xFFU) * ((tint >> shift) & 0xFFU);
+        return ((value + 127U) / 255U) << shift;
+    };
+    return (color & 0xFF000000U) | channel(0) | channel(8) | channel(16);
 }
 
 using TextureVariant =
@@ -926,6 +937,24 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 for (auto const& layered : layeredBlocks) {
                     if (layered.bucket != bucket) continue;
                     blockTessellator.setRenderLayer(static_cast<int>(layered.layer));
+                    auto const tintMethod = layered.block->getTintMethod();
+                    std::optional<std::uint32_t> foliageTint;
+                    if (tintMethod == TintMethod::DefaultFoliage
+                        || tintMethod == TintMethod::BirchFoliage
+                        || tintMethod == TintMethod::EvergreenFoliage
+                        || tintMethod == TintMethod::DryFoliage) {
+                        blockTessellator.buildBiomeWeights(layered.position);
+                        foliageTint = static_cast<std::uint32_t>(
+                            BiomeColorSampling::getTessellationPolicy(tintMethod)
+                                .get(
+                                    *layered.block,
+                                    region,
+                                    layered.position,
+                                    &blockTessellator.getBiomeTintCache()
+                                )
+                                .toABGR()
+                        );
+                    }
                     auto const firstPosition = tessellator.mMeshData->mPositions.get().size();
                     auto const firstColor = tessellator.mMeshData->mColors.get().size();
                     auto const rendered = blockTessellator.tessellateInWorld(
@@ -946,6 +975,11 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     auto const alpha = static_cast<uint>(std::lround(
                         std::clamp(structureOpacity, 0.05f, 1.0f) * 255.0f
                     ));
+                    if (foliageTint) {
+                        for (std::size_t colorIndex = firstColor; colorIndex < colors.size(); ++colorIndex) {
+                            colors[colorIndex] = modulateAbgr(colors[colorIndex], *foliageTint);
+                        }
+                    }
                     for (std::size_t colorIndex = firstColor; colorIndex < colors.size(); ++colorIndex) {
                         colors[colorIndex] = (colors[colorIndex] & 0x00FFFFFFU) | (alpha << 24U);
                     }

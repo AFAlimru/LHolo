@@ -276,6 +276,7 @@ world = anchor + userOffset + transform(local, mirror, rotation)
 LHolo 不自制草方块、楼梯等材质模型。它使用：
 
 - `BlockTessellator::tessellateInWorld()` 生成原版方块几何。
+- 独立投影 Tessellator 不经过原版区块管线的树叶着色步骤。对 `Block::getTintMethod()` 返回的四种 foliage tint，使用 `BiomeColorSampling::getTessellationPolicy()` 计算原版群系颜色并与网格顶点色相乘；树叶类型和颜色不由 LHolo 维护。
 - Minecraft level atlas 提供纹理。
 - `BlockGraphics::getRenderLayer()` 取得实际渲染层。
 - `LegacyStructureTemplate::_mapToData()` 取得旋转/镜像后的方块状态。
