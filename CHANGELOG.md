@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [26.20.4] - 2026-08-19
 
 ### Fixed
 
