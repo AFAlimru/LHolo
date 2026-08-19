@@ -29,6 +29,8 @@ namespace lholo::projection {
 struct BuildProgress {
     std::uint64_t placed{};
     std::uint64_t total{};
+    std::uint64_t visiblePlaced{};
+    std::uint64_t visibleTotal{};
     std::uint64_t wrongType{};
     std::uint64_t wrongState{};
 };

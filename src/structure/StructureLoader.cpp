@@ -98,6 +98,7 @@ std::atomic_int                  gLayerAxis{0};
 std::atomic_bool                 gHudEnabled{true};
 std::atomic_bool                 gHudShowFileName{true};
 std::atomic_bool                 gHudShowLayer{true};
+std::atomic_bool                 gHudShowOverallProgress{false};
 std::atomic_bool                 gHudShowProgress{true};
 std::atomic_bool                 gHudShowWrongState{true};
 std::atomic_bool                 gHudShowWrongType{true};
@@ -1279,6 +1280,7 @@ bool hasHudInfo() {
     if (!gHudEnabled.load(std::memory_order_relaxed)) return false;
     if (!gHudShowFileName.load(std::memory_order_relaxed)
         && !gHudShowLayer.load(std::memory_order_relaxed)
+        && !gHudShowOverallProgress.load(std::memory_order_relaxed)
         && !gHudShowProgress.load(std::memory_order_relaxed)
         && !gHudShowWrongState.load(std::memory_order_relaxed)
         && !gHudShowWrongType.load(std::memory_order_relaxed)
@@ -1292,11 +1294,13 @@ void renderHud() {
     if (!gHudEnabled.load(std::memory_order_relaxed)) return;
     auto const showFileName = gHudShowFileName.load(std::memory_order_relaxed);
     auto const showLayer = gHudShowLayer.load(std::memory_order_relaxed);
+    auto const showOverallProgress = gHudShowOverallProgress.load(std::memory_order_relaxed);
     auto const showProgress = gHudShowProgress.load(std::memory_order_relaxed);
     auto const showWrongState = gHudShowWrongState.load(std::memory_order_relaxed);
     auto const showWrongType = gHudShowWrongType.load(std::memory_order_relaxed);
     auto const showBlockEntity = gHudShowBlockEntity.load(std::memory_order_relaxed);
-    if (!showFileName && !showLayer && !showProgress && !showWrongState && !showWrongType && !showBlockEntity) return;
+    if (!showFileName && !showLayer && !showOverallProgress && !showProgress
+        && !showWrongState && !showWrongType && !showBlockEntity) return;
 
     std::string fileName;
     int maxLayer{};
@@ -1374,14 +1378,21 @@ void renderHud() {
                 layerAxis == 1 ? "X" : "Y"
             );
         }
-        if (showProgress || showWrongState || showWrongType) {
+        if (showOverallProgress || showProgress || showWrongState || showWrongType) {
             auto const progress = projection::getBuildProgress();
+            if (showOverallProgress) {
+                ImGui::Text(
+                    "总体进度：%llu / %llu",
+                    static_cast<unsigned long long>(progress.placed),
+                    static_cast<unsigned long long>(progress.total)
+                );
+            }
             if (showProgress) {
-            ImGui::Text(
-                "建造进度：%llu / %llu",
-                static_cast<unsigned long long>(progress.placed),
-                static_cast<unsigned long long>(progress.total)
-            );
+                ImGui::Text(
+                    "建造进度：%llu / %llu",
+                    static_cast<unsigned long long>(progress.visiblePlaced),
+                    static_cast<unsigned long long>(progress.visibleTotal)
+                );
             }
             if (showWrongState && progress.wrongState != 0) {
                 ImGui::TextColored(
@@ -1498,6 +1509,7 @@ lholo::ui::MenuModel makeMenuModel(float effectiveUiScale) {
     model.hudPosition = std::clamp(gHudPosition.load(std::memory_order_relaxed), 0, 3);
     model.hudShowFileName = gHudShowFileName.load(std::memory_order_relaxed);
     model.hudShowLayer = gHudShowLayer.load(std::memory_order_relaxed);
+    model.hudShowOverallProgress = gHudShowOverallProgress.load(std::memory_order_relaxed);
     model.hudShowProgress = gHudShowProgress.load(std::memory_order_relaxed);
     model.hudShowWrongState = gHudShowWrongState.load(std::memory_order_relaxed);
     model.hudShowWrongType = gHudShowWrongType.load(std::memory_order_relaxed);
@@ -1571,6 +1583,7 @@ void applyMenuModel(lholo::ui::MenuModel const& model, float effectiveUiScale) {
     update(gHudPosition, std::clamp(model.hudPosition, 0, 3));
     update(gHudShowFileName, model.hudShowFileName);
     update(gHudShowLayer, model.hudShowLayer);
+    update(gHudShowOverallProgress, model.hudShowOverallProgress);
     update(gHudShowProgress, model.hudShowProgress);
     update(gHudShowWrongState, model.hudShowWrongState);
     update(gHudShowWrongType, model.hudShowWrongType);
@@ -1750,6 +1763,9 @@ void loadSettings() {
         gHudEnabled.store(json.value("hudEnabled", true), std::memory_order_relaxed);
         gHudShowFileName.store(json.value("hudShowFileName", true), std::memory_order_relaxed);
         gHudShowLayer.store(json.value("hudShowLayer", true), std::memory_order_relaxed);
+        gHudShowOverallProgress.store(
+            json.value("hudShowOverallProgress", false), std::memory_order_relaxed
+        );
         gHudShowProgress.store(json.value("hudShowProgress", true), std::memory_order_relaxed);
         gHudShowWrongState.store(json.value("hudShowWrongState", true), std::memory_order_relaxed);
         gHudShowWrongType.store(json.value("hudShowWrongType", true), std::memory_order_relaxed);
@@ -1881,6 +1897,7 @@ void saveSettings() {
             {"hudEnabled", gHudEnabled.load(std::memory_order_relaxed)},
             {"hudShowFileName", gHudShowFileName.load(std::memory_order_relaxed)},
             {"hudShowLayer", gHudShowLayer.load(std::memory_order_relaxed)},
+            {"hudShowOverallProgress", gHudShowOverallProgress.load(std::memory_order_relaxed)},
             {"hudShowProgress", gHudShowProgress.load(std::memory_order_relaxed)},
             {"hudShowWrongState", gHudShowWrongState.load(std::memory_order_relaxed)},
             {"hudShowWrongType", gHudShowWrongType.load(std::memory_order_relaxed)},

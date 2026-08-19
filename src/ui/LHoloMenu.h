@@ -72,6 +72,7 @@ struct MenuModel {
     int hudPosition{1};
     bool hudShowFileName{true};
     bool hudShowLayer{true};
+    bool hudShowOverallProgress{false};
     bool hudShowProgress{true};
     bool hudShowWrongState{true};
     bool hudShowWrongType{true};

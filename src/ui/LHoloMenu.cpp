@@ -453,6 +453,9 @@ void renderHudPage(MenuModel& model, UiMetrics const& metrics) {
         });
         renderCheckboxRow("##HudFileName", "显示投影文件名", model.hudShowFileName, metrics);
         renderCheckboxRow("##HudLayer", "显示渲染层信息", model.hudShowLayer, metrics);
+        renderCheckboxRow(
+            "##HudOverallProgress", "显示总体进度", model.hudShowOverallProgress, metrics
+        );
         renderCheckboxRow("##HudProgress", "显示建造进度", model.hudShowProgress, metrics);
         renderCheckboxRow("##HudWrongState", "显示朝向错误", model.hudShowWrongState, metrics);
         renderCheckboxRow("##HudWrongType", "显示放置错误", model.hudShowWrongType, metrics);
