@@ -516,13 +516,6 @@ void placeBlock(LocalPlayer& player, ProjectionTarget const& target, int slot, I
         true
     );
     player.getClientInstance().getPacketSender().sendToServer(packet);
-
-    // logger().info(
-    //     "[place] target=({},{},{}) mPos=({},{},{}) mFace={}",
-    //     target.cell.x, target.cell.y, target.cell.z,
-    //     transaction.mPos.get().x, transaction.mPos.get().y, transaction.mPos.get().z,
-    //     static_cast<int>(transaction.mFace)
-    // );
     gNextPlaceAt.store(GetTickCount64() + kMinSendIntervalMs, std::memory_order_release);
 }
 

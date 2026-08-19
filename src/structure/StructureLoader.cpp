@@ -16,7 +16,9 @@
 
 #include "structure/StructureLoader.h"
 
+#include "structure/capture/StructureCapture.h"
 #include "structure/java_to_bedrock/JavaToBedrock.h"
+#include "ui/FileDialog.h"
 #include "ui/FluentTheme.h"
 #include "ui/LHoloMenu.h"
 #include "place/PlaceHelper.h"
@@ -47,7 +49,6 @@
 #include <zlib.h>
 
 #include <Windows.h>
-#include <commdlg.h>
 
 #include "ll/api/mod/NativeMod.h"
 #include "ll/api/service/Bedrock.h"
@@ -363,30 +364,6 @@ std::string hotkeyChordName(unsigned int modifiers, unsigned int key) {
     if ((modifiers & kHotkeyModifierShift) != 0) result += "Shift + ";
     result += hotkeyName(key);
     return result;
-}
-
-std::optional<std::filesystem::path> browseStructureFile(std::filesystem::path const& current) {
-    std::vector<wchar_t> buffer(32768, L'\0');
-    if (!current.empty()) {
-        auto const value = current.native();
-        std::copy_n(value.data(), std::min(value.size(), buffer.size() - 1), buffer.data());
-    }
-
-    wchar_t const filter[] =
-        L"投影结构 (*.mcstructure;*.litematic)\0*.mcstructure;*.litematic\0"
-        L"Bedrock 结构 (*.mcstructure)\0*.mcstructure\0"
-        L"Litematica 结构 (*.litematic)\0*.litematic\0"
-        L"所有文件 (*.*)\0*.*\0\0";
-    OPENFILENAMEW dialog{};
-    dialog.lStructSize = sizeof(dialog);
-    dialog.lpstrFile = buffer.data();
-    dialog.nMaxFile = static_cast<DWORD>(buffer.size());
-    dialog.lpstrFilter = filter;
-    dialog.nFilterIndex = 1;
-    dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER;
-    dialog.lpstrDefExt = L"mcstructure";
-    if (!GetOpenFileNameW(&dialog)) return std::nullopt;
-    return std::filesystem::path{buffer.data()};
 }
 
 std::optional<std::string> readFile(std::filesystem::path const& path, std::string& error) {
@@ -1480,6 +1457,20 @@ lholo::ui::MenuModel makeMenuModel(float effectiveUiScale) {
     model.pathBufferSize = gPathBuffer.size();
     model.blockOpeningInput = gOpeningInputBlockFrames.load(std::memory_order_acquire) > 0;
     model.uiScale = effectiveUiScale;
+    auto const captureSnapshot = capture::getSnapshot();
+    model.capture.mode = static_cast<int>(captureSnapshot.draft.mode);
+    model.captureRevision = captureSnapshot.revision;
+    model.capture.includeEntities = captureSnapshot.draft.includeEntities;
+    model.captureWorldAvailable = captureSnapshot.worldAvailable;
+    model.captureStatus = captureSnapshot.status;
+    if (captureSnapshot.draft.first) {
+        auto const& point = *captureSnapshot.draft.first;
+        model.capture.first = {true, point.x, point.y, point.z};
+    }
+    if (captureSnapshot.draft.second) {
+        auto const& point = *captureSnapshot.draft.second;
+        model.capture.second = {true, point.x, point.y, point.z};
+    }
     model.layerAxis = std::clamp(gLayerAxis.load(std::memory_order_relaxed), 0, 1);
 
     {
@@ -1596,13 +1587,27 @@ void applyMenuModel(lholo::ui::MenuModel const& model, float effectiveUiScale) {
     update(gHudShowWrongState, model.hudShowWrongState);
     update(gHudShowWrongType, model.hudShowWrongType);
     update(gHudShowBlockEntity, model.hudShowBlockEntity);
+    capture::Draft captureDraft;
+    captureDraft.mode = static_cast<capture::CaptureMode>(std::clamp(model.capture.mode, 0, 1));
+    captureDraft.includeEntities = model.capture.includeEntities;
+    if (model.capture.first.set) {
+        captureDraft.first = capture::Point{
+            model.capture.first.x, model.capture.first.y, model.capture.first.z
+        };
+    }
+    if (model.capture.second.set) {
+        captureDraft.second = capture::Point{
+            model.capture.second.x, model.capture.second.y, model.capture.second.z
+        };
+    }
+    capture::updateDraft(captureDraft);
     if (changed) saveSettings();
 }
 
 lholo::ui::MenuActions makeMenuActions(bool& refreshModel) {
     lholo::ui::MenuActions actions;
     actions.browseStructure = [](std::string_view current) -> std::optional<std::string> {
-        auto const selected = browseStructureFile(pathFromUtf8(current));
+        auto const selected = lholo::ui::openStructureFile(pathFromUtf8(current));
         return selected ? std::optional<std::string>{pathToUtf8(*selected)} : std::nullopt;
     };
     actions.loadStructure = [&refreshModel](std::string_view pathValue) {
@@ -1706,6 +1711,29 @@ lholo::ui::MenuActions makeMenuActions(bool& refreshModel) {
         projection::setCorrectionFillOpacity(0.15f);
         projection::setCorrectionOutlineOpacity(1.0f);
         saveSettings();
+    };
+    actions.usePlayerCapturePosition = [&refreshModel](lholo::ui::CapturePointId point) {
+        capture::setPointFromPlayer(
+            point == lholo::ui::CapturePointId::First
+                ? capture::PointSlot::First
+                : capture::PointSlot::Second
+        );
+        refreshModel = true;
+    };
+    actions.clearCapture = [&refreshModel] {
+        capture::clear();
+        refreshModel = true;
+    };
+    actions.exportCapture = [&refreshModel](lholo::ui::CaptureDraftModel const& model) {
+        auto const output = lholo::ui::saveMcstructureFile();
+        if (!output) return;
+        capture::Draft draft;
+        draft.mode = static_cast<capture::CaptureMode>(std::clamp(model.mode, 0, 1));
+        draft.includeEntities = model.includeEntities;
+        if (model.first.set) draft.first = capture::Point{model.first.x, model.first.y, model.first.z};
+        if (model.second.set) draft.second = capture::Point{model.second.x, model.second.y, model.second.z};
+        capture::exportStructure(draft, *output);
+        refreshModel = true;
     };
     return actions;
 }

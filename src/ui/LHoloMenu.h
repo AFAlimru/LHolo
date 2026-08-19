@@ -14,7 +14,32 @@
 
 namespace lholo::ui {
 
-enum class MenuPage : std::uint8_t { Projection, Transform, Render, Hotkeys, Hud, UiScale, Experimental };
+enum class MenuPage : std::uint8_t {
+    Projection,
+    CreateStructure,
+    Transform,
+    Render,
+    Hotkeys,
+    Hud,
+    UiScale,
+    Experimental
+};
+
+enum class CapturePointId : std::uint8_t { First, Second };
+
+struct CapturePointModel {
+    bool set{};
+    int  x{};
+    int  y{};
+    int  z{};
+};
+
+struct CaptureDraftModel {
+    int               mode{};
+    CapturePointModel first;
+    CapturePointModel second;
+    bool              includeEntities{};
+};
 
 enum class HotkeyId : std::uint8_t {
     Gui, MoveXMinus, MoveXPlus, MoveZMinus, MoveZPlus,
@@ -46,6 +71,11 @@ struct MenuModel {
     int savedAnchorY{};
     int savedAnchorZ{};
     float uiScale{1.0f};
+
+    CaptureDraftModel capture;
+    std::uint64_t     captureRevision{};
+    bool              captureWorldAvailable{};
+    std::string       captureStatus;
 
     bool structureBoundsEnabled{};
     bool easyPlaceEnabled{};
@@ -93,6 +123,9 @@ struct MenuActions {
     std::function<void(HotkeyId)> clearHotkey;
     std::function<void()> resetHotkeys;
     std::function<void()> resetCorrectionStyle;
+    std::function<void(CapturePointId)> usePlayerCapturePosition;
+    std::function<void()> clearCapture;
+    std::function<void(CaptureDraftModel const&)> exportCapture;
 };
 
 void renderMenu(MenuModel& model, MenuActions const& actions, UiMetrics const& metrics);

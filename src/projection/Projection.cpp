@@ -16,8 +16,10 @@
 
 #include "projection/Projection.h"
 
+#include "overlay/BoundsWireframe.h"
 #include "plugin/LHolo.h"
 #include "overlay/ImGuiOverlay.h"
+#include "structure/capture/StructureCapture.h"
 #include "structure/StructureLoader.h"
 
 #include <atomic>
@@ -243,6 +245,7 @@ std::atomic_uint64_t gBuildProgressWrongType{0};
 std::atomic_uint64_t gBuildProgressWrongState{0};
 std::mutex       gStateMutex;
 ProjectionState  gState;
+overlay::BoundsWireframe gCaptureBounds;
 
 void clearProjectionStateLocked() {
     gBuildProgressPlaced.store(0, std::memory_order_relaxed);
@@ -1794,6 +1797,17 @@ LL_TYPE_INSTANCE_HOOK(
 
     std::lock_guard lock(gStateMutex);
 
+    if (auto const bounds = structure::capture::getBounds()) {
+        gCaptureBounds.setBounds(
+            BlockPos{bounds->min.x, bounds->min.y, bounds->min.z},
+            BlockPos{bounds->max.x, bounds->max.y, bounds->max.z},
+            0xFF0000FF
+        );
+    } else {
+        gCaptureBounds.clear();
+    }
+    gCaptureBounds.render(renderContext, renderAlphaLayer);
+
     if (auto loaded = structure::getLoaded(); loaded && loaded->generation != gState.structureGeneration) {
         clearProjectionStateLocked();
         if (!enableStructureProjection(renderContext, std::move(loaded))) {
@@ -1860,6 +1874,8 @@ void uninstallHook() {
     BlockSourceGetBlockEntityHook::unhook();
     BlockSourceGetBlockLayerHook::unhook();
     BlockSourceGetBlockHook::unhook();
+    std::lock_guard lock(gStateMutex);
+    gCaptureBounds.clear();
 }
 
 void disable() {

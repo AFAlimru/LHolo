@@ -37,6 +37,7 @@ LHolo 的投影、纠错、HUD 和菜单都只存在于客户端，不产生碰�
 - 默认结构移动：`Ctrl + 方向键` 调整 X/Z，`Shift + ↑/↓` 调整 Y。
 - 默认显示层：`Alt + ↑/↓`；“完整结构”模式下按键无效。
 - 支持保存和恢复上次投影文件、锚点及当时的变换/分层参数。
+- “创建结构”页支持用玩家脚下位置或手动 XYZ 设置包含端点的选区，以红色整体线框持续显示，并通过原版结构 API 导出 `.mcstructure`。客户端模式只读取当前已加载范围；实体默认不包含，单人存档模式仅作灰显预留。
 - 退出世界、切换存档或失去有效客户端上下文时清理投影，禁止跨世界复用世界对象。
 
 不在当前范围内：
@@ -59,11 +60,16 @@ LHolo/
 │  │  └─ MemoryOperators.cpp    Windows 客户端内存运算符适配
 │  ├─ overlay/
 │  │  ├─ ImGuiOverlay.cpp       DXGI/D3D11On12、WndProc、GUI/HUD 帧提交
-│  │  └─ ImGuiOverlay.h
+│  │  ├─ ImGuiOverlay.h
+│  │  └─ BoundsWireframe.*      创建结构选区的红色整体线框
 │  ├─ structure/
+│  │  ├─ capture/               客户端选区状态、原版结构捕获与 `.mcstructure` 导出
 │  │  ├─ java_to_bedrock/       Chunker 生成映射及运行时解析模块
 │  │  ├─ StructureLoader.cpp    两种格式解析、GUI、HUD、快捷键、配置
 │  │  └─ StructureLoader.h      LoadedStructure 统一数据模型
+│  ├─ ui/
+│  │  ├─ FileDialog.*           通用结构打开与 `.mcstructure` 保存对话框
+│  │  └─ LHoloMenu.*            纯菜单模型、页面和动作回调
 │  ├─ projection/
 │  │  ├─ Projection.cpp         投影网格、纠错、分区缓存、渲染 Hook
 │  │  └─ Projection.h           GUI/HUD 使用的投影控制接口
@@ -88,6 +94,7 @@ LHolo/
 模块边界必须保持清晰：
 
 - `structure` 负责“文件和用户意图”，不直接提交 Minecraft 网格。
+- `structure/capture` 只维护会话选区、读取当前客户端世界并调用原版捕获/导出 API；不手工生成方块调色板、索引或实体 NBT。
 - `projection` 负责“结构如何出现在世界中”，不弹文件选择框、不直接操作 ImGui。
 - `overlay` 负责“外部 GUI 如何安全进入游戏图形链”，不解析结构或扫描世界方块。
 - `place` 负责轻松、手动和范围放置：调用 projection 查询接口，在完整背包中查找物品，必要时交换到快捷栏，并发送 `InventoryTransactionPacket`；不碰渲染与配置。
@@ -131,6 +138,8 @@ LHolo/
 ### 3.3 世界切换
 
 `ProjectionState` 保存 `IClientInstance*`、`Level*`、`Dimension*`，仅用于验证当前上下文是否仍为创建投影时的世界。每次渲染先调用 `contextIsValid()`；不一致时立即清空投影和已加载结构。
+
+创建结构选区独立保存当前 `Level*` 和 `Dimension*` 身份。离开世界或身份变化时恢复客户端模式、清空两个端点和“包含实体”，红色线框随即释放；这些会话状态不写入配置。
 
 绝对禁止：
 
@@ -207,6 +216,19 @@ Java→Bedrock 映射不再手工散落维护。`GeneratedChunkerMappings.inc` �
 - 体积乘法使用 64 位整数。
 - 坐标范围在转换为 `int` 前检查溢出。
 - 解析异常转换为用户可见错误，不允许越界继续。
+
+### 4.5 客户端创建与导出
+
+“创建结构”不经过 `LoadedStructure`，也不会自动载入投影。选区端点先按每轴最小值/最大值归一化，两个端点都包含在内；导出前由 `BlockSource::areChunksFullyLoaded(min, max)` 拒绝客户端尚未完整加载的范围。
+
+捕获只使用 LeviLamina 26.20.7 客户端头文件确认的原版接口：
+
+1. `ll::service::getClientInstance()` 和 `ClientInstance::getLocalPlayer()` 获取当前客户端玩家。
+2. `Actor::getDimensionBlockSource()` 取得当前维度的 `BlockSource`。
+3. `StructureTemplate::create(name, blockSource, BoundingBox{min, max}, false, !includeEntities)` 同步捕获。
+4. `StructureManager::exportStructure(template, Core::Path)` 写出官方 `.mcstructure`。
+
+不得改用依赖服务端 `ll::service::getLevel()` 的 NBT 重载，不调用 `StructureBlockActor::_saveStructure()`，也不增加手工 palette、索引、实体 NBT 或备用序列化路径。捕获过程中不异步读取 `BlockSource`，不每帧扫描选区。
 
 ---
 
@@ -520,7 +542,7 @@ LeviLamina Hook：
 
 - 两个 LoopbackPacketSender 发送路径：本地菜单命令。
 - `LevelRendererPlayer::renderHitSelect`：避免红/黄纠错与原版选中覆盖共面闪烁。
-- `LevelRendererPlayer::$renderBlockEntities`：在原版调用后更新/提交投影。
+- `LevelRendererPlayer::$renderBlockEntities`：在原版调用后更新/提交投影，并提交独立的创建结构选区线框；没有新增渲染 Hook。
 - `BlockSource::$getBlock` 两个重载和 `$getBlockEntity`（`projection` 模块）：仅在 LHolo Tessellation 的线程局部作用域内提供虚拟邻居和方块实体，作用域外立即调用原函数。
 - `LocalPlayer::$tickWorld`（`place` 模块）：轻松、手动和范围放置的每 tick 驱动。
 - `GameMode::$startBuildBlock` / `$buildBlock` / `$stopBuildBlock`（`place` 模块）：手动模式的右键按下、持续、释放状态及原版重复放置抑制。
@@ -758,6 +780,18 @@ D:\games\LeviLauncher\MC\versions\1.26.20.04\mods\LHolo
 - [ ] X/Z 镜像正确。
 - [ ] X/Y/Z 偏移快捷键和输入一致。
 - [ ] 远坐标（至少 ±20000）稳定。
+
+### 创建结构
+
+- [ ] 未进入世界时创建操作禁用；只设置一个点时不显示线框。
+- [ ] 正序、反序和手动修改两点时，红色线框包围包含两个端点的完整选区。
+- [ ] 关闭菜单及导出后选区线框继续显示；“清除选区”使其立即消失。
+- [ ] 单独确认原有“显示整体结构边框”开关和显示未受影响，不要求与红色选区线框同时开启。
+- [ ] 导出的 `.mcstructure` 可由 LHolo 重新加载，尺寸、方向、含水层和方块实体正确。
+- [ ] “包含实体”开关产生预期差异；多人游戏中的客户端实体与容器数据限制按页面说明处理。
+- [ ] 选区包含未加载区块时拒绝导出。
+- [ ] 切换维度或世界后，选区、实体选项和线框资源清理。
+- [ ] 中文保存路径、默认扩展名和覆盖确认正常。
 
 ### 分层/HUD/持久化
 

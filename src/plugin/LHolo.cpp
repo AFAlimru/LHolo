@@ -20,6 +20,7 @@
 #include "projection/Projection.h"
 #include "overlay/ImGuiOverlay.h"
 #include "structure/StructureLoader.h"
+#include "structure/capture/StructureCapture.h"
 #include "input/MenuInputGuard.h"
 
 #include "ll/api/mod/NativeMod.h"
@@ -69,6 +70,7 @@ bool LHolo::disable() {
     input::uninstallMenuInputGuard();
     place::uninstallHook();
     overlay::shutdown();
+    structure::capture::clear();
     structure::clear();
     projection::uninstallHook();
     mSelf.getLogger().info("LHolo disabled");

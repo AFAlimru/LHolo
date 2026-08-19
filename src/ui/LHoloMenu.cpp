@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cmath>
 #include <cfloat>
 #include <cstdio>
@@ -13,8 +14,8 @@ namespace lholo::ui {
 namespace {
 
 constexpr char kMaterialPopupName[] = "材料清单###LHoloMaterialList";
-constexpr std::array<char const*, 7> kPageNames{
-    "投影", "结构变换", "渲染设置", "快捷键", "HUD 信息显示", "界面缩放", "实验性功能"
+constexpr std::array<char const*, 8> kPageNames{
+    "投影", "创建结构", "结构变换", "渲染设置", "快捷键", "HUD 信息显示", "界面缩放", "实验性功能"
 };
 
 // Keep the navigation indicator independent from the page content.  This
@@ -27,6 +28,38 @@ struct NavigationIndicator {
 };
 
 NavigationIndicator gNavigationIndicator;
+
+using CaptureCoordinateText = std::array<std::array<char, 16>, 3>;
+
+struct CaptureInputState {
+    std::uint64_t        revision{std::numeric_limits<std::uint64_t>::max()};
+    CaptureCoordinateText first{};
+    CaptureCoordinateText second{};
+};
+
+CaptureInputState gCaptureInputState;
+
+void setCaptureCoordinateText(CaptureCoordinateText& text, CapturePointModel const& point) {
+    for (auto& coordinate : text) coordinate.fill('\0');
+    if (!point.set) return;
+    std::snprintf(text[0].data(), text[0].size(), "%d", point.x);
+    std::snprintf(text[1].data(), text[1].size(), "%d", point.y);
+    std::snprintf(text[2].data(), text[2].size(), "%d", point.z);
+}
+
+void syncCaptureInputState(MenuModel const& model) {
+    if (gCaptureInputState.revision == model.captureRevision) return;
+    setCaptureCoordinateText(gCaptureInputState.first, model.capture.first);
+    setCaptureCoordinateText(gCaptureInputState.second, model.capture.second);
+    gCaptureInputState.revision = model.captureRevision;
+}
+
+bool parseCaptureCoordinate(std::array<char, 16> const& text, int& value) {
+    std::string_view const input{text.data()};
+    if (input.empty()) return false;
+    auto const [end, error] = std::from_chars(input.data(), input.data() + input.size(), value);
+    return error == std::errc{} && end == input.data() + input.size();
+}
 
 template <typename Body>
 void renderSection(char const* id, char const* title, UiMetrics const& metrics, Body&& body) {
@@ -305,6 +338,145 @@ void renderProjectionPage(MenuModel& model, MenuActions const& actions, UiMetric
         }
     });
 
+}
+
+bool renderCapturePoint(
+    char const* id,
+    char const* title,
+    CapturePointModel& point,
+    CapturePointId pointId,
+    CaptureCoordinateText& coordinateText,
+    float coordinateWidth,
+    MenuActions const& actions,
+    UiMetrics const& metrics
+) {
+    ImGui::PushID(id);
+    ImGui::TextUnformatted(title);
+    constexpr std::array<char const*, 3> axisNames{"X", "Y", "Z"};
+    for (std::size_t index = 0; index < coordinateText.size(); ++index) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(axisNames[index]);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(coordinateWidth);
+        ImGui::PushID(static_cast<int>(index));
+        ImGui::InputText(
+            "##Coordinate",
+            coordinateText[index].data(),
+            coordinateText[index].size(),
+            ImGuiInputTextFlags_CharsDecimal
+        );
+        ImGui::PopID();
+        if (index + 1 < coordinateText.size()) ImGui::SameLine();
+    }
+    int x{};
+    int y{};
+    int z{};
+    auto const valid = parseCaptureCoordinate(coordinateText[0], x)
+        && parseCaptureCoordinate(coordinateText[1], y)
+        && parseCaptureCoordinate(coordinateText[2], z);
+    if (valid) {
+        point.set = true;
+        point.x = x;
+        point.y = y;
+        point.z = z;
+    }
+    if (!metrics.compact) ImGui::SameLine();
+    if (ImGui::Button("使用玩家当前位置") && actions.usePlayerCapturePosition) {
+        actions.usePlayerCapturePosition(pointId);
+    }
+    if (!valid) {
+        if (!metrics.compact) ImGui::SameLine();
+        ImGui::TextDisabled("未设置");
+    }
+    ImGui::PopID();
+    return valid;
+}
+
+void renderCreateStructurePage(MenuModel& model, MenuActions const& actions, UiMetrics const& metrics) {
+    renderSection("##CaptureSource", "捕获来源", metrics, [&] {
+        model.capture.mode = 0;
+        static char const* modeNames[]{"客户端模式", "单人存档模式（开发中）"};
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("模式");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(adaptiveComboWidth(modeNames, 2));
+        if (ImGui::BeginCombo("##CaptureMode", modeNames[0])) {
+            ImGui::Selectable(modeNames[0], true);
+            ImGui::BeginDisabled();
+            ImGui::Selectable(modeNames[1], false);
+            ImGui::EndDisabled();
+            ImGui::EndCombo();
+        }
+        ImGui::TextDisabled("客户端模式只能保存当前已加载的世界范围，且容器内容和实体数据可能不完整");
+    });
+
+    renderSection("##CaptureSelection", "结构选区", metrics, [&] {
+        ImGui::TextWrapped("%s", model.captureStatus.c_str());
+        syncCaptureInputState(model);
+        auto coordinateWidth = ImGui::CalcTextSize("0").x;
+        auto const measurePoint = [&](CaptureCoordinateText const& point) {
+            for (auto const& coordinate : point) {
+                coordinateWidth = std::max(
+                    coordinateWidth,
+                    ImGui::CalcTextSize(coordinate.data()).x
+                );
+            }
+        };
+        measurePoint(gCaptureInputState.first);
+        measurePoint(gCaptureInputState.second);
+        coordinateWidth += ImGui::GetStyle().FramePadding.x * 2.0f;
+        auto const axisWidth = ImGui::CalcTextSize("X").x;
+        auto const spacing = ImGui::GetStyle().ItemSpacing.x;
+        auto const buttonWidth = metrics.compact
+            ? 0.0f
+            : ImGui::CalcTextSize("使用玩家当前位置").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+        auto const maximumWidth = std::max(
+            0.0f,
+            (ImGui::GetContentRegionAvail().x - axisWidth * 3.0f - buttonWidth
+                - spacing * (metrics.compact ? 5.0f : 6.0f)) / 3.0f
+        );
+        coordinateWidth = std::min(coordinateWidth, maximumWidth);
+        ImGui::BeginDisabled(!model.captureWorldAvailable);
+        auto const firstValid = renderCapturePoint(
+            "First", "点 1", model.capture.first, CapturePointId::First,
+            gCaptureInputState.first, coordinateWidth, actions, metrics
+        );
+        ImGui::Spacing();
+        auto const secondValid = renderCapturePoint(
+            "Second", "点 2", model.capture.second, CapturePointId::Second,
+            gCaptureInputState.second, coordinateWidth, actions, metrics
+        );
+        ImGui::EndDisabled();
+
+        if (firstValid && secondValid) {
+            auto const sizeX = static_cast<std::uint64_t>(std::abs(
+                static_cast<std::int64_t>(model.capture.second.x) - model.capture.first.x
+            )) + 1;
+            auto const sizeY = static_cast<std::uint64_t>(std::abs(
+                static_cast<std::int64_t>(model.capture.second.y) - model.capture.first.y
+            )) + 1;
+            auto const sizeZ = static_cast<std::uint64_t>(std::abs(
+                static_cast<std::int64_t>(model.capture.second.z) - model.capture.first.z
+            )) + 1;
+            auto const volume = sizeX * sizeY * sizeZ;
+            ImGui::Text("尺寸：%llu × %llu × %llu", sizeX, sizeY, sizeZ);
+            ImGui::Text("方块总数：%llu", volume);
+        }
+
+        ImGui::Dummy(ImVec2(0.0f, metrics.gap * 0.55f));
+        ImGui::BeginDisabled(!model.captureWorldAvailable);
+        renderCheckboxRow("##IncludeEntities", "包含实体", model.capture.includeEntities, metrics);
+        ImGui::EndDisabled();
+        if (ImGui::Button("清除选区") && actions.clearCapture) actions.clearCapture();
+        if (!metrics.compact) ImGui::SameLine();
+        ImGui::BeginDisabled(
+            !model.captureWorldAvailable || !firstValid || !secondValid
+        );
+        if (ImGui::Button("导出 .mcstructure") && actions.exportCapture) {
+            actions.exportCapture(model.capture);
+        }
+        ImGui::EndDisabled();
+    });
 }
 
 void renderExperimentalPage(MenuModel& model, UiMetrics const& metrics) {
@@ -710,6 +882,7 @@ void renderMenu(MenuModel& model, MenuActions const& actions, UiMetrics const& m
             )) {
             switch (model.page) {
             case MenuPage::Projection: renderProjectionPage(model, actions, metrics); break;
+            case MenuPage::CreateStructure: renderCreateStructurePage(model, actions, metrics); break;
             case MenuPage::Experimental: renderExperimentalPage(model, metrics); break;
             case MenuPage::Transform: renderTransformPage(model, metrics); break;
             case MenuPage::Render: renderRenderPage(model, actions, metrics); break;
