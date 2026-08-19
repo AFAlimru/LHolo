@@ -15,7 +15,7 @@ namespace {
 
 constexpr char kMaterialPopupName[] = "材料清单###LHoloMaterialList";
 constexpr std::array<char const*, 8> kPageNames{
-    "投影", "创建结构", "结构变换", "渲染设置", "快捷键", "HUD 信息显示", "界面缩放", "实验性功能"
+    "投影", "创建结构", "结构变换", "渲染设置", "HUD 信息显示", "快捷键", "界面缩放", "实验性功能"
 };
 
 // Keep the navigation indicator independent from the page content.  This
@@ -393,7 +393,7 @@ bool renderCapturePoint(
 }
 
 void renderCreateStructurePage(MenuModel& model, MenuActions const& actions, UiMetrics const& metrics) {
-    renderSection("##CaptureSource", "捕获来源", metrics, [&] {
+    renderSection("##CaptureSource", "创建结构", metrics, [&] {
         model.capture.mode = 0;
         static char const* modeNames[]{"客户端模式"};
         ImGui::AlignTextToFramePadding();

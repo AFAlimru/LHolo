@@ -19,8 +19,8 @@ enum class MenuPage : std::uint8_t {
     CreateStructure,
     Transform,
     Render,
-    Hotkeys,
     Hud,
+    Hotkeys,
     UiScale,
     Experimental
 };
