@@ -196,7 +196,7 @@ LHolo/
 
 Java→Bedrock 映射不再手工散落维护。`GeneratedChunkerMappings.inc` 由固定 Chunker commit 的 `JavaBlockIdentifierResolver` 和 `BedrockBlockIdentifierResolver` 枚举各 Java 数据版本的合法状态生成，目标固定为 Bedrock 1.26.20。缺少 `Properties` 的非标准 Litematic 使用 Chunker 的规范默认状态；无法映射或无法在当前游戏注册表解析的方块安全跳过，不猜测替代 API、状态名或枚举值。
 
-生成器位于 `tools/java_to_bedrock/`，更新方法见该目录 README。Java、Gradle 和 Chunker 只在重新生成映射时使用，正式 LHolo 运行时只读取已压缩进 DLL 的生成表。更新 Chunker 或目标 Bedrock 版本后必须重新生成、检查 unsupported 输出、完成 Release 构建，并由用户在游戏中手动验证固定样本。
+生成器位于 `tools/java_to_bedrock/`，更新方法见该目录 README。Java、Gradle 和 Chunker 只在重新生成映射时使用，正式 LHolo 运行时只读取已压缩进 DLL 的生成表。手动运行生成脚本时，`javac` 的临时 `.class` 文件写入 `build/java-to-bedrock-generator/`；普通 `xmake` 构建不会生成这些文件，该目录也不得发布。更新 Chunker 或目标 Bedrock 版本后必须重新生成、检查 unsupported 输出、完成 Release 构建，并由用户在游戏中手动验证固定样本。
 
 运行时映射模块缓存 `BlockTypeRegistry` 拥有的 permutation 裸指针。Minecraft 退出世界时会注销或重建这些方块对象，因此缓存不得跨世界保留：`clear()` 必须调用 `resetJavaBlockMappingCache()`，每次 `loadLitematic()` 在确认当前客户端 Level 有效后也必须先重置缓存。重置同时清空 permutation 表和含水映射使用的 `gWaterSource`；禁止仅清除 `LoadedStructure` 而遗留 Java 映射指针。
 

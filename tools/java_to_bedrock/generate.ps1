@@ -21,7 +21,7 @@ $jar = Get-ChildItem -LiteralPath (Join-Path $chunker 'cli\build\libs') -Filter 
     Select-Object -First 1
 if (-not $jar) { throw 'Chunker shaded CLI jar was not produced.' }
 
-$classes = Join-Path $projectRoot 'bin\java-to-bedrock-generator'
+$classes = Join-Path $projectRoot 'build\java-to-bedrock-generator'
 New-Item -ItemType Directory -Force -Path $classes | Out-Null
 $source = Join-Path $PSScriptRoot 'GenerateMappings.java'
 $output = Join-Path $projectRoot 'src\structure\java_to_bedrock\GeneratedChunkerMappings.inc'
