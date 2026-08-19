@@ -34,5 +34,4 @@ LHolo 内自行猜测替代方块。
   `block_states.json` 校验来源和开发文档中的版本说明。
 - 生成完成后执行 Release 构建，并在游戏中手动验证正/负 Size、四向楼梯、门、
   活塞、观察者、半砖和含水方块。静态生成成功不能替代实机验证。
-- Chunker 许可归属保存在源码根目录 `THIRD_PARTY_NOTICES.md`，该文件不进入
-  正式模组包。
+- Chunker 许可归属保存在源码根目录 `THIRD_PARTY_NOTICES.md`。
