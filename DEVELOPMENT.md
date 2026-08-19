@@ -15,19 +15,21 @@
 
 ## 1. 产品行为与边界
 
-LHolo 只在客户端绘制虚拟结构，不向世界写入方块，不产生碰撞，不修改服务器数据。玩家可以穿过投影，服务器无需安装配套插件。
+LHolo 的投影、纠错、HUD 和菜单都只存在于客户端，不产生碰撞，也不会把虚拟方块或液体写入世界。玩家可以穿过投影，服务器无需安装配套插件。可选的轻松放置、手动放置和范围放置会以本地玩家身份发送正常的背包/放置事务；最终方块由服务端按玩家权限权威落地，因此这些放置功能会像玩家手动放置一样修改世界。
 
 正式版功能：
 
 - 从任意用户选择的路径加载 `.mcstructure` 或 `.litematic`，导入目录不写死。
 - 以加载时玩家脚下的整数方块坐标作为投影锚点；恢复记录时使用保存的锚点。
-- 支持 X/Y/Z 结构偏移、0°/90°/180°/270°旋转、X/Z/X+Z 镜像。
+- 支持 X/Y/Z 结构偏移、0°/90°/180°/270°旋转、X 或 Z 镜像。
 - 支持 Y 轴水平分层和 X 轴纵向切片。
 - 显示范围支持“完整结构”“单层”“当前层及以下”“当前层及以上”。
 - 投影透明度 0～100%，默认 100%。
 - 纠错状态：未放置为蓝色、方块类型错误为红色、方向或方块状态错误为黄色、完全正确时隐藏。
 - 纠错提示透明度默认 15%，描边透明度默认 100%；均为 0～100 整数输入、即时生效、持久化保存，可一键恢复默认值。
 - 可选整体结构边框。
+- 支持准心轻松放置、按住右键的手动放置，以及半径 1～4 的范围放置；三种模式在 GUI 中互斥。
+- `.mcstructure` 中带 NBT 的方块实体优先使用原版方块实体渲染器；没有可用渲染器或 Tessellation 结果的方块使用贴图占位外壳。
 - HUD 可显示文件名、显示层、建造进度、放置错误数和朝向错误数；支持四角定位和单项关闭，两类错误可分别配置。
 - GUI 使用外部注入 Dear ImGui，不使用游戏表单。
 - 默认 `Alt + M` 打开菜单；聊天栏输入 `LHolo`（ASCII 大小写不敏感）也可打开，消息在客户端拦截，不发往服务器。
@@ -39,8 +41,8 @@ LHolo 只在客户端绘制虚拟结构，不向世界写入方块，不产生�
 
 不在当前范围内：
 
-- 不真正放置或自动建造方块。
-- 不修改服务器世界或同步投影给其他玩家。
+- 不绕过玩家背包、放置距离、方块状态预测、服务端校验或权限进行无条件自动建造。
+- 不把投影本身写入世界，也不同步投影、纠错状态或 GUI 给其他玩家。
 - 不支持旧测试命令 `sp`、`sp <block>` 或 `spgui`。
 - 不保留早期单方块测试渲染、单方块射线选中或首次预热链路。
 
@@ -49,7 +51,7 @@ LHolo 只在客户端绘制虚拟结构，不向世界写入方块，不产生�
 ## 2. 项目目录与模块职责
 
 ```text
-LHolo/Windows/26.20/LHolo/
+LHolo/
 ├─ src/
 │  ├─ plugin/
 │  │  ├─ LHolo.cpp              模组启停、事件注册、Hook 总入口
@@ -65,7 +67,7 @@ LHolo/Windows/26.20/LHolo/
 │  │  ├─ Projection.cpp         投影网格、纠错、分区缓存、渲染 Hook
 │  │  └─ Projection.h           GUI/HUD 使用的投影控制接口
 │  ├─ place/
-│  │  ├─ PlaceHelper.cpp        轻松放置：准心定位、投影查表、快捷栏取物、useItemOn 放置
+│  │  ├─ PlaceHelper.cpp        轻松/手动/范围放置：投影查表、背包取物、放置事务
 │  │  └─ PlaceHelper.h          配置开关与 Hook 生命周期接口
 │  └─ input/
 │     ├─ MenuInputGuard.cpp     菜单期间阻止本地玩家开始/持续破坏方块
@@ -84,7 +86,7 @@ LHolo/Windows/26.20/LHolo/
 - `structure` 负责“文件和用户意图”，不直接提交 Minecraft 网格。
 - `projection` 负责“结构如何出现在世界中”，不弹文件选择框、不直接操作 ImGui。
 - `overlay` 负责“外部 GUI 如何安全进入游戏图形链”，不解析结构或扫描世界方块。
-- `place` 负责“轻松放置”：只读准心结果、调用 projection 导出接口、取快捷栏物品并走 `GameMode::useItemOn`，不碰渲染与配置。
+- `place` 负责轻松、手动和范围放置：调用 projection 查询接口，在完整背包中查找物品，必要时交换到快捷栏，并发送 `InventoryTransactionPacket`；不碰渲染与配置。
 - `input` 负责菜单期间的最小游戏动作保护；当前只拦截本地玩家破坏方块，不扩展为移动冻结或全交互封锁。
 - `plugin` 只组织生命周期，不承载业务逻辑。
 
@@ -97,7 +99,7 @@ LHolo/Windows/26.20/LHolo/
 `LHolo::enable()` 的顺序：
 
 1. 安装投影相关 LeviLamina Hook。
-2. 安装轻松放置 `LocalPlayer::tickWorld` Hook（失败仅告警，不阻断）。
+2. 安装辅助放置 Hook：`LocalPlayer::$tickWorld` 负责每 tick 驱动，三个 `GameMode` build Hook 负责手动模式的右键状态和原版放置抑制（tick Hook 失败仅告警，不阻断；单个手动 Hook 失败会分别告警并降级对应行为）。
 3. 安装菜单破坏保护的 `GameMode::$startDestroyBlock` / `$continueDestroyBlock` Hook（失败仅告警，不阻断）。
 4. 尝试安装 ImGui/DXGI Hook；图形环境尚未可用时允许后续 `Present` 重试。
 
@@ -112,14 +114,15 @@ LHolo/Windows/26.20/LHolo/
 
 ### 3.2 模组关闭
 
-关闭顺序应保持对称：
+当前关闭顺序：
 
 1. 保存配置。
 2. 清理投影状态和 GPU 网格。
 3. 卸载菜单破坏保护 Hook。
-4. 卸载轻松放置 Hook。
-5. 卸载投影 Hook。
-6. 关闭 ImGui 图形后端、恢复原 WndProc、移除 MinHook。
+4. 卸载辅助放置的 tick/build Hook。
+5. 关闭 ImGui 图形后端、恢复原 WndProc、移除 MinHook。
+6. 清除已加载结构、菜单和快捷键运行态。
+7. 卸载投影 Hook。
 
 ### 3.3 世界切换
 
@@ -145,7 +148,7 @@ LHolo/Windows/26.20/LHolo/
 - `paletteEntries`：调色板项数量。
 - `generation`：每次成功加载递增，用于通知投影替换结构。
 - `renderBlocks`：仅包含至少一个可解析实体方块或液体的坐标。
-- `RenderBlock{x,y,z,block,liquid}`：归一化局部坐标、可空实体方块指针和可空液体指针。同一坐标可同时具有实体与液体，用于含水方块。
+- `RenderBlock{x,y,z,block,liquid,blockEntityNbt}`：归一化局部坐标、可空实体方块指针、可空液体指针和可选方块实体 NBT。同一坐标可同时具有实体与液体，用于含水方块；当前只有 `.mcstructure` 路径填充方块实体 NBT。
 
 ### 4.2 `.mcstructure`
 
@@ -155,13 +158,13 @@ LHolo/Windows/26.20/LHolo/
 2. 使用 Bedrock little-endian binary NBT 解析。
 3. 校验 `size`、`structure.block_indices`、`palette.default.block_palette`。
 4. 校验两个 block index layer 的长度等于结构体积。
-5. 把完整根 NBT 交给原版 `StructureTemplate::create()` / `load()`。不要逐项调用 `Block::tryGetFromRegistry()`：那条捷径会绕开格式版本升级、世界方块调色板和 unknown-block registry，旧状态可能被错误解析成未知方块。
+5. 使用客户端 Level 的 unknown-block registry 构造原版 `StructureTemplate`，再把完整根 NBT 交给 `StructureTemplate::load()`。不要逐项调用 `Block::tryGetFromRegistry()`：那条捷径会绕开格式版本升级、世界方块调色板和 unknown-block registry，旧状态可能被错误解析成未知方块。
 6. 从加载后的 `StructureTemplateData` 取得原版已升级的主/副索引数组和 `StructureBlockPalette`，用 `StructureBlockPalette::tryGetBlock()` 解析方块。不要用 `StructureTemplate::tryGetBlockAtPos()` 遍历文件：26.20 客户端该接口的坐标访问约定与 `.mcstructure` 的线性索引布局不一致，曾导致门上下半块错位和水取成错误方块。
 7. 依照格式文档的 ZYX 顺序还原线性索引：`index = x * (sizeY * sizeZ) + y * sizeZ + z`。主副层分别解析后，同一坐标的非液体写入实体层、液体写入液体层。
 8. 门的上下半块本来就是两个坐标、两个完整 palette state，不做合并；格式升级后的上下半块、铰链、朝向和开关状态由原版加载器保留。
 9. 原版加载失败、原版尺寸与文件尺寸不一致时直接拒绝加载，不再带着未知方块继续渲染。
 
-适配新版本时重点检查：`StructureTemplate::create/load`、`StructureTemplateData` 索引访问、`StructureBlockPalette::tryGetBlock` 的符号及语义、NBT 标签路径和两个 block index 的格式。固定回归门的上下相邻坐标与水坐标；不要退化回手工注册表解析，也不要未经验证改用 `tryGetBlockAtPos()` 遍历。
+适配新版本时重点检查：`StructureTemplate` 构造与 `load()`、`StructureTemplateData` 索引访问、`StructureBlockPalette::tryGetBlock` 的符号及语义、NBT 标签路径和两个 block index 的格式。固定回归门的上下相邻坐标与水坐标；不要退化回手工注册表解析，也不要未经验证改用 `tryGetBlockAtPos()` 遍历。
 
 渲染与纠错约束：
 
@@ -171,7 +174,7 @@ LHolo/Windows/26.20/LHolo/
 - 纠错分别比较 `BlockSource::getBlock()` 与 `getLiquidBlock()`。缺少液体判为“未放置”，液体类型错误判为“类型错误”，液体深度等状态不同判为“状态错误”。
 - 投影进度仍以结构坐标计数，而不是把同一坐标的实体层和液体层重复计数。
 
-不要重新引入“把水交给 `tessellateLiquidInWorld()` 后自行提交”的方案——该路线已两次证伪：盲提交表现为黑块/过曝，受控版本（Blend 桶 + `mMatBlendBlock` + 顶点色覆写）表现为未知方块纹理，说明其顶点格式/UV 语义与普通方块材质根本不兼容。当前正式方案是世界注入（见 4.2 节）：Hook `BlockSource` 读取路径 + `fireBlockChanged` 触发原版区块重建，让原版 terrain water pass（dragon framebuilder 的 `DeferredWater`/`water::WaterParameters` 组件）自己渲染投影液体。注入语义是“真实空气才填充”，因此不产生碰撞、不覆盖真实方块、放对方块后自动让位；服务器无感知。
+不要重新引入 `tessellateLiquidInWorld()` 自行提交或把虚拟液体注入 `BlockSource`/区块管线的方案。前者已出现黑块、过曝和未知方块纹理，后者会让游戏逻辑读取到虚拟液体，污染客户端世界认知。当前唯一正式方案是上述 `liquidProxySectionMeshes` 贴图 proxy：它只进入 LHolo 自己的网格和渲染提交，不触发区块重建，也不修改世界。
 
 ### 4.3 `.litematic`
 
@@ -186,7 +189,9 @@ LHolo/Windows/26.20/LHolo/
 7. 计算所有区域的全局最小/最大坐标，将多区域合并到从 `(0,0,0)` 开始的正坐标包围盒。
 8. 重叠坐标使用后处理区域覆盖先处理区域，最终按 `(x,y,z)` 排序。
 
-限制：当前 Java 方块解析以方块 `Name` 为主。Java/Bedrock 状态名称或枚举值不完全一致时，方向状态可能无法一一映射；新版本适配应为需要的方块增加明确映射，而不是默默猜测。
+Java 方块解析先处理已知的 Java→Bedrock 名称差异，再枚举目标 Bedrock 方块的真实 permutation schema，并显式映射朝向、半块、门、活板门、铁轨、按钮、拉杆、红石元件、墙连接、液位和含水等已支持属性。未知方块跳过，未支持或由邻居派生的 Java 属性忽略并回退到可解析的默认 permutation。新版本适配必须根据官方生成头和实际 permutation 增加明确映射，不能猜状态名或枚举值。
+
+Java 映射在一次加载期间缓存 `BlockTypeRegistry` 拥有的 permutation 裸指针。Minecraft 退出世界时会注销或重建这些方块对象，因此缓存不得跨世界保留：`clear()` 必须调用 `resetJavaBlockMappingCache()`，每次 `loadLitematic()` 在确认当前客户端 Level 有效后也必须先重置缓存。重置同时清空 permutation 表以及含水映射使用的 `gWaterSource/gWaterResolved`；禁止仅清除 `LoadedStructure` 而遗留 Java 映射指针。
 
 ### 4.4 文件安全约束
 
@@ -218,7 +223,7 @@ world = anchor + userOffset + transform(local, mirror, rotation)
 当前顺序固定为“镜像后旋转”。局部位置与方块状态必须使用同一旋转/镜像：
 
 - 坐标：`transformStructurePosition()`。
-- 方块朝向/状态：`VanillaBlockStateTransformUtils::transformBlock()`。
+- 方块朝向/状态：`LegacyStructureTemplate::_mapToData()`，输入同一份 `LegacyStructureSettings`。
 
 只改坐标而不改方块状态，会导致楼梯、栅栏门、活塞、观察者等方向判定错误。
 
@@ -244,7 +249,7 @@ LHolo 不自制草方块、楼梯等材质模型。它使用：
 - `BlockTessellator::tessellateInWorld()` 生成原版方块几何。
 - Minecraft level atlas 提供纹理。
 - `BlockGraphics::getRenderLayer()` 取得实际渲染层。
-- `VanillaBlockStateTransformUtils` 取得旋转/镜像后的方块状态。
+- `LegacyStructureTemplate::_mapToData()` 取得旋转/镜像后的方块状态。
 
 这样可保留草色、生物群系着色、方块模型和原版纹理。若新版本出现草方块白顶、随机材质或黑块，应先检查 atlas、BlockGraphics、Tessellator 缓存和材质，不要重新引入手写 UV。
 
@@ -504,27 +509,35 @@ WndProc 收到首次 `WM_KEYDOWN + VK_F11`，在消息交回 Minecraft 前：
 
 不匹配时原样发送。不要使用前缀匹配，否则普通聊天可能被误吞。
 
-投影相关 LeviLamina Hook：
+LeviLamina Hook：
 
 - 两个 LoopbackPacketSender 发送路径：本地菜单命令。
 - `LevelRendererPlayer::renderHitSelect`：避免红/黄纠错与原版选中覆盖共面闪烁。
 - `LevelRendererPlayer::$renderBlockEntities`：在原版调用后更新/提交投影。
-- `LocalPlayer::$tickWorld`（`place` 模块）：轻松放置的每 tick 驱动。
+- `BlockSource::$getBlock` 两个重载和 `$getBlockEntity`（`projection` 模块）：仅在 LHolo Tessellation 的线程局部作用域内提供虚拟邻居和方块实体，作用域外立即调用原函数。
+- `LocalPlayer::$tickWorld`（`place` 模块）：轻松、手动和范围放置的每 tick 驱动。
+- `GameMode::$startBuildBlock` / `$buildBlock` / `$stopBuildBlock`（`place` 模块）：手动模式的右键按下、持续、释放状态及原版重复放置抑制。
 - `GameMode::$startDestroyBlock` / `$continueDestroyBlock`（`input` 模块）：菜单期间阻止本地玩家开始或持续破坏方块。
 
 新版本最容易变化的是成员函数符号、签名、调用层次和 render pass 时序，必须逐一验证，不能只以“Hook 安装成功”判断适配完成。
 
 ---
 
-## 12. 轻松放置
+## 12. 轻松、手动与范围放置
 
 ### 12.1 行为
 
-菜单“投影”页勾选“轻松放置”后常驻生效：准心指向投影中的蓝色缺块位置（`correctionStates == Missing`）时，自动从快捷栏取对应物品并放置。只放投影期望的方块，液体单元与隐藏层不参与。
+菜单“投影”页提供三种互斥模式：
+
+- 轻松放置：准心指向投影中的蓝色缺块位置（`correctionStates == Missing`）时自动放置。
+- 手动放置：准心定位规则相同，但只有按下/按住右键时才放置；首次按下立即尝试，持续按住经过 150 ms 初始延迟后每 120 ms 重复。
+- 范围放置：每 tick 查询玩家周围配置半径（1～4）内的缺块，按距离从近到远选择一个满足触及距离、物品和原版放置预测的候选。
+
+三种模式都会在完整 36 格玩家背包中寻找对应物品；背包栏命中时先通过服务端同步的普通背包事务与当前快捷栏槽位交换，下一 tick 再放置。液体单元与隐藏层不参与放置。
 
 ### 12.2 实现要点
 
-- 驱动：直接 Hook `LocalPlayer::$tickWorld`，模拟线程每 tick 一次，不使用 LL 事件系统（与全项目 Hook 风格一致）。
+- 驱动：直接 Hook `LocalPlayer::$tickWorld`，模拟线程每 tick 一次，不使用 LL 事件系统（与全项目 Hook 风格一致）。手动模式另外 Hook `GameMode::$startBuildBlock`、`$buildBlock` 和 `$stopBuildBlock` 获取右键按下、持续与释放状态，并阻止同一次操作被原版重复放置。
 - 定位：不能使用 `Level::getHitResult()`——那是原版射线，只命中真实世界方块，永远看不到 LHolo 自绘的投影幽灵。改为自身体素 DDA（Amanatides & Woo）射线：原点 `Actor::getEyePos()`、方向 `Actor::getViewVector(1.0f)`、上限 `LocalPlayer::getPickRange()`。逐格判定：真实方块挡住射线（此时检查其相机侧邻居是否为待放幽灵），投影 `Missing` 幽灵格直接作为放置目标；支持面用 `BlockPos::neighbor` + `Facing::getOpposite` 选取朝向相机、且为真实方块的邻居。
 - 投影查表：`Projection::queryProjection()`——一次锁 `gStateMutex` 内同时查 `expectedWorldBlocks`（期望块，液体/隐藏层返回 null）与 `expectedWorldBlockIndices`/`correctionStates`（是否 Missing）。DDA 每格只调一次，避免两次独立加锁；命中结果（含期望块指针）随 `ProjectionTarget` 一并返回，`tickEasyPlace` 不再二次查询。
 - 取物：遍历完整背包（36 格）用 `sameItemAndAuxAndBlockData` 匹配。快捷栏命中直接 `Player::setSelectedSlot`；背包命中用 legacy `NormalTransaction`（`ComplexInventoryTransaction::fromType` + 两个 `InventoryAction`）把物品与当前选中格**交换**（服务器同步，不假设目标格为空，避免被 net 管理器回滚）。交换后本 tick 不放置，下一 tick 物品已在选中格、走单包快速路径——同 tick 立即放置会被服务器 net 记账滞后拒绝，再触发格锁反而更慢。服务器只接受选中快捷栏槽位的放置事务。
@@ -534,7 +547,7 @@ WndProc 收到首次 `WM_KEYDOWN + VK_F11`，在消息交回 Minecraft 前：
   - `setTargetBlock` / `setSelectedItem` 用导出 setter 填 `mTargetBlockId` / `mItem`，避免未导出的赋值运算符。
   - 点击点取支撑面中心：`(cell + at)` 的中点。
   - `GameMode::useItemOn`（客户端）只做本地预测不持久；`Player::sendNetworkPacket` 在单机不送达集成服务器，两条路都不可用。
-- 节流：逐格锁——已放置的格在 `kCellLockMs`（200ms）内不重复发包，等服务器应用 + 纠错扫描更新；新格沿射线立即放置（受 tick 20Hz 上限约束）。发送地板间隔 `kMinSendIntervalMs`（40ms）防异常 tick 率双发。
+- 节流：逐格锁——已放置的格在 `kCellLockMs`（500 ms）内不重复发包，等待服务器应用和纠错扫描更新；新格可立即放置（受 tick 20 Hz 上限约束）。发送地板间隔 `kMinSendIntervalMs`（40 ms）防异常 tick 率双发。范围模式每 tick 最多执行 16 次昂贵的放置规划，失败规划缓存 250 ms。
 - 守卫：开关关闭、未进世界、`isInGameInputEnabled()` 为假（菜单/暂停）或 LHolo 菜单打开时全部跳过。
 
 ### 12.3 已知限制
@@ -602,8 +615,9 @@ mods/LHolo/config/config.json
 ### 14.2 干净 Release 构建
 
 ```powershell
+xmake repo -u
 xmake clean
-xmake f -m release
+xmake f -a x64 -m release -p windows --target_type=client -y
 xmake -r
 ```
 
@@ -651,7 +665,7 @@ D:\games\LeviLauncher\MC\versions\1.26.20.04\mods\LHolo
 
 准备固定回归样本：
 
-- 小型 `.mcstructure`：草方块、石头、玻璃板、栅栏、楼梯、门、活塞、观察者、普通水、岩浆、不同液位，以及至少一个含水方块。水/岩浆样本同时验证 proxy 投影（蓝色水面/橙色岩浆面、液面高度随液位变化、相邻共享面剔除）与纠错。
+- 小型 `.mcstructure`：草方块、石头、玻璃板、栅栏、楼梯、门、活塞、观察者、普通水、岩浆、不同液位、至少一个含水方块，以及带 NBT 的箱子/告示牌。水/岩浆样本同时验证贴图 proxy（顶层固定 8/9 高、同液体覆盖时满格、相邻同液体共享面剔除）与液位状态纠错；当前 proxy 不按流动深度改变视觉高度。
 - 多区域 `.litematic`：正/负 Size、区域重叠、不同 palette 位宽。
 - 大型结构：至少 10 万方块。
 - 损坏/截断/超大文件。
@@ -668,7 +682,7 @@ D:\games\LeviLauncher\MC\versions\1.26.20.04\mods\LHolo
 - `BlockSource::getLiquidBlock()` 的读取语义；它仅用于纠错查询，当前没有虚拟液体 Hook。
 - `tessellateInWorld()` 参数和顶点数据布局。
 - `BlockGraphics::getRenderLayer()`。
-- `VanillaBlockStateTransformUtils::transformBlock()`。
+- `LegacyStructureTemplate::_mapToData()` 与 `LegacyStructureSettings`。
 - ItemInHandRenderer 中 opaque/alpha/one-sided/blend 材质。
 - Deferred 标志与 outline/selection overlay 材质。
 - `RenderMaterial` primitive、blend、depth bias 字段。
@@ -732,7 +746,7 @@ D:\games\LeviLauncher\MC\versions\1.26.20.04\mods\LHolo
 - [ ] `.mcstructure` 从任意路径加载。
 - [ ] `.litematic` 单区域、多区域、负 Size 正确。
 - [ ] 0/90/180/270 度位置和方块朝向一致。
-- [ ] X/Z/X+Z 镜像正确。
+- [ ] X/Z 镜像正确。
 - [ ] X/Y/Z 偏移快捷键和输入一致。
 - [ ] 远坐标（至少 ±20000）稳定。
 
@@ -779,9 +793,9 @@ D:\games\LeviLauncher\MC\versions\1.26.20.04\mods\LHolo
 - `spgui` 旧菜单命令。
 - 单方块即时 Tessellator、首次黑块预热、单方块射线选中日志。
 - 手写草方块 UV、手动替换材质或只修改顶点 alpha 的早期实验链。
-- 液体 proxy 单元壳（纯色半透明截顶立方体）：已被世界注入方案整体替代并删除。
+- 早期纯色液体单元壳：当前正式方案是使用 terrain atlas 水/岩浆贴图和水体 tint 的 `liquidProxySectionMeshes`，不得退回无贴图纯色版本。
 - `tessellateLiquidInWorld()` 几何自行提交：盲提交黑块/过曝，受控提交（顶点色覆写 + Blend 桶）未知方块纹理，顶点格式/UV 语义与普通方块材质根本不兼容。
-- 用 `BlockSource::$fireBlockChanged` 触发区块重建：该事件会抵达游戏逻辑监听者（液体流动 tick、燃烧、声音、网络），实测导致投影岩浆/水被流动模拟写成真实方块。渲染失效只能走 `RenderChunkCoordinator::$onAreaChanged`。
+- 用 `BlockSource::$fireBlockChanged` 或 `RenderChunkCoordinator::$onAreaChanged` 为投影液体触发区块重建：当前液体完全由 LHolo 自绘网格管理，只失效自己的 16³ 分区，不进入原版区块重建链。
 - 世界注入（Hook `BlockSource::getBlock`/`getLiquidBlock` 对读取路径返回投影液体 + `RenderChunkCoordinator::$onAreaChanged` 失效重建）：即使加了线程门和 Level 门，全类读取 Hook 仍无法穷尽区分渲染读者与游戏逻辑读者，且会污染客户端对世界的认知，违背“纯客户端、不修改游戏内容”的产品边界。液体渲染只允许 LHolo 自绘网格方案。
 - 同一位置同时绘制投影模型、纠错外壳和原版 hit-select 的多层共面方案。
 - 通过扩大外壳几何长期规避 Z-fighting；相邻方块会产生新重叠。

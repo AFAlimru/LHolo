@@ -45,4 +45,10 @@ ResolvedJavaBlock resolveJavaBlockState(
     std::vector<std::pair<std::string, std::string>> const& properties
 );
 
+// Block permutations are owned by Minecraft's BlockTypeRegistry and are
+// invalidated when a world is torn down. Drop every cached non-owning pointer
+// before resolving a litematic in another world (and while clearing the old
+// world) so no registry object crosses a world lifetime boundary.
+void resetJavaBlockMappingCache();
+
 } // namespace lholo::structure

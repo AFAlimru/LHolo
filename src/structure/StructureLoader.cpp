@@ -813,6 +813,16 @@ std::shared_ptr<LoadedStructure> loadMcstructure(std::filesystem::path const& pa
 }
 
 std::shared_ptr<LoadedStructure> loadLitematic(std::filesystem::path const& path, std::string& error) try {
+    if (!ll::service::getMultiPlayerLevel()) {
+        error = "尚未进入世界，无法解析结构";
+        return nullptr;
+    }
+
+    // JavaBlockMapping caches non-owning Block pointers while resolving one
+    // palette. Minecraft rebuilds those registry-owned permutations across a
+    // world teardown, so a cache from the previous world must never be reused.
+    resetJavaBlockMappingCache();
+
     auto compressed = readFile(path, error);
     if (!compressed) return nullptr;
     auto bytes = inflateGzip(*compressed, error);
@@ -1947,6 +1957,10 @@ void recordProjectionAnchor(int x, int y, int z) {
 }
 
 void clear() {
+    // Loaded litematics and JavaBlockMapping both contain non-owning Block
+    // pointers. Clear the mapper's registry cache at the same world-lifetime
+    // boundary as the loaded structure.
+    resetJavaBlockMappingCache();
     std::lock_guard lock(gLoadedMutex);
     gLoaded.reset();
     gStatus = "尚未加载结构文件";

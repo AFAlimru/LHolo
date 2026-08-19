@@ -507,4 +507,11 @@ ResolvedJavaBlock resolveJavaBlockState(
     return result;
 }
 
+void resetJavaBlockMappingCache() {
+    std::lock_guard lock(gCacheMutex);
+    gPermCache.clear();
+    gWaterSource = nullptr;
+    gWaterResolved = false;
+}
+
 } // namespace lholo::structure
