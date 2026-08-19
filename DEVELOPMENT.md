@@ -61,6 +61,7 @@ LHolo/
 │  │  ├─ ImGuiOverlay.cpp       DXGI/D3D11On12、WndProc、GUI/HUD 帧提交
 │  │  └─ ImGuiOverlay.h
 │  ├─ structure/
+│  │  ├─ java_to_bedrock/       Chunker 生成映射及运行时解析模块
 │  │  ├─ StructureLoader.cpp    两种格式解析、GUI、HUD、快捷键、配置
 │  │  └─ StructureLoader.h      LoadedStructure 统一数据模型
 │  ├─ projection/
@@ -72,13 +73,16 @@ LHolo/
 │  └─ input/
 │     ├─ MenuInputGuard.cpp     菜单期间阻止本地玩家开始/持续破坏方块
 │     └─ MenuInputGuard.h       破坏拦截 Hook 生命周期接口
+├─ tools/java_to_bedrock/       开发期映射生成器（运行时不需要 Java）
 ├─ manifest.json                Mod Packer 模板
 ├─ xmake.lua                    依赖、编译选项和发布规则
 ├─ DEVELOPMENT.md               本文档
+├─ THIRD_PARTY_NOTICES.md       源码仓库中的 Chunker 许可说明，不打包
 ├─ build/                       xmake 中间产物，不发布
 └─ bin/LHolo/                   唯一发布目录
    ├─ LHolo.dll
-   └─ manifest.json
+   ├─ manifest.json
+   └─ LICENSE
 ```
 
 模块边界必须保持清晰：
@@ -182,16 +186,19 @@ LHolo/
 
 1. 读取文件；检测 gzip 头 `1F 8B`，使用 zlib 解压，解压上限 1 GiB。
 2. 使用本项目只读 Java big-endian NBT 解析器读取根 Compound。
-3. 遍历 `Regions`，读取每个区域的 `Position`、有符号 `Size`、`BlockStatePalette` 和 `BlockStates`。
-4. 调色板名称经 `BlockTypeRegistry::lookupByName()` 映射到 Bedrock 方块。
-5. 每项位宽为 `max(2, bit_width(paletteSize - 1))`，从 LongArray 解包 palette index。
-6. 正确处理负 Size：负轴从区域 Position 向负方向展开。
-7. 计算所有区域的全局最小/最大坐标，将多区域合并到从 `(0,0,0)` 开始的正坐标包围盒。
-8. 重叠坐标使用后处理区域覆盖先处理区域，最终按 `(x,y,z)` 排序。
+3. 读取根 `MinecraftDataVersion`，用于选择与源文件版本对应的映射记录。
+4. 遍历 `Regions`，读取每个区域的 `Position`、有符号 `Size`、`BlockStatePalette` 和 `BlockStates`。
+5. 通过 `java_to_bedrock` 模块把完整 Java 名称和 Properties 转换成 Bedrock 1.26.20 名称与状态，再从当前游戏的 `BlockTypeRegistry` 解析实际 permutation；含水状态拆到 `RenderBlock::liquid` 第二层。
+6. 每项位宽为 `max(2, bit_width(paletteSize - 1))`，从 LongArray 解包 palette index。
+7. Litematica 的 `BlockStates` 容器始终从区域最小角按正 X/Y/Z 排列。有符号 `Size` 只记录 `Position` 是哪一个选区角，绝不能依据负号倒序读取方块数组，否则会镜像结构而不镜像方块状态。先由 `Position` 和 `Size` 求区域最小角，再加 `localX/localY/localZ`。
+8. 计算所有区域的全局最小/最大坐标，将多区域合并到从 `(0,0,0)` 开始的正坐标包围盒。
+9. 重叠坐标使用后处理区域覆盖先处理区域，最终按 `(x,y,z)` 排序。
 
-Java 方块解析先处理已知的 Java→Bedrock 名称差异，再枚举目标 Bedrock 方块的真实 permutation schema，并显式映射朝向、半块、门、活板门、铁轨、按钮、拉杆、红石元件、墙连接、液位和含水等已支持属性。未知方块跳过，未支持或由邻居派生的 Java 属性忽略并回退到可解析的默认 permutation。新版本适配必须根据官方生成头和实际 permutation 增加明确映射，不能猜状态名或枚举值。
+Java→Bedrock 映射不再手工散落维护。`GeneratedChunkerMappings.inc` 由固定 Chunker commit 的 `JavaBlockIdentifierResolver` 和 `BedrockBlockIdentifierResolver` 枚举各 Java 数据版本的合法状态生成，目标固定为 Bedrock 1.26.20。缺少 `Properties` 的非标准 Litematic 使用 Chunker 的规范默认状态；无法映射或无法在当前游戏注册表解析的方块安全跳过，不猜测替代 API、状态名或枚举值。
 
-Java 映射在一次加载期间缓存 `BlockTypeRegistry` 拥有的 permutation 裸指针。Minecraft 退出世界时会注销或重建这些方块对象，因此缓存不得跨世界保留：`clear()` 必须调用 `resetJavaBlockMappingCache()`，每次 `loadLitematic()` 在确认当前客户端 Level 有效后也必须先重置缓存。重置同时清空 permutation 表以及含水映射使用的 `gWaterSource/gWaterResolved`；禁止仅清除 `LoadedStructure` 而遗留 Java 映射指针。
+生成器位于 `tools/java_to_bedrock/`，更新方法见该目录 README。Java、Gradle 和 Chunker 只在重新生成映射时使用，正式 LHolo 运行时只读取已压缩进 DLL 的生成表。更新 Chunker 或目标 Bedrock 版本后必须重新生成、检查 unsupported 输出、完成 Release 构建，并由用户在游戏中手动验证固定样本。
+
+运行时映射模块缓存 `BlockTypeRegistry` 拥有的 permutation 裸指针。Minecraft 退出世界时会注销或重建这些方块对象，因此缓存不得跨世界保留：`clear()` 必须调用 `resetJavaBlockMappingCache()`，每次 `loadLitematic()` 在确认当前客户端 Level 有效后也必须先重置缓存。重置同时清空 permutation 表和含水映射使用的 `gWaterSource`；禁止仅清除 `LoadedStructure` 而遗留 Java 映射指针。
 
 ### 4.4 文件安全约束
 
@@ -626,10 +633,11 @@ xmake -r
 ```text
 bin/LHolo/
 ├─ LHolo.dll
-└─ manifest.json
+├─ manifest.json
+└─ LICENSE
 ```
 
-不要发布 `build/`、`.exp`、`.lib`、日志、崩溃转储、配置或测试结构文件。
+`THIRD_PARTY_NOTICES.md` 只保留在源码仓库，不复制到 `bin/LHolo`。不要发布 `build/`、`.exp`、`.lib`、日志、崩溃转储、配置、开发工具或测试结构文件。
 
 ### 14.3 本机部署
 
@@ -666,11 +674,12 @@ D:\games\LeviLauncher\MC\versions\1.26.20.04\mods\LHolo
 准备固定回归样本：
 
 - 小型 `.mcstructure`：草方块、石头、玻璃板、栅栏、楼梯、门、活塞、观察者、普通水、岩浆、不同液位、至少一个含水方块，以及带 NBT 的箱子/告示牌。水/岩浆样本同时验证贴图 proxy（顶层固定 8/9 高、同液体覆盖时满格、相邻同液体共享面剔除）与液位状态纠错；当前 proxy 不按流动深度改变视觉高度。
-- 多区域 `.litematic`：正/负 Size、区域重叠、不同 palette 位宽。
+- 多区域 `.litematic`：正/负 Size、区域重叠、不同 palette 位宽；负 Size 样本必须包含楼梯、门、活塞、观察者等方向明显的方块。
+- `主播公寓.litematic`：固定验证 X/Z 同时为负的区域不会被旋转 180°，建筑布局和楼梯朝向均与 Java 源文件一致。
 - 大型结构：至少 10 万方块。
 - 损坏/截断/超大文件。
 
-确认尺寸、方块数、朝向、负区域归一化和错误提示。
+确认尺寸、方块数、朝向、负区域归一化和错误提示。实机视觉结果只能由用户手动确认，静态解析和构建成功不能替代游戏内验证。
 
 ### 阶段 D：验证原版渲染 API
 
@@ -715,7 +724,7 @@ D:\games\LeviLauncher\MC\versions\1.26.20.04\mods\LHolo
 2. 保留必要错误日志和图形故障诊断。
 3. 更新本文档的版本基线、API 变化和已知限制。
 4. 执行干净 Release 构建。
-5. 检查 `bin/LHolo` 仅有 DLL 和 manifest。
+5. 检查 `bin/LHolo` 仅有 DLL、manifest 和 LICENSE，不包含 `THIRD_PARTY_NOTICES.md`、日志或开发工具。
 6. 部署并核对 SHA256。
 7. 完整执行下一章回归矩阵。
 

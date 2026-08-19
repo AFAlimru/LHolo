@@ -47,3 +47,9 @@ target("LHolo")
 
     add_files("src/**.cpp")
     add_includedirs("src")
+
+    after_build(function (target)
+        local package_dir = path.join(os.projectdir(), "bin", target:name())
+        os.mkdir(package_dir)
+        os.cp(path.join(os.projectdir(), "LICENSE"), path.join(package_dir, "LICENSE"))
+    end)

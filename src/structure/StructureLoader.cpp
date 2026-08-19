@@ -16,7 +16,7 @@
 
 #include "structure/StructureLoader.h"
 
-#include "structure/JavaBlockMapping.h"
+#include "structure/java_to_bedrock/JavaToBedrock.h"
 #include "ui/FluentTheme.h"
 #include "ui/LHoloMenu.h"
 #include "place/PlaceHelper.h"
@@ -644,7 +644,7 @@ std::optional<std::string> inflateGzip(std::string_view compressed, std::string&
     return output;
 }
 
-ResolvedJavaBlock resolveJavaBlock(JavaNbtTag const& paletteEntry) {
+ResolvedJavaBlock resolveJavaBlock(JavaNbtTag const& paletteEntry, int javaDataVersion) {
     auto const* compound = std::get_if<JavaNbtTag::Compound>(&paletteEntry.value);
     if (!compound) return {};
     auto const* name = javaValue<std::string>(*compound, "Name");
@@ -660,7 +660,7 @@ ResolvedJavaBlock resolveJavaBlock(JavaNbtTag const& paletteEntry) {
             }
         }
     }
-    return resolveJavaBlockState(*name, properties);
+    return resolveJavaBlockState(*name, properties, javaDataVersion);
 }
 
 std::uint32_t packedPaletteIndex(
@@ -818,7 +818,7 @@ std::shared_ptr<LoadedStructure> loadLitematic(std::filesystem::path const& path
         return nullptr;
     }
 
-    // JavaBlockMapping caches non-owning Block pointers while resolving one
+    // The Java-to-Bedrock mapper caches non-owning Block pointers while resolving one
     // palette. Minecraft rebuilds those registry-owned permutations across a
     // world teardown, so a cache from the previous world must never be reused.
     resetJavaBlockMappingCache();
@@ -829,6 +829,8 @@ std::shared_ptr<LoadedStructure> loadLitematic(std::filesystem::path const& path
     if (!bytes) return nullptr;
 
     auto root = JavaNbtReader{*bytes}.readRoot();
+    auto const* storedDataVersion = javaValue<std::int32_t>(root, "MinecraftDataVersion");
+    int const javaDataVersion = storedDataVersion ? *storedDataVersion : 0;
     auto const* regions = javaValue<JavaNbtTag::Compound>(root, "Regions");
     if (!regions || regions->empty()) {
         error = "Litematic 缺少 Regions 或没有区域";
@@ -875,7 +877,9 @@ std::shared_ptr<LoadedStructure> loadLitematic(std::filesystem::path const& path
             return nullptr;
         }
         region.palette.reserve(palette->size());
-        for (auto const& entry : *palette) region.palette.push_back(resolveJavaBlock(entry));
+        for (auto const& entry : *palette) {
+            region.palette.push_back(resolveJavaBlock(entry, javaDataVersion));
+        }
         paletteEntries += palette->size();
 
         auto const endX = static_cast<std::int64_t>(region.posX)
@@ -920,6 +924,15 @@ std::shared_ptr<LoadedStructure> loadLitematic(std::filesystem::path const& path
     for (auto const& region : parsedRegions) {
         auto const regionVolume = static_cast<std::uint64_t>(region.sizeX)
             * static_cast<std::uint64_t>(region.sizeY) * static_cast<std::uint64_t>(region.sizeZ);
+        // Litematica stores BlockStates from the region's minimum corner even
+        // when Size is negative. The sign only records which selection corner
+        // is Position; it must not mirror the block data.
+        auto const regionMinX = static_cast<std::int64_t>(region.posX)
+            - (region.signedX < 0 ? static_cast<std::int64_t>(region.sizeX) - 1 : 0);
+        auto const regionMinY = static_cast<std::int64_t>(region.posY)
+            - (region.signedY < 0 ? static_cast<std::int64_t>(region.sizeY) - 1 : 0);
+        auto const regionMinZ = static_cast<std::int64_t>(region.posZ)
+            - (region.signedZ < 0 ? static_cast<std::int64_t>(region.sizeZ) - 1 : 0);
         auto const bits = std::max<unsigned>(
             2u,
             static_cast<unsigned>(std::bit_width(static_cast<unsigned>(region.palette.size() - 1)))
@@ -939,12 +952,9 @@ std::shared_ptr<LoadedStructure> loadLitematic(std::filesystem::path const& path
             auto const remainder = index % layer;
             auto const localZ = remainder / static_cast<std::uint64_t>(region.sizeX);
             auto const localX = remainder % static_cast<std::uint64_t>(region.sizeX);
-            auto const worldX = static_cast<std::int64_t>(region.posX)
-                + (region.signedX < 0 ? -static_cast<std::int64_t>(localX) : static_cast<std::int64_t>(localX));
-            auto const worldY = static_cast<std::int64_t>(region.posY)
-                + (region.signedY < 0 ? -static_cast<std::int64_t>(localY) : static_cast<std::int64_t>(localY));
-            auto const worldZ = static_cast<std::int64_t>(region.posZ)
-                + (region.signedZ < 0 ? -static_cast<std::int64_t>(localZ) : static_cast<std::int64_t>(localZ));
+            auto const worldX = regionMinX + static_cast<std::int64_t>(localX);
+            auto const worldY = regionMinY + static_cast<std::int64_t>(localY);
+            auto const worldZ = regionMinZ + static_cast<std::int64_t>(localZ);
             auto const x = static_cast<std::uint64_t>(worldX - minX);
             auto const y = static_cast<std::uint64_t>(worldY - minY);
             auto const z = static_cast<std::uint64_t>(worldZ - minZ);
@@ -1957,7 +1967,7 @@ void recordProjectionAnchor(int x, int y, int z) {
 }
 
 void clear() {
-    // Loaded litematics and JavaBlockMapping both contain non-owning Block
+    // Loaded litematics and the Java-to-Bedrock mapper both contain non-owning Block
     // pointers. Clear the mapper's registry cache at the same world-lifetime
     // boundary as the loaded structure.
     resetJavaBlockMappingCache();
