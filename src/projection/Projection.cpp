@@ -83,6 +83,7 @@
 #include "mc/world/level/block/VanillaStates.h"
 #include "mc/world/level/block/actor/BlockActor.h"
 #include "mc/world/level/block/actor/BlockActorType.h"
+#include "mc/world/level/block/actor/ChestBlockActor.h"
 #include "mc/world/level/biome/biome_color_sampling/BiomeColorSampling.h"
 #include "mc/world/level/levelgen/structure/LegacyStructureSettings.h"
 #include "mc/world/level/levelgen/structure/LegacyStructureTemplate.h"
@@ -219,6 +220,37 @@ private:
     std::map<std::tuple<int, int, int>, Block const*> const* mPreviousBlocks{};
     std::map<std::tuple<int, int, int>, std::shared_ptr<BlockActor>> const* mPreviousBlockActors{};
 };
+
+void pairProjectedChests(BlockSource& region, ProjectionState& state) {
+    constexpr std::array<std::pair<int, int>, 4> horizontalNeighbors{{
+        {-1, 0},
+        {1, 0},
+        {0, -1},
+        {0, 1},
+    }};
+
+    ScopedTessellationBlocks projectedWorld{state.expectedWorldBlocks, state.expectedWorldBlockActors};
+    for (auto const& [key, actor] : state.expectedWorldBlockActors) {
+        if (!actor->isType(BlockActorType::Chest)) continue;
+        auto* chest = static_cast<ChestBlockActor*>(actor.get());
+        if (chest->isLargeChest()) continue;
+
+        auto const [x, y, z] = key;
+        for (auto const [dx, dz] : horizontalNeighbors) {
+            BlockPos const neighbor{x + dx, y, z + dz};
+            auto const found = state.expectedWorldBlockActors.find(
+                std::tuple{neighbor.x, neighbor.y, neighbor.z}
+            );
+            if (found == state.expectedWorldBlockActors.end()
+                || !found->second->isType(BlockActorType::Chest)) {
+                continue;
+            }
+
+            chest->_tryToPairWith(region, neighbor);
+            if (chest->isLargeChest()) break;
+        }
+    }
+}
 
 ProjectionState::RenderBucket renderBucketFor(BlockRenderLayer layer) {
     using Bucket = ProjectionState::RenderBucket;
@@ -736,6 +768,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 };
                 ++centerCounts[section];
             }
+            pairProjectedChests(player->getDimensionBlockSource(), gState);
             for (std::size_t section = 0; section < gState.sectionCenters.size(); ++section) {
                 if (centerCounts[section] != 0) {
                     gState.sectionCenters[section] = centerSums[section] / static_cast<float>(centerCounts[section]);
