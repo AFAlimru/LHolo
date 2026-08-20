@@ -1050,14 +1050,52 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                         auto const* transformed = transformExpectedBlock(neighbor->liquid, transformSettings);
                         return transformed && transformed->getTypeName() == expectedLiquid->getTypeName();
                     };
-                    // Vanilla source liquids render at 8/9 of a block.
-                    // getHeightFromDepth() proved unreliable here on 1.26
-                    // (source cells came out as thin slivers), so the proxy
-                    // always uses the source height for the topmost cell and
-                    // full height for submerged cells. Per-cell flowing depth
-                    // is intentionally not depicted; it still participates in
-                    // the correction comparison.
+                    // Flow-aware surface. Source and submerged cells stay full;
+                    // flowing cells taper by liquid_depth, and each top corner is
+                    // averaged from the surrounding same-liquid columns (an air
+                    // column pulls a corner down toward the spill). The result is
+                    // a surface that slopes downhill, showing the flow direction.
                     constexpr float surface = 8.0f / 9.0f;
+                    auto const liquidDepth = [](Block const& block) -> int {
+                        for (auto const& [key, value] : block.getSerializationId()) {
+                            if (key != "states" || !value.hold<::CompoundTag>()) continue;
+                            for (auto const& [stateKey, stateValue] : value.get<::CompoundTag>()) {
+                                if (stateKey == "liquid_depth" && stateValue.getId() == ::Tag::Type::Int)
+                                    return stateValue.get<::IntTag>().data;
+                            }
+                        }
+                        return 0;
+                    };
+                    auto const fluidHeight = [](int depth) -> float {
+                        if (depth <= 0) return 8.0f / 9.0f;   // source
+                        if (depth >= 8) return 1.0f;          // falling counts as full
+                        return (8.0f - static_cast<float>(depth)) / 9.0f;
+                    };
+                    // Height (0..1) of the same-liquid column at (dx,dz); -1 for a
+                    // solid/other block (ignored), 0 for air (spill).
+                    auto const columnHeight = [&](int dx, int dz) -> float {
+                        auto const* n = (dx == 0 && dz == 0) ? &entry : neighborEntry(dx, 0, dz);
+                        if (!n) return 0.0f;
+                        if (!n->liquid) return -1.0f;
+                        auto const* t = transformExpectedBlock(n->liquid, transformSettings);
+                        if (!t || t->getTypeName() != expectedLiquid->getTypeName()) return -1.0f;
+                        if (neighborIsSameLiquid(dx, 1, dz)) return 1.0f;  // submerged
+                        return fluidHeight(liquidDepth(*t));
+                    };
+                    auto const cornerHeight = [&](int dx, int dz) -> float {
+                        float best = -1.0f, sum = 0.0f;
+                        int   count = 0;
+                        int const offsets[4][2] = {{0, 0}, {dx, 0}, {0, dz}, {dx, dz}};
+                        for (auto const& o : offsets) {
+                            float const h = columnHeight(o[0], o[1]);
+                            if (h < 0.0f) continue;  // solid: does not affect the surface
+                            best = std::max(best, h);
+                            sum += h;
+                            ++count;
+                        }
+                        if (best >= surface) return best;  // a source/full column keeps it high
+                        return count > 0 ? sum / static_cast<float>(count) : surface;
+                    };
                     auto const tint = expectedLiquid->getMaterial().isSuperHot()
                         ? (LiquidLavaTintAbgrRgb | (alpha << 24U))
                         : (LiquidWaterTintAbgrRgb | (alpha << 24U));
@@ -1065,11 +1103,12 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     float const y0 = static_cast<float>(p.y);
                     float const z0 = static_cast<float>(p.z);
                     float const x1 = static_cast<float>(p.x + 1);
-                    // A same-liquid cell above means this cell is fully
-                    // submerged and its sides run to the full cube height.
-                    float const y1 = static_cast<float>(p.y)
-                        + (neighborIsSameLiquid(0, 1, 0) ? 1.0f : surface);
                     float const z1 = static_cast<float>(p.z + 1);
+                    // Per-corner top heights (world Y). c<x><z>: x0/x1, z0/z1.
+                    float const yc00 = y0 + cornerHeight(-1, -1);
+                    float const yc10 = y0 + cornerHeight( 1, -1);
+                    float const yc01 = y0 + cornerHeight(-1,  1);
+                    float const yc11 = y0 + cornerHeight( 1,  1);
                     // Full-tile UVs when the atlas tile is available; a tiny
                     // degenerate UV otherwise still renders as flat tint.
                     float const u0 = uvSet ? uvSet->_u0 : 0.0f;
@@ -1088,15 +1127,15 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     if (!neighborEntry(0, -1, 0))
                         addLiquidFace({x0,y0,z1}, {x0,y0,z0}, {x1,y0,z0}, {x1,y0,z1});
                     if (!neighborIsSameLiquid(0, 1, 0))
-                        addLiquidFace({x0,y1,z0}, {x0,y1,z1}, {x1,y1,z1}, {x1,y1,z0});
+                        addLiquidFace({x0,yc00,z0}, {x0,yc01,z1}, {x1,yc11,z1}, {x1,yc10,z0});
                     if (!neighborIsSameLiquid(0, 0, -1))
-                        addLiquidFace({x0,y0,z0}, {x0,y1,z0}, {x1,y1,z0}, {x1,y0,z0});
+                        addLiquidFace({x0,y0,z0}, {x0,yc00,z0}, {x1,yc10,z0}, {x1,y0,z0});
                     if (!neighborIsSameLiquid(0, 0, 1))
-                        addLiquidFace({x1,y0,z1}, {x1,y1,z1}, {x0,y1,z1}, {x0,y0,z1});
+                        addLiquidFace({x1,y0,z1}, {x1,yc11,z1}, {x0,yc01,z1}, {x0,y0,z1});
                     if (!neighborIsSameLiquid(-1, 0, 0))
-                        addLiquidFace({x0,y0,z1}, {x0,y1,z1}, {x0,y1,z0}, {x0,y0,z0});
+                        addLiquidFace({x0,y0,z1}, {x0,yc01,z1}, {x0,yc00,z0}, {x0,y0,z0});
                     if (!neighborIsSameLiquid(1, 0, 0))
-                        addLiquidFace({x1,y0,z0}, {x1,y1,z0}, {x1,y1,z1}, {x1,y0,z1});
+                        addLiquidFace({x1,y0,z0}, {x1,yc10,z0}, {x1,yc11,z1}, {x1,y0,z1});
                 }
                 gState.liquidProxySectionMeshes[section] = std::make_unique<mce::Mesh>(tessellator.end(
                     Tessellator::UploadMode::Buffered,
