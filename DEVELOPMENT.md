@@ -571,14 +571,14 @@ LeviLamina Hook：
 - 驱动：直接 Hook `LocalPlayer::$tickWorld`，模拟线程每 tick 一次，不使用 LL 事件系统（与全项目 Hook 风格一致）。手动模式另外 Hook `GameMode::$startBuildBlock`、`$buildBlock` 和 `$stopBuildBlock` 获取右键按下、持续与释放状态，并阻止同一次操作被原版重复放置。
 - 定位：不能使用 `Level::getHitResult()`——那是原版射线，只命中真实世界方块，永远看不到 LHolo 自绘的投影幽灵。改为自身体素 DDA（Amanatides & Woo）射线：原点 `Actor::getEyePos()`、方向 `Actor::getViewVector(1.0f)`、上限 `LocalPlayer::getPickRange()`。逐格判定：真实方块挡住射线（此时检查其相机侧邻居是否为待放幽灵），投影 `Missing` 幽灵格直接作为放置目标；支持面用 `BlockPos::neighbor` + `Facing::getOpposite` 选取朝向相机、且为真实方块的邻居。
 - 投影查表：`Projection::queryProjection()`——一次锁 `gStateMutex` 内同时查 `expectedWorldBlocks`（期望块，液体/隐藏层返回 null）与 `expectedWorldBlockIndices`/`correctionStates`（是否 Missing）。DDA 每格只调一次，避免两次独立加锁；命中结果（含期望块指针）随 `ProjectionTarget` 一并返回，`tickEasyPlace` 不再二次查询。
-- 取物：遍历完整背包（36 格）用 `sameItemAndAuxAndBlockData` 匹配。快捷栏命中直接 `Player::setSelectedSlot`；背包命中用 legacy `NormalTransaction`（`ComplexInventoryTransaction::fromType` + 两个 `InventoryAction`）把物品与当前选中格**交换**（服务器同步，不假设目标格为空，避免被 net 管理器回滚）。交换后本 tick 不放置，下一 tick 物品已在选中格、走单包快速路径——同 tick 立即放置会被服务器 net 记账滞后拒绝，再触发格锁反而更慢。服务器只接受选中快捷栏槽位的放置事务。
+- 取物：遍历完整背包（36 格）用 `sameItemAndAux` 匹配。快捷栏命中直接 `Player::setSelectedSlot`；背包命中用 legacy `NormalTransaction`（`ComplexInventoryTransaction::fromType` + 两个 `InventoryAction`）把物品与当前选中格**交换**（服务器同步，不假设目标格为空，避免被 net 管理器回滚）。交换后本 tick 不放置，下一 tick 物品已在选中格、走单包快速路径——同 tick 立即放置会被服务器 net 记账滞后拒绝，再触发格锁反而更慢。服务器只接受选中快捷栏槽位的放置事务。
 - 放置：直接构造 `ItemUseInventoryTransaction`(Place) 经 `IClientInstance::getPacketSender().sendToServer()` 发送（单机走 LoopbackPacketSender，联机走网络发送器），服务器权威落块并保存。**关键细节**（踩坑记录）：
   - `mPos` 是“被点击的方块”，服务器在 `mPos.neighbor(mFace)` 落块——必须填支撑块 `at`，填目标格会导致偏一格。
   - `setIncludeNetIds(true)`：服务器栈 net-id 系统按“含 net id”读包，缺此标志流错位、包被静默丢弃（`onTransactionError` 都不会触发）。
   - `setTargetBlock` / `setSelectedItem` 用导出 setter 填 `mTargetBlockId` / `mItem`，避免未导出的赋值运算符。
   - 点击点取支撑面中心：`(cell + at)` 的中点。
   - `GameMode::useItemOn`（客户端）只做本地预测不持久；`Player::sendNetworkPacket` 在单机不送达集成服务器，两条路都不可用。
-- 节流：逐格锁——已放置的格在 `kCellLockMs`（500 ms）内不重复发包，等待服务器应用和纠错扫描更新；新格可立即放置（受 tick 20 Hz 上限约束）。发送地板间隔 `kMinSendIntervalMs`（40 ms）防异常 tick 率双发。范围模式每 tick 最多执行 16 次昂贵的放置规划，失败规划缓存 250 ms。
+- 节流：只有 `Missing` 格可进入规划，发送前再次读取真实世界；目标格只要已存在任何方块（包括错误类型或错误朝向/状态）就停止，不允许再次尝试放置。实际发包后才写入逐格锁，在 `kCellLockMs`（500 ms）内不重复发包，等待服务器应用和纠错扫描更新；新格可立即放置（受 tick 20 Hz 上限约束）。发送地板间隔 `kMinSendIntervalMs`（40 ms）防异常 tick 率双发。范围模式每 tick 最多执行 16 次昂贵的放置规划，失败规划缓存 250 ms。
 - 守卫：开关关闭、未进世界、`isInGameInputEnabled()` 为假（菜单/暂停）或 LHolo 菜单打开时全部跳过。
 
 ### 12.3 已知限制
@@ -697,7 +697,7 @@ D:\games\LeviLauncher\MC\versions\1.26.20.04\mods\LHolo
 
 准备固定回归样本：
 
-- 小型 `.mcstructure`：草方块、石头、玻璃板、栅栏、楼梯、门、活塞、观察者、普通水、岩浆、不同液位、至少一个含水方块，以及带 NBT 的双箱/告示牌。双箱必须显示为一个原版大箱子；水/岩浆样本同时验证贴图 proxy（顶层固定 8/9 高、同液体覆盖时满格、相邻同液体共享面剔除）与液位状态纠错；当前 proxy 不按流动深度改变视觉高度。
+- 小型 `.mcstructure`：草方块、石头、玻璃板、栅栏、楼梯、门、活塞、观察者、上下半砖、普通水、岩浆、不同液位、至少一个含水方块，以及带 NBT 的双箱/告示牌。放置单层半砖时，即使相邻支撑是同材质单层半砖，也不得把支撑误合并为双层；双箱必须显示为一个原版大箱子；水/岩浆样本同时验证贴图 proxy（顶层固定 8/9 高、同液体覆盖时满格、相邻同液体共享面剔除）与液位状态纠错；当前 proxy 不按流动深度改变视觉高度。
 - 多区域 `.litematic`：正/负 Size、区域重叠、不同 palette 位宽；负 Size 样本必须包含楼梯、门、活塞、观察者等方向明显的方块。
 - `主播公寓.litematic`：固定验证 X/Z 同时为负的区域不会被旋转 180°，建筑布局和楼梯朝向均与 Java 源文件一致。
 - 大型结构：至少 10 万方块。

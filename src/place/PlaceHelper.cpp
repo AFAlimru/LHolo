@@ -41,11 +41,14 @@
 #include "mc/world/inventory/transaction/InventorySourceType.h"
 #include "mc/world/inventory/transaction/InventoryTransaction.h"
 #include "mc/world/inventory/transaction/ItemUseInventoryTransaction.h"
+#include "mc/world/item/ItemInstance.h"
 #include "mc/world/item/ItemStack.h"
 #include "mc/world/level/BlockPos.h"
 #include "mc/world/level/BlockSource.h"
 #include "mc/world/level/Tick.h"
 #include "mc/world/level/block/Block.h"
+#include "mc/world/level/block/BlockType.h"
+#include "mc/world/level/block/SlabBlock.h"
 #include "mc/world/level/block/actor/BlockActorType.h"
 #include "mc/deps/nbt/ByteTag.h"
 #include "mc/deps/nbt/CompoundTag.h"
@@ -471,8 +474,9 @@ std::optional<ProjectionTarget> findProjectionTarget(
     return std::nullopt;
 }
 
-void placeBlock(LocalPlayer& player, ProjectionTarget const& target, int slot, ItemStack const& item) {
+bool placeBlock(LocalPlayer& player, ProjectionTarget const& target, int slot, ItemStack const& item) {
     auto& region = player.getDimensionBlockSource();
+    if (!region.getBlock(target.cell).isAir()) return false;
 
     // Server-authoritative placement: build an ItemUseInventoryTransaction and
     // deliver it through the client's packet sender (LoopbackPacketSender in
@@ -517,6 +521,7 @@ void placeBlock(LocalPlayer& player, ProjectionTarget const& target, int slot, I
     );
     player.getClientInstance().getPacketSender().sendToServer(packet);
     gNextPlaceAt.store(GetTickCount64() + kMinSendIntervalMs, std::memory_order_release);
+    return true;
 }
 
 // Candidate click points on the face of `cell` shared with the support in
@@ -582,6 +587,17 @@ bool sameSerializedState(Block const& predicted, Block const& ghost, char const*
 
 bool isTwoBlockDoor(Block const& block) {
     return block.getBlockType().isDoorBlock() && !serializedState(block, "upper_block_bit").empty();
+}
+
+bool wouldMergeClickedSlab(Block const& ghost, Block const& support) {
+    if (!ghost.isSlabBlock() || !support.isSlabBlock()
+        || SlabBlock::isDoubleSlab(ghost) || SlabBlock::isDoubleSlab(support)) {
+        return false;
+    }
+
+    ItemInstance const ghostItem = ghost.getBlockType().asItemInstance(ghost, nullptr);
+    ItemInstance const supportItem = support.getBlockType().asItemInstance(support, nullptr);
+    return ghostItem.sameItemAndAux(supportItem);
 }
 
 // RuntimeId is intentionally retained for ordinary blocks. For the three
@@ -682,7 +698,8 @@ bool resolveOrientedPlacement(
         uchar const supportEnd   = expectedDoorUpper ? firstSupport + 1 : 6;
         for (uchar sf = firstSupport; sf < supportEnd; ++sf) {
             BlockPos const at = cell.neighbor(sf);
-            if (region.getBlock(at).isAir()) continue;
+            Block const& support = region.getBlock(at);
+            if (support.isAir() || wouldMergeClickedSlab(ghost, support)) continue;
 
             uchar const face = Facing::getOpposite(sf);
             bool matched = false;
@@ -767,8 +784,7 @@ void tickRangePlace(LocalPlayer& player, PlacementContext const& placementContex
             return;
         }
         player.setSelectedSlot(found.slot);
-        markPlaced(cell, now);
-        placeBlock(player, target, found.slot, *found.item);
+        if (placeBlock(player, target, found.slot, *found.item)) markPlaced(cell, now);
         return;
     }
 }
@@ -894,8 +910,8 @@ void tickEasyPlace() {
         return;
     }
     player->setSelectedSlot(found.slot);
+    if (!placeBlock(*player, placement, found.slot, *found.item)) return;
     markPlaced(placement.cell, now);
-    placeBlock(*player, placement, found.slot, *found.item);
     // Manual repeat bookkeeping: record this placement and mark the current
     // press as having placed its first block (so holding then auto-repeats).
     gLastManualPlaceAt.store(now, std::memory_order_release);
