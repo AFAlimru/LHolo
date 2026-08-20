@@ -415,8 +415,13 @@ Rotation getProjectionRotation(int quarterTurns) {
     }
 }
 
-Block const* transformExpectedBlock(Block const* block, LegacyStructureSettings const& settings) {
+Block const* transformExpectedBlock(
+    Block const* block,
+    LegacyStructureSettings const& settings,
+    bool identityTransform
+) {
     if (!block) return nullptr;
+    if (identityTransform) return block;
     // Use the same generic permutation mapping as vanilla structure placement.
     // The engine owns the complete set of transformable states, so new or
     // uncommon directional blocks require no LHolo-side block/state table.
@@ -530,6 +535,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
         LegacyStructureSettings transformSettings;
         transformSettings.setMirror(mirror);
         transformSettings.setRotation(rotation);
+        bool const identityTransform = mirrorMode == 0 && rotationTurns == 0;
         auto const offsetX = structure::getOffsetX();
         auto const offsetY = structure::getOffsetY();
         auto const offsetZ = structure::getOffsetZ();
@@ -685,7 +691,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 auto const transformed = transformStructurePosition(
                     entry, *gState.structure, mirrorMode, rotationTurns
                 );
-                auto const* transformedBlock = transformExpectedBlock(entry.block, transformSettings);
+                auto const* transformedBlock = transformExpectedBlock(entry.block, transformSettings, identityTransform);
                 BlockPos const worldPosition{
                     gState.anchor.x + offsetX + transformed.x,
                     gState.anchor.y + offsetY + transformed.y,
@@ -718,7 +724,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 } else {
                     // Liquids join the virtual world so vanilla liquid-height
                     // queries see stacked virtual water (full-cell columns).
-                    auto const* transformedLiquid = transformExpectedBlock(entry.liquid, transformSettings);
+                    auto const* transformedLiquid = transformExpectedBlock(entry.liquid, transformSettings, identityTransform);
                     if (transformedLiquid) gState.expectedWorldBlocks.emplace(worldKey, transformedLiquid);
                 }
                 gState.expectedWorldBlockIndices.emplace(worldKey, index);
@@ -772,8 +778,8 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 gState.anchor.y + offsetY + transformed.y,
                 gState.anchor.z + offsetZ + transformed.z
             };
-            auto const* expected = transformExpectedBlock(entry.block, transformSettings);
-            auto const* expectedLiquid = transformExpectedBlock(entry.liquid, transformSettings);
+            auto const* expected = transformExpectedBlock(entry.block, transformSettings, identityTransform);
+            auto const* expectedLiquid = transformExpectedBlock(entry.liquid, transformSettings, identityTransform);
             auto const& actual = region.getBlock(position);
             auto const& actualLiquid = region.getLiquidBlock(position);
             auto const bodyMissing = expected && actual.isAir();
@@ -892,7 +898,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     gState.anchor.z + offsetZ + transformed.z
                 };
                 auto const appendBlock = [&](Block const* source) {
-                    auto const* transformedBlock = transformExpectedBlock(source, transformSettings);
+                    auto const* transformedBlock = transformExpectedBlock(source, transformSettings, identityTransform);
                     if (!transformedBlock) return;
                     auto const& typeName = transformedBlock->getTypeName();
                     if (typeName == VanillaBlockTypeIds::PistonArmCollision().getString()
@@ -1026,7 +1032,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 ));
                 for (auto const index : liquidProxyIndices) {
                     auto const& entry = gState.structure->renderBlocks[index];
-                    auto const* expectedLiquid = transformExpectedBlock(entry.liquid, transformSettings);
+                    auto const* expectedLiquid = transformExpectedBlock(entry.liquid, transformSettings, identityTransform);
                     if (!expectedLiquid) continue;
                     auto const* graphics = BlockGraphics::getForBlock(*expectedLiquid);
                     auto const* uvSet = graphics ? &graphics->getTexture(0, 0) : nullptr;
@@ -1047,7 +1053,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     auto const neighborIsSameLiquid = [&](int dx, int dy, int dz) {
                         auto const* neighbor = neighborEntry(dx, dy, dz);
                         if (!neighbor || !neighbor->liquid) return false;
-                        auto const* transformed = transformExpectedBlock(neighbor->liquid, transformSettings);
+                        auto const* transformed = transformExpectedBlock(neighbor->liquid, transformSettings, identityTransform);
                         return transformed && transformed->getTypeName() == expectedLiquid->getTypeName();
                     };
                     // Flow-aware surface. Source and submerged cells stay full;
@@ -1077,7 +1083,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                         auto const* n = (dx == 0 && dz == 0) ? &entry : neighborEntry(dx, 0, dz);
                         if (!n) return 0.0f;
                         if (!n->liquid) return -1.0f;
-                        auto const* t = transformExpectedBlock(n->liquid, transformSettings);
+                        auto const* t = transformExpectedBlock(n->liquid, transformSettings, identityTransform);
                         if (!t || t->getTypeName() != expectedLiquid->getTypeName()) return -1.0f;
                         if (neighborIsSameLiquid(dx, 1, dz)) return 1.0f;  // submerged
                         return fluidHeight(liquidDepth(*t));
@@ -1169,7 +1175,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 auto const tint = 0x00FFFFFFU | (alpha << 24U);
                 for (auto const index : blockEntityIndices) {
                     auto const& entry = gState.structure->renderBlocks[index];
-                    auto const* expectedBlock = transformExpectedBlock(entry.block, transformSettings);
+                    auto const* expectedBlock = transformExpectedBlock(entry.block, transformSettings, identityTransform);
                     if (!expectedBlock) continue;
                     auto const* graphics = BlockGraphics::getForBlock(*expectedBlock);
                     auto const* uvSet = graphics ? &graphics->getTexture(0, 0) : nullptr;
