@@ -26,12 +26,14 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <deque>
 #include <exception>
 #include <functional>
 #include <mutex>
 #include <optional>
 #include <memory>
 #include <map>
+#include <set>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -76,6 +78,8 @@
 #include "mc/world/level/ILevel.h"
 #include "mc/world/level/Level.h"
 #include "mc/world/level/BlockSource.h"
+#include "mc/world/level/BlockSourceListener.h"
+#include "mc/world/level/LevelListener.h"
 #include "mc/world/level/block/Block.h"
 #include "mc/world/level/block/BlockRenderLayer.h"
 #include "mc/world/level/block/BlockType.h"
@@ -85,6 +89,7 @@
 #include "mc/world/level/block/actor/BlockActorType.h"
 #include "mc/world/level/block/actor/ChestBlockActor.h"
 #include "mc/world/level/biome/biome_color_sampling/BiomeColorSampling.h"
+#include "mc/world/level/chunk/LevelChunk.h"
 #include "mc/world/level/levelgen/structure/LegacyStructureSettings.h"
 #include "mc/world/level/levelgen/structure/LegacyStructureTemplate.h"
 #include "mc/world/level/material/Material.h"
@@ -96,6 +101,8 @@
 
 namespace lholo::projection {
 namespace {
+
+using SubChunkKey = std::tuple<int, int, int>;
 
 // Litematica's default schematic overlay palette, converted from ARGB to the
 // ABGR byte order expected by Tessellator::colorABGR(). Overlay edges are
@@ -165,6 +172,7 @@ struct ProjectionState {
     std::uint64_t                  progressWrongTypeCount{};
     std::uint64_t                  progressWrongStateCount{};
     std::size_t                    correctionScanCursor{};
+    std::set<SubChunkKey>              pendingLoadedSubChunks;
     int                            cachedRotation{-1};
     int                            cachedMirror{-1};
     int                            cachedOffsetX{};
@@ -290,7 +298,120 @@ std::mutex       gStateMutex;
 ProjectionState  gState;
 overlay::BoundsWireframe gCaptureBounds;
 
+std::mutex                 gPendingEventsMutex;
+std::deque<BlockPos>       gIncomingBlockChanges;
+std::deque<SubChunkKey>    gIncomingLoadedSubChunks;
+std::atomic<BlockSource*>  gAttachedBlockSource{};
+std::atomic<ChunkSource*>  gAttachedChunkSource{};
+std::atomic<Level*>        gAttachedLevel{};
+
+class ProjectionBlockSourceListener final : public BlockSourceListener {
+public:
+    void onSourceDestroyed(BlockSource& source) override {
+        auto* expected = &source;
+        if (gAttachedBlockSource.compare_exchange_strong(
+                expected,
+                nullptr,
+                std::memory_order_acq_rel
+            )) {
+            gAttachedChunkSource.store(nullptr, std::memory_order_release);
+        }
+    }
+
+    void onBlockChanged(
+        BlockSource&,
+        BlockPos const&              pos,
+        uint,
+        Block const&,
+        Block const&,
+        int,
+        ActorBlockSyncMessage const*,
+        BlockChangedEventTarget,
+        Actor*
+    ) override {
+        std::lock_guard lock(gPendingEventsMutex);
+        gIncomingBlockChanges.push_back(pos);
+    }
+};
+
+ProjectionBlockSourceListener gProjectionBlockSourceListener;
+
+class ProjectionLevelListener final : public LevelListener {
+public:
+    void onSubChunkLoaded(
+        ChunkSource& source,
+        LevelChunk&  chunk,
+        short        absoluteSubChunkIndex,
+        bool
+    ) override {
+        if (&source != gAttachedChunkSource.load(std::memory_order_acquire)) return;
+        auto const& chunkPosition = chunk.getPosition();
+        std::lock_guard lock(gPendingEventsMutex);
+        gIncomingLoadedSubChunks.emplace_back(
+            chunkPosition.x,
+            static_cast<int>(absoluteSubChunkIndex),
+            chunkPosition.z
+        );
+    }
+
+    void onLevelDestruction(std::string const&) override {
+        gAttachedLevel.store(nullptr, std::memory_order_release);
+        gAttachedChunkSource.store(nullptr, std::memory_order_release);
+    }
+};
+
+ProjectionLevelListener gProjectionLevelListener;
+
+std::vector<BlockPos> takePendingBlockChanges(std::size_t limit) {
+    std::vector<BlockPos> changes;
+    {
+        std::lock_guard lock(gPendingEventsMutex);
+        auto const count = std::min(limit, gIncomingBlockChanges.size());
+        changes.reserve(count);
+        for (std::size_t index = 0; index < count; ++index) {
+            changes.push_back(gIncomingBlockChanges.front());
+            gIncomingBlockChanges.pop_front();
+        }
+    }
+    std::sort(changes.begin(), changes.end(), [](BlockPos const& lhs, BlockPos const& rhs) {
+        return std::tie(lhs.x, lhs.y, lhs.z) < std::tie(rhs.x, rhs.y, rhs.z);
+    });
+    changes.erase(
+        std::unique(changes.begin(), changes.end(), [](BlockPos const& lhs, BlockPos const& rhs) {
+            return lhs.x == rhs.x && lhs.y == rhs.y && lhs.z == rhs.z;
+        }),
+        changes.end()
+    );
+    return changes;
+}
+
+std::vector<SubChunkKey> takePendingLoadedSubChunks(std::size_t limit) {
+    std::vector<SubChunkKey> loaded;
+    {
+        std::lock_guard lock(gPendingEventsMutex);
+        auto const count = std::min(limit, gIncomingLoadedSubChunks.size());
+        loaded.reserve(count);
+        for (std::size_t index = 0; index < count; ++index) {
+            loaded.push_back(gIncomingLoadedSubChunks.front());
+            gIncomingLoadedSubChunks.pop_front();
+        }
+    }
+    return loaded;
+}
+
 void clearProjectionStateLocked() {
+    if (auto* level = gAttachedLevel.exchange(nullptr, std::memory_order_acq_rel)) {
+        level->removeListener(gProjectionLevelListener);
+    }
+    gAttachedChunkSource.store(nullptr, std::memory_order_release);
+    if (auto* blockSource = gAttachedBlockSource.exchange(nullptr, std::memory_order_acq_rel)) {
+        blockSource->removeListener(gProjectionBlockSourceListener);
+    }
+    {
+        std::lock_guard lock(gPendingEventsMutex);
+        gIncomingBlockChanges.clear();
+        gIncomingLoadedSubChunks.clear();
+    }
     gBuildProgressPlaced.store(0, std::memory_order_relaxed);
     gBuildProgressVisiblePlaced.store(0, std::memory_order_relaxed);
     gBuildProgressVisibleTotal.store(0, std::memory_order_relaxed);
@@ -406,6 +527,24 @@ bool enableStructureProjection(
     }
     gState = std::move(next);
     gState.enabled = true;
+    auto* activeBlockSource = &player->getDimensionBlockSource();
+    if (auto* attached = gAttachedBlockSource.load(std::memory_order_acquire);
+        attached != activeBlockSource) {
+        if (attached) {
+            attached->removeListener(gProjectionBlockSourceListener);
+        }
+        activeBlockSource->addListener(gProjectionBlockSourceListener);
+        gAttachedBlockSource.store(activeBlockSource, std::memory_order_release);
+    }
+    gAttachedChunkSource.store(&activeBlockSource->getChunkSource(), std::memory_order_release);
+    auto* activeLevel = &player->getLevel();
+    if (auto* attached = gAttachedLevel.load(std::memory_order_acquire); attached != activeLevel) {
+        if (attached) {
+            attached->removeListener(gProjectionLevelListener);
+        }
+        activeLevel->addListener(gProjectionLevelListener);
+        gAttachedLevel.store(activeLevel, std::memory_order_release);
+    }
     gBuildProgressPlaced.store(0, std::memory_order_relaxed);
     gBuildProgressVisiblePlaced.store(0, std::memory_order_relaxed);
     gBuildProgressVisibleTotal.store(
@@ -662,7 +801,6 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 for (auto& mesh : gState.correctionOutlineSectionMeshes) mesh.reset();
                 for (auto& mesh : gState.liquidProxySectionMeshes) mesh.reset();
                 gState.structureBoundsMesh.reset();
-                gState.correctionScanCursor = 0;
                 std::fill(gState.progressCorrect.begin(), gState.progressCorrect.end(), 0);
                 std::fill(gState.progressErrorKind.begin(), gState.progressErrorKind.end(), 0);
                 gState.progressCorrectCount = 0;
@@ -789,18 +927,16 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
         blockTessellator.setRegion(player->getDimensionBlockSource());
 
         auto const totalBlocks = gState.structure->renderBlocks.size();
-        // Scan a bounded round-robin batch instead of the entire structure every
-        // render frame. Only a real state transition dirties its 16^3 section.
-        // The per-frame cap keeps frame cost bounded regardless of structure
-        // size. Tune this constant per game version only after profiling.
+        // Share one fixed world-read budget between initial cache population and
+        // incremental block notifications.
         constexpr std::size_t kCorrectionChecksPerFrame = 4096;
+        constexpr std::size_t kSubChunkEventsPerFrame    = 64;
         auto& region = player->getDimensionBlockSource();
-        auto const checks = std::min(totalBlocks, kCorrectionChecksPerFrame);
         bool overallProgressChanged{};
         bool visibleProgressChanged{};
         bool errorProgressChanged{};
-        for (std::size_t checked = 0; checked < checks; ++checked) {
-            auto const index = gState.correctionScanCursor++ % totalBlocks;
+
+        auto const updateCorrection = [&](std::size_t index) {
             auto const& entry = gState.structure->renderBlocks[index];
             auto const visible = layerIsVisible(layerAxis == 1 ? entry.x : entry.y);
             auto const transformed = transformStructurePosition(
@@ -860,7 +996,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
             // Progress always describes the whole structure. Hidden layers are
             // still checked above, but their correction/model meshes remain
             // suppressed by the layer renderer.
-            if (!visible) continue;
+            if (!visible) return;
             if (gState.correctionStates[index] != nextState) {
                 gState.correctionStates[index] = nextState;
                 gState.sectionDirty[gState.blockToSection[index]] = true;
@@ -877,6 +1013,57 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     });
                     if (neighbor != gState.expectedWorldBlockIndices.end()) {
                         gState.sectionDirty[gState.blockToSection[neighbor->second]] = true;
+                    }
+                }
+            }
+        };
+
+        // The cache is populated once after a structure/transform change. Once
+        // that pass completes, a stable world performs no correction reads.
+        // Official BlockSource notifications below update only changed cells.
+        auto const changedPositions = takePendingBlockChanges(kCorrectionChecksPerFrame);
+        std::size_t correctionChecks{};
+        for (auto const& changedPosition : changedPositions) {
+            auto const found = gState.expectedWorldBlockIndices.find(std::tuple{
+                changedPosition.x, changedPosition.y, changedPosition.z
+            });
+            if (found != gState.expectedWorldBlockIndices.end()) {
+                updateCorrection(found->second);
+                ++correctionChecks;
+            }
+        }
+
+        auto const loadedSubChunks = takePendingLoadedSubChunks(kSubChunkEventsPerFrame);
+        gState.pendingLoadedSubChunks.insert(loadedSubChunks.begin(), loadedSubChunks.end());
+
+        auto const scanRemaining = totalBlocks - gState.correctionScanCursor;
+        auto const checks = std::min(scanRemaining, kCorrectionChecksPerFrame - correctionChecks);
+        for (std::size_t checked = 0; checked < checks; ++checked) {
+            updateCorrection(gState.correctionScanCursor++);
+        }
+        correctionChecks += checks;
+
+        // A newly received client subchunk may not emit one block notification
+        // per cell. Refresh only its projected cells, and cap this work to one
+        // 16^3 region per frame so walking cannot create an unbounded spike.
+        if (gState.correctionScanCursor == totalBlocks && correctionChecks == 0
+            && !gState.pendingLoadedSubChunks.empty()) {
+            auto loaded = gState.pendingLoadedSubChunks.begin();
+            auto const [subChunkX, subChunkY, subChunkZ] = *loaded;
+            gState.pendingLoadedSubChunks.erase(loaded);
+            auto const minX = subChunkX * 16;
+            auto const minY = subChunkY * 16;
+            auto const minZ = subChunkZ * 16;
+            for (int x = minX; x < minX + 16; ++x) {
+                for (int y = minY; y < minY + 16; ++y) {
+                    auto found = gState.expectedWorldBlockIndices.lower_bound(
+                        std::tuple{x, y, minZ}
+                    );
+                    while (found != gState.expectedWorldBlockIndices.end()) {
+                        auto const& [foundX, foundY, foundZ] = found->first;
+                        if (foundX != x || foundY != y || foundZ >= minZ + 16) break;
+                        updateCorrection(found->second);
+                        ++found;
                     }
                 }
             }
