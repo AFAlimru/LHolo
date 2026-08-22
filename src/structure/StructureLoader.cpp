@@ -19,6 +19,7 @@
 #include "settings/SettingsStore.h"
 #include "structure/formats/StructureFormatLoaders.h"
 #include "structure/StructureSession.h"
+#include "structure/StructurePaths.h"
 #include "structure/StructureUiState.h"
 #include "ui/HotkeyFormat.h"
 #include "ui/MenuController.h"
@@ -166,45 +167,6 @@ std::filesystem::path settingsPath() {
     return LHolo::getInstance().getSelf().getConfigDir() / "config.json";
 }
 
-std::filesystem::path pathFromUtf8(std::string_view value) {
-    if (value.empty()) return {};
-    auto const wideSize = MultiByteToWideChar(
-        CP_UTF8,
-        MB_ERR_INVALID_CHARS,
-        value.data(),
-        static_cast<int>(value.size()),
-        nullptr,
-        0
-    );
-    if (wideSize <= 0) return std::filesystem::path{value};
-
-    std::wstring wide(static_cast<std::size_t>(wideSize), L'\0');
-    if (MultiByteToWideChar(
-            CP_UTF8,
-            MB_ERR_INVALID_CHARS,
-            value.data(),
-            static_cast<int>(value.size()),
-            wide.data(),
-            wideSize
-        ) <= 0) {
-        return std::filesystem::path{value};
-    }
-    return std::filesystem::path{wide};
-}
-
-std::string pathToUtf8(std::filesystem::path const& path) {
-    auto const& wide = path.native();
-    if (wide.empty()) return {};
-    auto const size = WideCharToMultiByte(
-        CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()), nullptr, 0, nullptr, nullptr
-    );
-    if (size <= 0) return path.string();
-    std::string result(static_cast<std::size_t>(size), '\0');
-    WideCharToMultiByte(
-        CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()), result.data(), size, nullptr, nullptr
-    );
-    return result;
-}
 
 unsigned int currentHotkeyModifiers() {
     unsigned int modifiers{};
@@ -511,7 +473,7 @@ void renderHud() {
     {
         std::lock_guard lock(detail::sessionLoadedMutex());
         if (!detail::sessionLoaded()) return;
-        fileName = pathToUtf8(detail::sessionLoaded()->sourcePath.filename());
+        fileName = detail::pathToUtf8(detail::sessionLoaded()->sourcePath.filename());
         maxLayer = detail::maxLayerFor(*detail::sessionLoaded(), layerAxis);
     }
 
@@ -625,184 +587,8 @@ void renderHud() {
     ImGui::PopStyleVar(2);
 }
 
-namespace {
-
-
-void stopHotkeyCapture() {
-    detail::uiCapturingGuiHotkey().store(false, std::memory_order_release);
-    detail::uiCapturingLayerIncreaseHotkey().store(false, std::memory_order_release);
-    detail::uiCapturingLayerDecreaseHotkey().store(false, std::memory_order_release);
-    for (auto& capturing : detail::uiCapturingMoveHotkey()) capturing.store(false, std::memory_order_release);
-}
-
-
-
-lholo::ui::MenuActions makeMenuActions(bool& refreshModel) {
-    lholo::ui::MenuActions actions;
-    actions.browseStructure = [](std::string_view current) -> std::optional<std::string> {
-        auto const selected = lholo::ui::openStructureFile(pathFromUtf8(current));
-        return selected ? std::optional<std::string>{pathToUtf8(*selected)} : std::nullopt;
-    };
-    actions.loadStructure = [&refreshModel](std::string_view pathValue) {
-        auto const pathText = std::string{pathValue};
-        if (pathText.empty()) {
-            std::lock_guard lock(detail::sessionLoadedMutex());
-            detail::sessionStatus() = "请选择或输入 .mcstructure / .litematic 文件路径";
-            return;
-        }
-        std::string error;
-        auto loaded = detail::loadStructureFile(pathFromUtf8(pathText), error);
-        if (!loaded) {
-            std::lock_guard lock(detail::sessionLoadedMutex());
-            detail::sessionStatus() = "加载失败: " + error;
-            logger().error("Could not load structure {}: {}", pathText, error);
-            return;
-        }
-        std::string status;
-        {
-            std::lock_guard lock(detail::sessionLoadedMutex());
-            detail::sessionLastPath() = pathText;
-            detail::sessionStatus() = detail::makeStructureStatus(*loaded);
-            status = detail::sessionStatus();
-            detail::sessionLoaded() = std::move(loaded);
-        }
-        saveSettings();
-        refreshModel = true;
-        logger().info("{}", status);
-    };
-    actions.restoreProjection = [&refreshModel] {
-        std::string savedPath;
-        {
-            std::lock_guard lock(detail::sessionLoadedMutex());
-            savedPath = detail::sessionSavedStructurePath();
-        }
-        auto const x = detail::sessionSavedAnchorX().load(std::memory_order_relaxed);
-        auto const y = detail::sessionSavedAnchorY().load(std::memory_order_relaxed);
-        auto const z = detail::sessionSavedAnchorZ().load(std::memory_order_relaxed);
-        std::string error;
-        auto loaded = detail::loadStructureFile(pathFromUtf8(savedPath), error);
-        if (!loaded) {
-            std::lock_guard lock(detail::sessionLoadedMutex());
-            detail::sessionStatus() = "恢复失败: " + error;
-            logger().error("Could not restore structure {}: {}", savedPath, error);
-            return;
-        }
-        detail::sessionRotationQuarterTurns().store(detail::sessionSavedRotation().load(std::memory_order_relaxed), std::memory_order_relaxed);
-        detail::sessionMirror().store(
-            std::clamp(detail::sessionSavedMirror().load(std::memory_order_relaxed), 0, 2),
-            std::memory_order_relaxed
-        );
-        detail::sessionOffsetX().store(detail::sessionSavedOffsetX().load(std::memory_order_relaxed), std::memory_order_relaxed);
-        detail::sessionOffsetY().store(detail::sessionSavedOffsetY().load(std::memory_order_relaxed), std::memory_order_relaxed);
-        detail::sessionOffsetZ().store(detail::sessionSavedOffsetZ().load(std::memory_order_relaxed), std::memory_order_relaxed);
-        detail::sessionLayerDisplayMode().store(detail::sessionSavedLayerDisplayMode().load(std::memory_order_relaxed), std::memory_order_relaxed);
-        detail::sessionDisplayLayer().store(detail::sessionSavedDisplayLayer().load(std::memory_order_relaxed), std::memory_order_relaxed);
-        detail::sessionLayerAxis().store(detail::sessionSavedLayerAxis().load(std::memory_order_relaxed), std::memory_order_relaxed);
-        projection::requestNextStructureAnchor(x, y, z);
-        {
-            std::lock_guard lock(detail::sessionLoadedMutex());
-            detail::sessionLastPath() = savedPath;
-            detail::sessionStatus() = "已恢复上次投影记录，等待进入渲染";
-            detail::sessionLoaded() = std::move(loaded);
-        }
-        std::snprintf(detail::uiPathBuffer().data(), detail::uiPathBuffer().size(), "%s", savedPath.c_str());
-        refreshModel = true;
-        logger().info("Restoring projection {} at ({}, {}, {})", savedPath, x, y, z);
-    };
-    actions.closeProjection = [&refreshModel] {
-        clear();
-        refreshModel = true;
-    };
-    actions.requestMaterials = [] { requestMaterialList(); };
-    actions.beginHotkeyCapture = [](lholo::ui::HotkeyId id) {
-        stopHotkeyCapture();
-        if (auto const binding = lholo::ui::hotkeyBinding(id); binding.capturing) binding.capturing->store(true, std::memory_order_release);
-    };
-    actions.clearHotkey = [](lholo::ui::HotkeyId id) {
-        if (auto const binding = lholo::ui::hotkeyBinding(id); binding.key && binding.modifiers) {
-            binding.key->store(0, std::memory_order_release);
-            binding.modifiers->store(0, std::memory_order_release);
-            if (binding.capturing) binding.capturing->store(false, std::memory_order_release);
-            saveSettings();
-        }
-    };
-    actions.resetHotkeys = [] {
-        detail::uiGuiHotkey().store('M', std::memory_order_relaxed);
-        detail::uiGuiHotkeyModifiers().store(kHotkeyModifierAlt, std::memory_order_relaxed);
-        static unsigned int const moveKeys[]{VK_LEFT, VK_RIGHT, VK_UP, VK_DOWN, VK_UP, VK_DOWN};
-        static unsigned int const moveModifiers[]{kHotkeyModifierControl, kHotkeyModifierControl, kHotkeyModifierControl, kHotkeyModifierControl, kHotkeyModifierShift, kHotkeyModifierShift};
-        for (std::size_t index = 0; index < detail::uiMoveHotkeys().size(); ++index) {
-            detail::uiMoveHotkeys()[index].store(moveKeys[index], std::memory_order_relaxed);
-            detail::uiMoveHotkeyModifiers()[index].store(moveModifiers[index], std::memory_order_relaxed);
-        }
-        detail::uiLayerIncreaseHotkey().store(VK_UP, std::memory_order_relaxed);
-        detail::uiLayerDecreaseHotkey().store(VK_DOWN, std::memory_order_relaxed);
-        detail::uiLayerIncreaseHotkeyModifiers().store(kHotkeyModifierAlt, std::memory_order_relaxed);
-        detail::uiLayerDecreaseHotkeyModifiers().store(kHotkeyModifierAlt, std::memory_order_relaxed);
-        stopHotkeyCapture();
-        resetHotkeyState();
-        saveSettings();
-    };
-    actions.resetCorrectionStyle = [] {
-        projection::setCorrectionFillOpacity(0.15f);
-        projection::setCorrectionOutlineOpacity(1.0f);
-        saveSettings();
-    };
-    actions.usePlayerCapturePosition = [&refreshModel](lholo::ui::CapturePointId point) {
-        capture::setPointFromPlayer(
-            point == lholo::ui::CapturePointId::First
-                ? capture::PointSlot::First
-                : capture::PointSlot::Second
-        );
-        refreshModel = true;
-    };
-    actions.clearCapture = [&refreshModel] {
-        capture::clear();
-        refreshModel = true;
-    };
-    actions.exportCapture = [&refreshModel](lholo::ui::CaptureDraftModel const& model) {
-        auto const output = lholo::ui::saveMcstructureFile();
-        if (!output) return;
-        capture::Draft draft;
-        draft.mode = static_cast<capture::CaptureMode>(std::clamp(model.mode, 0, 1));
-        draft.includeEntities = model.includeEntities;
-        if (model.first.set) draft.first = capture::Point{model.first.x, model.first.y, model.first.z};
-        if (model.second.set) draft.second = capture::Point{model.second.x, model.second.y, model.second.z};
-        capture::exportStructure(draft, *output);
-        refreshModel = true;
-    };
-    return actions;
-}
-
-} // namespace
-
 void renderGui() {
-    if (!isGuiVisible()) return;
-    auto const displaySize = ImGui::GetIO().DisplaySize;
-    auto const configuredScale = detail::uiUiScale().load(std::memory_order_relaxed);
-    auto const effectiveScale = configuredScale > 0.0f
-        ? std::clamp(configuredScale, 1.0f, 5.0f)
-        : std::clamp(std::min(displaySize.x / 1920.0f, displaySize.y / 1080.0f), 1.0f, 5.0f);
-    if (!detail::uiPathInitialized()) {
-        std::lock_guard lock(detail::sessionLoadedMutex());
-        std::snprintf(detail::uiPathBuffer().data(), detail::uiPathBuffer().size(), "%s", detail::sessionLastPath().c_str());
-        detail::uiPathInitialized() = true;
-    }
-    auto const metrics = lholo::ui::calculateMetrics(displaySize, effectiveScale);
-    lholo::ui::applyFluentTheme(metrics);
-    auto model = lholo::ui::buildStructureMenuModel(effectiveScale);
-    bool refreshModel = false;
-    auto const actions = makeMenuActions(refreshModel);
-    lholo::ui::renderMenu(model, actions, metrics);
-    detail::uiActivePage() = model.page;
-    if (!refreshModel) lholo::ui::applyStructureMenuModel(model, effectiveScale);
-    if (detail::uiOpeningInputBlockFrames().load(std::memory_order_acquire) > 0) {
-        detail::uiOpeningInputBlockFrames().fetch_sub(1, std::memory_order_acq_rel);
-    }
-    if (model.closeRequested) {
-        detail::uiGuiVisible().store(false, std::memory_order_release);
-        detail::uiBlockGameInputUntil().store(GetTickCount64() + 180, std::memory_order_release);
-    }
+    lholo::ui::renderStructureMenu();
 }
 
 void loadSettings() {

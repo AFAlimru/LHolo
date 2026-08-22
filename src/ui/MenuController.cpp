@@ -4,11 +4,16 @@
 #include "ui/MenuController.h"
 
 #include "place/PlaceHelper.h"
+#include "plugin/LHolo.h"
 #include "projection/Projection.h"
+#include "structure/StructurePaths.h"
 #include "structure/StructureLoader.h"
 #include "structure/StructureSession.h"
 #include "structure/StructureUiState.h"
 #include "structure/capture/StructureCapture.h"
+#include "structure/formats/StructureFormatLoaders.h"
+#include "ui/FileDialog.h"
+#include "ui/FluentTheme.h"
 #include "ui/HotkeyFormat.h"
 #include "ui/LHoloMenu.h"
 
@@ -16,12 +21,33 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <cstddef>
 #include <mutex>
+#include <optional>
 #include <string>
+#include <string_view>
+
+#include <Windows.h>
+
+#include "imgui.h"
+#include "ll/api/mod/NativeMod.h"
 
 namespace lholo::ui {
 namespace {
+
+auto& logger() {
+    return LHolo::getInstance().getSelf().getLogger();
+}
+
+void stopHotkeyCapture() {
+    structure::detail::uiCapturingGuiHotkey().store(false, std::memory_order_release);
+    structure::detail::uiCapturingLayerIncreaseHotkey().store(false, std::memory_order_release);
+    structure::detail::uiCapturingLayerDecreaseHotkey().store(false, std::memory_order_release);
+    for (auto& capturing : structure::detail::uiCapturingMoveHotkey()) {
+        capturing.store(false, std::memory_order_release);
+    }
+}
 
 struct HotkeyDefinition { HotkeyId id; char const* label; };
 constexpr std::array<HotkeyDefinition, 9> kHotkeyDefinitions{{
@@ -261,6 +287,244 @@ void applyStructureMenuModel(MenuModel const& model, float effectiveUiScale) {
     }
     structure::capture::updateDraft(captureDraft);
     if (changed) structure::saveSettings();
+}
+
+MenuActions buildStructureMenuActions(bool& refreshModel) {
+    MenuActions actions;
+    actions.browseStructure = [](std::string_view current) -> std::optional<std::string> {
+        auto const selected = openStructureFile(structure::detail::pathFromUtf8(current));
+        return selected ? std::optional<std::string>{structure::detail::pathToUtf8(*selected)}
+                        : std::nullopt;
+    };
+    actions.loadStructure = [&refreshModel](std::string_view pathValue) {
+        auto const pathText = std::string{pathValue};
+        if (pathText.empty()) {
+            std::lock_guard lock(structure::detail::sessionLoadedMutex());
+            structure::detail::sessionStatus() = "请选择或输入 .mcstructure / .litematic 文件路径";
+            return;
+        }
+        std::string error;
+        auto loaded = structure::detail::loadStructureFile(
+            structure::detail::pathFromUtf8(pathText), error
+        );
+        if (!loaded) {
+            std::lock_guard lock(structure::detail::sessionLoadedMutex());
+            structure::detail::sessionStatus() = "加载失败: " + error;
+            logger().error("Could not load structure {}: {}", pathText, error);
+            return;
+        }
+        std::string status;
+        {
+            std::lock_guard lock(structure::detail::sessionLoadedMutex());
+            structure::detail::sessionLastPath() = pathText;
+            structure::detail::sessionStatus() = structure::detail::makeStructureStatus(*loaded);
+            status = structure::detail::sessionStatus();
+            structure::detail::sessionLoaded() = std::move(loaded);
+        }
+        structure::saveSettings();
+        refreshModel = true;
+        logger().info("{}", status);
+    };
+    actions.restoreProjection = [&refreshModel] {
+        std::string savedPath;
+        {
+            std::lock_guard lock(structure::detail::sessionLoadedMutex());
+            savedPath = structure::detail::sessionSavedStructurePath();
+        }
+        auto const x = structure::detail::sessionSavedAnchorX().load(std::memory_order_relaxed);
+        auto const y = structure::detail::sessionSavedAnchorY().load(std::memory_order_relaxed);
+        auto const z = structure::detail::sessionSavedAnchorZ().load(std::memory_order_relaxed);
+        std::string error;
+        auto loaded = structure::detail::loadStructureFile(
+            structure::detail::pathFromUtf8(savedPath), error
+        );
+        if (!loaded) {
+            std::lock_guard lock(structure::detail::sessionLoadedMutex());
+            structure::detail::sessionStatus() = "恢复失败: " + error;
+            logger().error("Could not restore structure {}: {}", savedPath, error);
+            return;
+        }
+        structure::detail::sessionRotationQuarterTurns().store(
+            structure::detail::sessionSavedRotation().load(std::memory_order_relaxed),
+            std::memory_order_relaxed
+        );
+        structure::detail::sessionMirror().store(
+            std::clamp(
+                structure::detail::sessionSavedMirror().load(std::memory_order_relaxed), 0, 2
+            ),
+            std::memory_order_relaxed
+        );
+        structure::detail::sessionOffsetX().store(
+            structure::detail::sessionSavedOffsetX().load(std::memory_order_relaxed),
+            std::memory_order_relaxed
+        );
+        structure::detail::sessionOffsetY().store(
+            structure::detail::sessionSavedOffsetY().load(std::memory_order_relaxed),
+            std::memory_order_relaxed
+        );
+        structure::detail::sessionOffsetZ().store(
+            structure::detail::sessionSavedOffsetZ().load(std::memory_order_relaxed),
+            std::memory_order_relaxed
+        );
+        structure::detail::sessionLayerDisplayMode().store(
+            structure::detail::sessionSavedLayerDisplayMode().load(std::memory_order_relaxed),
+            std::memory_order_relaxed
+        );
+        structure::detail::sessionDisplayLayer().store(
+            structure::detail::sessionSavedDisplayLayer().load(std::memory_order_relaxed),
+            std::memory_order_relaxed
+        );
+        structure::detail::sessionLayerAxis().store(
+            structure::detail::sessionSavedLayerAxis().load(std::memory_order_relaxed),
+            std::memory_order_relaxed
+        );
+        projection::requestNextStructureAnchor(x, y, z);
+        {
+            std::lock_guard lock(structure::detail::sessionLoadedMutex());
+            structure::detail::sessionLastPath() = savedPath;
+            structure::detail::sessionStatus() = "已恢复上次投影记录，等待进入渲染";
+            structure::detail::sessionLoaded() = std::move(loaded);
+        }
+        std::snprintf(
+            structure::detail::uiPathBuffer().data(),
+            structure::detail::uiPathBuffer().size(),
+            "%s",
+            savedPath.c_str()
+        );
+        refreshModel = true;
+        logger().info("Restoring projection {} at ({}, {}, {})", savedPath, x, y, z);
+    };
+    actions.closeProjection = [&refreshModel] {
+        structure::clear();
+        refreshModel = true;
+    };
+    actions.requestMaterials = [] { structure::requestMaterialList(); };
+    actions.beginHotkeyCapture = [](HotkeyId id) {
+        stopHotkeyCapture();
+        if (auto const binding = hotkeyBinding(id); binding.capturing) {
+            binding.capturing->store(true, std::memory_order_release);
+        }
+    };
+    actions.clearHotkey = [](HotkeyId id) {
+        if (auto const binding = hotkeyBinding(id); binding.key && binding.modifiers) {
+            binding.key->store(0, std::memory_order_release);
+            binding.modifiers->store(0, std::memory_order_release);
+            if (binding.capturing) binding.capturing->store(false, std::memory_order_release);
+            structure::saveSettings();
+        }
+    };
+    actions.resetHotkeys = [] {
+        structure::detail::uiGuiHotkey().store('M', std::memory_order_relaxed);
+        structure::detail::uiGuiHotkeyModifiers().store(
+            kHotkeyModifierAlt, std::memory_order_relaxed
+        );
+        static unsigned int const moveKeys[]{VK_LEFT, VK_RIGHT, VK_UP, VK_DOWN, VK_UP, VK_DOWN};
+        static unsigned int const moveModifiers[]{
+            kHotkeyModifierControl,
+            kHotkeyModifierControl,
+            kHotkeyModifierControl,
+            kHotkeyModifierControl,
+            kHotkeyModifierShift,
+            kHotkeyModifierShift
+        };
+        for (std::size_t index = 0; index < structure::detail::uiMoveHotkeys().size(); ++index) {
+            structure::detail::uiMoveHotkeys()[index].store(
+                moveKeys[index], std::memory_order_relaxed
+            );
+            structure::detail::uiMoveHotkeyModifiers()[index].store(
+                moveModifiers[index], std::memory_order_relaxed
+            );
+        }
+        structure::detail::uiLayerIncreaseHotkey().store(VK_UP, std::memory_order_relaxed);
+        structure::detail::uiLayerDecreaseHotkey().store(VK_DOWN, std::memory_order_relaxed);
+        structure::detail::uiLayerIncreaseHotkeyModifiers().store(
+            kHotkeyModifierAlt, std::memory_order_relaxed
+        );
+        structure::detail::uiLayerDecreaseHotkeyModifiers().store(
+            kHotkeyModifierAlt, std::memory_order_relaxed
+        );
+        stopHotkeyCapture();
+        structure::resetHotkeyState();
+        structure::saveSettings();
+    };
+    actions.resetCorrectionStyle = [] {
+        projection::setCorrectionFillOpacity(0.15f);
+        projection::setCorrectionOutlineOpacity(1.0f);
+        structure::saveSettings();
+    };
+    actions.usePlayerCapturePosition = [&refreshModel](CapturePointId point) {
+        structure::capture::setPointFromPlayer(
+            point == CapturePointId::First
+                ? structure::capture::PointSlot::First
+                : structure::capture::PointSlot::Second
+        );
+        refreshModel = true;
+    };
+    actions.clearCapture = [&refreshModel] {
+        structure::capture::clear();
+        refreshModel = true;
+    };
+    actions.exportCapture = [&refreshModel](CaptureDraftModel const& model) {
+        auto const output = saveMcstructureFile();
+        if (!output) return;
+        structure::capture::Draft draft;
+        draft.mode = static_cast<structure::capture::CaptureMode>(
+            std::clamp(model.mode, 0, 1)
+        );
+        draft.includeEntities = model.includeEntities;
+        if (model.first.set) {
+            draft.first = structure::capture::Point{
+                model.first.x, model.first.y, model.first.z
+            };
+        }
+        if (model.second.set) {
+            draft.second = structure::capture::Point{
+                model.second.x, model.second.y, model.second.z
+            };
+        }
+        structure::capture::exportStructure(draft, *output);
+        refreshModel = true;
+    };
+    return actions;
+}
+
+void renderStructureMenu() {
+    if (!structure::isGuiVisible()) return;
+    auto const displaySize = ImGui::GetIO().DisplaySize;
+    auto const configuredScale
+        = structure::detail::uiUiScale().load(std::memory_order_relaxed);
+    auto const effectiveScale = configuredScale > 0.0f
+        ? std::clamp(configuredScale, 1.0f, 5.0f)
+        : std::clamp(
+            std::min(displaySize.x / 1920.0f, displaySize.y / 1080.0f), 1.0f, 5.0f
+        );
+    if (!structure::detail::uiPathInitialized()) {
+        std::lock_guard lock(structure::detail::sessionLoadedMutex());
+        std::snprintf(
+            structure::detail::uiPathBuffer().data(),
+            structure::detail::uiPathBuffer().size(),
+            "%s",
+            structure::detail::sessionLastPath().c_str()
+        );
+        structure::detail::uiPathInitialized() = true;
+    }
+    auto const metrics = calculateMetrics(displaySize, effectiveScale);
+    applyFluentTheme(metrics);
+    auto model = buildStructureMenuModel(effectiveScale);
+    bool refreshModel = false;
+    auto const actions = buildStructureMenuActions(refreshModel);
+    renderMenu(model, actions, metrics);
+    structure::detail::uiActivePage() = model.page;
+    if (!refreshModel) applyStructureMenuModel(model, effectiveScale);
+    if (structure::detail::uiOpeningInputBlockFrames().load(std::memory_order_acquire) > 0) {
+        structure::detail::uiOpeningInputBlockFrames().fetch_sub(1, std::memory_order_acq_rel);
+    }
+    if (model.closeRequested) {
+        structure::detail::uiGuiVisible().store(false, std::memory_order_release);
+        structure::detail::uiBlockGameInputUntil().store(
+            GetTickCount64() + 180, std::memory_order_release
+        );
+    }
 }
 
 } // namespace lholo::ui

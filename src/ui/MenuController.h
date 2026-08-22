@@ -13,6 +13,7 @@
 namespace lholo::ui {
 
 struct MenuModel;
+struct MenuActions;
 
 struct HotkeyBinding {
     std::atomic_uint* key{};
@@ -25,5 +26,9 @@ HotkeyBinding hotkeyBinding(HotkeyId id);
 MenuModel buildStructureMenuModel(float effectiveUiScale);
 
 void applyStructureMenuModel(MenuModel const& model, float effectiveUiScale);
+
+MenuActions buildStructureMenuActions(bool& refreshModel);
+
+void renderStructureMenu();
 
 } // namespace lholo::ui
