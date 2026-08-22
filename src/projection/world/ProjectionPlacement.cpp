@@ -8,8 +8,8 @@
 
 #include "projection/world/ProjectionPlacement.h"
 
-#include "projection/ProjectionRules.h"
-#include "projection/ProjectionState.h"
+#include "projection/core/ProjectionRules.h"
+#include "projection/core/ProjectionState.h"
 #include "projection/world/ProjectionVirtualWorld.h"
 #include "structure/StructureLoader.h"
 

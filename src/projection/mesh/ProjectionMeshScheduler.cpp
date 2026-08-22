@@ -5,8 +5,8 @@
 
 #include "plugin/LHolo.h"
 #include "projection/mesh/ProjectionMeshWorker.h"
-#include "projection/ProjectionRules.h"
-#include "projection/ProjectionState.h"
+#include "projection/core/ProjectionRules.h"
+#include "projection/core/ProjectionState.h"
 #include "structure/StructureLoader.h"
 
 #include <algorithm>

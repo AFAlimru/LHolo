@@ -8,9 +8,9 @@
 
 #include "projection/mesh/ProjectionSectionBuilder.h"
 
-#include "projection/ProjectionInternalTypes.h"
-#include "projection/ProjectionRules.h"
-#include "projection/ProjectionState.h"
+#include "projection/core/ProjectionInternalTypes.h"
+#include "projection/core/ProjectionRules.h"
+#include "projection/core/ProjectionState.h"
 #include "projection/world/ProjectionVirtualWorld.h"
 #include "structure/StructureLoader.h"
 

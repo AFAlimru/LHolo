@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include "projection/ProjectionInternalTypes.h"
+#include "projection/core/ProjectionInternalTypes.h"
 
 #include <cstddef>
 #include <vector>

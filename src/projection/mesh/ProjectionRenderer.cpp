@@ -3,8 +3,8 @@
 
 #include "projection/mesh/ProjectionRenderer.h"
 
-#include "projection/ProjectionInternalTypes.h"
-#include "projection/ProjectionState.h"
+#include "projection/core/ProjectionInternalTypes.h"
+#include "projection/core/ProjectionState.h"
 #include "projection/world/ProjectionVirtualWorld.h"
 
 #include <algorithm>

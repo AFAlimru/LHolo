@@ -3,8 +3,8 @@
 
 #include "projection/world/ProjectionQueries.h"
 
-#include "projection/ProjectionInternalTypes.h"
-#include "projection/ProjectionState.h"
+#include "projection/core/ProjectionInternalTypes.h"
+#include "projection/core/ProjectionState.h"
 
 #include <algorithm>
 #include <cmath>

@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include "projection/ProjectionInternalTypes.h"
+#include "projection/core/ProjectionInternalTypes.h"
 
 class Block;
 class BlockActor;

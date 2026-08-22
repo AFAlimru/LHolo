@@ -6,7 +6,7 @@
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-#include "projection/ProjectionRules.h"
+#include "projection/core/ProjectionRules.h"
 
 #include <string>
 #include <type_traits>

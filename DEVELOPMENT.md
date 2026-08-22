@@ -74,6 +74,10 @@ LHolo/
 │  │  ├─ Projection.cpp         对外门面、状态锁与渲染帧编排
 │  │  ├─ Projection.h           GUI/HUD 和辅助放置使用的投影控制接口
 │  │  ├─ ProjectionTypes.h      对外查询与进度的纯数据类型
+│  │  ├─ core/                  内部共享模型、资源所有权与纯规则
+│  │  │  ├─ ProjectionInternalTypes.h 内部键、状态枚举与无资源引用类型
+│  │  │  ├─ ProjectionRules.*   坐标、分层、状态匹配和渲染分类纯规则
+│  │  │  └─ ProjectionState.h   世界身份、CPU 状态、Worker 状态与 Mesh 所有权
 │  │  ├─ mesh/                  Mesh CPU 构建、Worker、上传与渲染提交
 │  │  │  ├─ ProjectionMeshScheduler.* 主线程 section 选择、局部快照与同步回退调度
 │  │  │  ├─ ProjectionMeshUpload.* 主线程完成队列校验、MeshData 上传与失败回退
@@ -87,12 +91,9 @@ LHolo/
 │  │  ├─ ProjectionCorrections.* 有界世界纠错扫描、进度计数与 section 失效
 │  │  ├─ ProjectionFramePipeline.* opaque 帧纠错、上传、边框与构建调度流水线
 │  │  ├─ ProjectionGameHooks.* 无状态 BlockSource 虚拟查询与客户端命令 Hook
-│  │  ├─ ProjectionInternalTypes.h 内部键、状态枚举与无资源引用类型
 │  │  ├─ ProjectionInvalidation.* 设置变化检测、section/revision 失效与缓存清理
 │  │  ├─ ProjectionLifecycle.*  ProjectionState 资源准备、停止清理与世界身份匹配
 │  │  ├─ ProjectionProgress.*   渲染线程到 HUD 的无锁进度快照发布
-│  │  ├─ ProjectionRules.*      坐标、分层、状态匹配和渲染分类纯规则
-│  │  ├─ ProjectionState.h      世界身份、CPU 状态、Worker 状态与 Mesh 所有权
 │  │  └─ ProjectionWorldEvents.* 真实世界方块/子区块通知的监听与排队
 │  ├─ place/
 │  │  ├─ PlaceHelper.cpp        轻松/手动/范围放置：投影查表、背包取物、放置事务
@@ -118,8 +119,8 @@ LHolo/
 - `structure/capture` 只维护会话选区、读取当前客户端世界并调用原版捕获/导出 API；不手工生成方块调色板、索引或实体 NBT。
 - `projection` 负责“结构如何出现在世界中”，不弹文件选择框、不直接操作 ImGui。
 - `projection/ProjectionTypes.h` 不包含运行状态、Hook 或 Minecraft 资源所有权；内部纯数据定义集中在
-  `ProjectionInternalTypes.h`，投影状态与 Worker/Mesh 生命周期仍由实现层负责。
-- `projection/ProjectionRules.*` 只根据显式参数计算结果，不读取全局投影状态，也不持有游戏对象；
+  `projection/core/ProjectionInternalTypes.h`，投影状态与 Worker/Mesh 生命周期仍由实现层负责。
+- `projection/core/ProjectionRules.*` 只根据显式参数计算结果，不读取全局投影状态，也不持有游戏对象；
   旋转、镜像、分层可见性和状态匹配规则修改时应集中在这里回归。
 - `projection/ProjectionCorrections.*` 在固定每帧预算内比较真实世界与投影单元，维护纠错状态和进度计数；
   它可以标记受影响 section，但不创建 Mesh、不访问 Tessellator，也不发布 HUD 原子状态。
@@ -136,7 +137,7 @@ LHolo/
   无锁快照；它不扫描世界，也不自行推导纠错结果。
 - `projection/mesh/ProjectionSectionBuilder.*` 统一生成原版方块、液体代理、方块实体占位、纠错覆盖和结构边框
   的 CPU 几何；构建输入必须来自显式只读设置，Worker 使用 `UploadMode::Never`，同步回退保持 `Buffered`。
-- `projection/ProjectionState.h` 只声明投影运行态及资源所有权；创建、替换、清理和跨世界校验仍由
+- `projection/core/ProjectionState.h` 只声明投影运行态及资源所有权；创建、替换、清理和跨世界校验仍由
   `Projection.cpp` 的生命周期流程统一执行，禁止在状态类型中暗藏线程启动或游戏 API 调用。
 - `projection/mesh/ProjectionMeshWorker.*` 只管理单线程 executor、任务异常边界、generation 失效和完成队列；
   Worker 任务由调度层提供，基础设施不得读取 `gState`、世界对象或渲染上下文。

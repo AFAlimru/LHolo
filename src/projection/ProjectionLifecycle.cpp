@@ -3,10 +3,10 @@
 
 #include "projection/ProjectionLifecycle.h"
 
-#include "projection/ProjectionInternalTypes.h"
+#include "projection/core/ProjectionInternalTypes.h"
 #include "projection/mesh/ProjectionMeshWorker.h"
 #include "projection/ProjectionProgress.h"
-#include "projection/ProjectionState.h"
+#include "projection/core/ProjectionState.h"
 #include "projection/ProjectionWorldEvents.h"
 #include "structure/StructureLoader.h"
 

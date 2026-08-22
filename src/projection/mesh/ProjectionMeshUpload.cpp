@@ -9,9 +9,9 @@
 #include "projection/mesh/ProjectionMeshUpload.h"
 
 #include "plugin/LHolo.h"
-#include "projection/ProjectionInternalTypes.h"
+#include "projection/core/ProjectionInternalTypes.h"
 #include "projection/mesh/ProjectionMeshWorker.h"
-#include "projection/ProjectionState.h"
+#include "projection/core/ProjectionState.h"
 
 #include <algorithm>
 #include <array>
