@@ -6,11 +6,11 @@
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-#include "projection/ProjectionMeshUpload.h"
+#include "projection/mesh/ProjectionMeshUpload.h"
 
 #include "plugin/LHolo.h"
 #include "projection/ProjectionInternalTypes.h"
-#include "projection/ProjectionMeshWorker.h"
+#include "projection/mesh/ProjectionMeshWorker.h"
 #include "projection/ProjectionState.h"
 
 #include <algorithm>

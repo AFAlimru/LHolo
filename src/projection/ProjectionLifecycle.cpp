@@ -4,7 +4,7 @@
 #include "projection/ProjectionLifecycle.h"
 
 #include "projection/ProjectionInternalTypes.h"
-#include "projection/ProjectionMeshWorker.h"
+#include "projection/mesh/ProjectionMeshWorker.h"
 #include "projection/ProjectionProgress.h"
 #include "projection/ProjectionState.h"
 #include "projection/ProjectionWorldEvents.h"

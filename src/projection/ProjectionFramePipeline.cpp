@@ -4,8 +4,8 @@
 #include "projection/ProjectionFramePipeline.h"
 
 #include "projection/ProjectionCorrections.h"
-#include "projection/ProjectionMeshScheduler.h"
-#include "projection/ProjectionMeshUpload.h"
+#include "projection/mesh/ProjectionMeshScheduler.h"
+#include "projection/mesh/ProjectionMeshUpload.h"
 #include "projection/ProjectionProgress.h"
 #include "projection/ProjectionState.h"
 #include "structure/StructureLoader.h"

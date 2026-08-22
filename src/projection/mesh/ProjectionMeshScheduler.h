@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include "projection/ProjectionSectionBuilder.h"
+#include "projection/mesh/ProjectionSectionBuilder.h"
 
 class BlockSource;
 class BlockTessellator;

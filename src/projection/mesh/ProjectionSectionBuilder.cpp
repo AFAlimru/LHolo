@@ -6,7 +6,7 @@
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-#include "projection/ProjectionSectionBuilder.h"
+#include "projection/mesh/ProjectionSectionBuilder.h"
 
 #include "projection/ProjectionInternalTypes.h"
 #include "projection/ProjectionRules.h"

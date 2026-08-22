@@ -71,24 +71,25 @@ LHolo/
 │  │  ├─ FileDialog.*           通用结构打开与 `.mcstructure` 保存对话框
 │  │  └─ LHoloMenu.*            纯菜单模型、页面和动作回调
 │  ├─ projection/
-│  │  ├─ Projection.cpp         投影网格、纠错、分区缓存、渲染 Hook
+│  │  ├─ Projection.cpp         对外门面、状态锁与渲染帧编排
 │  │  ├─ Projection.h           GUI/HUD 和辅助放置使用的投影控制接口
 │  │  ├─ ProjectionTypes.h      对外查询与进度的纯数据类型
+│  │  ├─ mesh/                  Mesh CPU 构建、Worker、上传与渲染提交
+│  │  │  ├─ ProjectionMeshScheduler.* 主线程 section 选择、局部快照与同步回退调度
+│  │  │  ├─ ProjectionMeshUpload.* 主线程完成队列校验、MeshData 上传与失败回退
+│  │  │  ├─ ProjectionMeshWorker.* 单线程 executor、generation 与完成队列
+│  │  │  ├─ ProjectionRenderer.* 已构建 Mesh/方块实体的 pass 分类与材质提交
+│  │  │  └─ ProjectionSectionBuilder.* Worker/同步共用的 section CPU 几何构建
 │  │  ├─ ProjectionCorrections.* 有界世界纠错扫描、进度计数与 section 失效
 │  │  ├─ ProjectionFramePipeline.* opaque 帧纠错、上传、边框与构建调度流水线
 │  │  ├─ ProjectionGameHooks.* 无状态 BlockSource 虚拟查询与客户端命令 Hook
 │  │  ├─ ProjectionInternalTypes.h 内部键、状态枚举与无资源引用类型
 │  │  ├─ ProjectionInvalidation.* 设置变化检测、section/revision 失效与缓存清理
 │  │  ├─ ProjectionLifecycle.*  ProjectionState 资源准备、停止清理与世界身份匹配
-│  │  ├─ ProjectionMeshScheduler.* 主线程 section 选择、局部快照与同步回退调度
-│  │  ├─ ProjectionMeshUpload.* 主线程完成队列校验、MeshData 上传与失败回退
-│  │  ├─ ProjectionMeshWorker.* 单线程 executor、generation 与完成队列
 │  │  ├─ ProjectionPlacement.*  变换/分层后的虚拟世界与方块实体放置视图
 │  │  ├─ ProjectionProgress.*   渲染线程到 HUD 的无锁进度快照发布
 │  │  ├─ ProjectionQueries.*    辅助放置使用的只读单格与范围查询
-│  │  ├─ ProjectionRenderer.*   已构建 Mesh 的 pass 分类、透明排序与材质提交
 │  │  ├─ ProjectionRules.*      坐标、分层、状态匹配和渲染分类纯规则
-│  │  ├─ ProjectionSectionBuilder.* Worker/同步共用的 section CPU 几何构建
 │  │  ├─ ProjectionState.h      世界身份、CPU 状态、Worker 状态与 Mesh 所有权
 │  │  ├─ ProjectionVirtualWorld.* Tessellation 线程局部虚拟方块与方块实体视图
 │  │  └─ ProjectionWorldEvents.* 真实世界方块/子区块通知的监听与排队
@@ -132,22 +133,22 @@ LHolo/
   `gState` 激活和解锁后的 `structure::clear()` 仍由 `Projection.cpp` 控制。
 - `projection/ProjectionProgress.*` 保持原有 acquire/release 语义，在渲染状态计数与 GUI/HUD 读取之间发布
   无锁快照；它不扫描世界，也不自行推导纠错结果。
-- `projection/ProjectionSectionBuilder.*` 统一生成原版方块、液体代理、方块实体占位、纠错覆盖和结构边框
+- `projection/mesh/ProjectionSectionBuilder.*` 统一生成原版方块、液体代理、方块实体占位、纠错覆盖和结构边框
   的 CPU 几何；构建输入必须来自显式只读设置，Worker 使用 `UploadMode::Never`，同步回退保持 `Buffered`。
 - `projection/ProjectionState.h` 只声明投影运行态及资源所有权；创建、替换、清理和跨世界校验仍由
   `Projection.cpp` 的生命周期流程统一执行，禁止在状态类型中暗藏线程启动或游戏 API 调用。
-- `projection/ProjectionMeshWorker.*` 只管理单线程 executor、任务异常边界、generation 失效和完成队列；
+- `projection/mesh/ProjectionMeshWorker.*` 只管理单线程 executor、任务异常边界、generation 失效和完成队列；
   Worker 任务由调度层提供，基础设施不得读取 `gState`、世界对象或渲染上下文。
-- `projection/ProjectionMeshScheduler.*` 仅在 opaque 主线程选择 dirty section、准备两格 halo 的只读世界视图并
+- `projection/mesh/ProjectionMeshScheduler.*` 仅在 opaque 主线程选择 dirty section、准备两格 halo 的只读世界视图并
   提交 Worker Task；增量优先、距离排序、revision 合并和连续三次失败后的同步回退策略集中在这里。
   Task 只持有显式快照，不得捕获 `gState`、`renderContext` 或活动共享 `BlockTessellator`。
-- `projection/ProjectionMeshUpload.*` 仅在主线程消费完成队列，校验 Worker/结构 generation 与 section revision，
+- `projection/mesh/ProjectionMeshUpload.*` 仅在主线程消费完成队列，校验 Worker/结构 generation 与 section revision，
   按每帧两个 section、1 ms 预算上传 `MeshData`；连续失败三次时保持原有同步回退策略。
 - `projection/ProjectionPlacement.*` 在变换、偏移或分层变化后重建虚拟方块/方块实体表、世界坐标索引、
   section 中心与 Tessellator 查询缓存；它不生成 Mesh、不上传 GPU，也不调度 Worker。
 - `projection/ProjectionQueries.*` 只在调用方已持有投影状态锁且完成世界身份校验后读取虚拟世界索引和
   纠错状态，为手动/轻松/范围放置返回单格或按距离排序的缺失方块；它不持锁、不清理状态，也不修改世界。
-- `projection/ProjectionRenderer.*` 只提交已经上传完成的 Mesh 和投影方块实体：保持 opaque/transparent pass
+- `projection/mesh/ProjectionRenderer.*` 只提交已经上传完成的 Mesh 和投影方块实体：保持 opaque/transparent pass
   分类、透明 section 后向前排序、液体/方块实体占位、结构边框和纠错覆盖的现有材质语义；方块实体仍在
   局部虚拟世界作用域内复用原 dispatcher 参数。它不生成 CPU 几何、不消费 Worker 结果，也不改变
   projection 生命周期；资源预检和提交异常后的清理由 `Projection.cpp` 负责。
