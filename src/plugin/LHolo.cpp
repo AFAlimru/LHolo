@@ -16,12 +16,7 @@
 
 #include "plugin/LHolo.h"
 
-#include "place/PlaceHelper.h"
-#include "projection/Projection.h"
-#include "overlay/ImGuiOverlay.h"
-#include "structure/StructureLoader.h"
-#include "structure/capture/StructureCapture.h"
-#include "input/MenuInputGuard.h"
+#include "app/AppKernel.h"
 
 #include "ll/api/mod/NativeMod.h"
 #include "ll/api/mod/RegisterHelper.h"
@@ -38,43 +33,15 @@ LHolo::LHolo() : mSelf(*ll::mod::NativeMod::current()) {}
 ll::mod::NativeMod& LHolo::getSelf() const { return mSelf; }
 
 bool LHolo::load() {
-    structure::loadSettings();
-    return true;
+    return app::AppKernel::getInstance().load();
 }
 
 bool LHolo::enable() {
-    if (!projection::installHook()) {
-        mSelf.getLogger().error("Failed to install projection hooks");
-        return false;
-    }
-
-    if (!place::installHook()) {
-        mSelf.getLogger().warn("Failed to install easy-place hooks");
-    }
-
-    if (!input::installMenuInputGuard()) {
-        mSelf.getLogger().warn("Failed to install menu block-destroy guard");
-    }
-
-    if (!overlay::ensureInstalled()) {
-        mSelf.getLogger().warn("GUI overlay hotkey hooks are not ready; lholo will retry initialization");
-    }
-
-    mSelf.getLogger().info("LHolo enabled. Type lholo to open the projection menu.");
-    return true;
+    return app::AppKernel::getInstance().enable();
 }
 
 bool LHolo::disable() {
-    structure::saveSettings();
-    projection::disable();
-    input::uninstallMenuInputGuard();
-    place::uninstallHook();
-    overlay::shutdown();
-    structure::capture::clear();
-    structure::clear();
-    projection::uninstallHook();
-    mSelf.getLogger().info("LHolo disabled");
-    return true;
+    return app::AppKernel::getInstance().disable();
 }
 
 } // namespace lholo

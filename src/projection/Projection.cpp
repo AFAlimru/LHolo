@@ -15,14 +15,12 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "projection/Projection.h"
-#include "projection/hooks/ProjectionGameHooks.h"
-#include "projection/hooks/ProjectionRenderHooks.h"
+#include "projection/ProjectionController.h"
 #include "projection/runtime/ProjectionProgress.h"
 #include "projection/runtime/ProjectionSession.h"
 #include "projection/core/ProjectionState.h"
 #include "projection/world/ProjectionQueries.h"
 
-#include "overlay/BoundsWireframe.h"
 #include "structure/StructureLoader.h"
 
 #include <mutex>
@@ -33,33 +31,17 @@
 #include "mc/world/level/Level.h"
 
 namespace lholo::projection {
-namespace {
-
-void clearProjectionState() {
-    std::lock_guard lock(detail::projectionStateMutex());
-    detail::clearProjectionStateLocked();
-}
-
-} // namespace
 
 bool installHook() {
-    if (!detail::installProjectionGameHooks()) return false;
-    if (!detail::installProjectionRenderHooks()) {
-        detail::uninstallProjectionGameHooks();
-        return false;
-    }
-    return true;
+    return detail::projectionController().installHooks();
 }
 
 void uninstallHook() {
-    detail::uninstallProjectionRenderHooks();
-    detail::uninstallProjectionGameHooks();
-    std::lock_guard lock(detail::projectionStateMutex());
-    detail::projectionCaptureBounds().clear();
+    detail::projectionController().uninstallHooks();
 }
 
 void disable() {
-    clearProjectionState();
+    detail::projectionController().disableProjection();
 }
 
 float getOpacity() {

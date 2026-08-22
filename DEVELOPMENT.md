@@ -55,9 +55,11 @@ LHolo 的投影、纠错、HUD 和菜单都只存在于客户端，不产生碰�
 LHolo/
 ├─ src/
 │  ├─ plugin/
-│  │  ├─ LHolo.cpp              模组启停、事件注册、Hook 总入口
+│  │  ├─ LHolo.cpp              模组启停，只委托给 AppKernel
 │  │  ├─ LHolo.h
 │  │  └─ MemoryOperators.cpp    Windows 客户端内存运算符适配
+│  ├─ app/
+│  │  └─ AppKernel.*            唯一应用入口：启停编排与加载顺序
 │  ├─ overlay/
 │  │  ├─ ImGuiOverlay.cpp       DXGI/D3D11On12、WndProc、GUI/HUD 帧提交
 │  │  ├─ ImGuiOverlay.h
@@ -74,6 +76,7 @@ LHolo/
 │  │  ├─ Projection.cpp         对外门面：Hook 生命周期、设置与查询转发
 │  │  ├─ Projection.h           GUI/HUD 和辅助放置使用的投影控制接口
 │  │  ├─ ProjectionTypes.h      对外查询与进度的纯数据类型
+│  │  ├─ ProjectionController.* 投影 Hook 安装/回滚与禁用入口
 │  │  ├─ core/                  内部共享模型、资源所有权与纯规则
 │  │  │  ├─ ProjectionInternalTypes.h 内部键、状态枚举与无资源引用类型
 │  │  │  ├─ ProjectionRules.*   坐标、分层、状态匹配和渲染分类纯规则
@@ -125,6 +128,8 @@ LHolo/
 - `mesh/` 依赖 `core/` 与 `world/`；不依赖 runtime/hooks 与门面。
 - `runtime/` 依赖 `core/`、`world/`、`mesh/`；不依赖 hooks 与门面。
 - `hooks/` 依赖 `world/` 与 `runtime/ProjectionRenderFrame` 回调契约；不直接持有投影状态。
+- `projection/ProjectionController` 只编排 Hook 安装/回滚与投影禁用，不包含渲染帧逻辑。
+- `app/AppKernel` 是唯一启停入口，依赖 `ProjectionController` 与各外部模块；`plugin` 只调用 `app/`。
 - 内部模块不得 include `projection/Projection.h`；只有门面自身和外部消费者（`place`、`ui`、`plugin`）可以。
 - `ProjectionSession` 是运行时可变状态的唯一所有者，其余模块通过访问器使用。
 
@@ -185,7 +190,7 @@ LHolo/
 - `overlay` 负责“外部 GUI 如何安全进入游戏图形链”，不解析结构或扫描世界方块。
 - `place` 负责轻松、手动和范围放置：调用 projection 查询接口，在完整背包中查找物品，必要时交换到快捷栏，并发送 `InventoryTransactionPacket`；不碰渲染与配置。
 - `input` 负责菜单期间的最小游戏动作保护；当前只拦截本地玩家破坏方块，不扩展为移动冻结或全交互封锁。
-- `plugin` 只组织生命周期，不承载业务逻辑。
+- `plugin` 只把生命周期委托给 `app/AppKernel`，不承载业务逻辑。
 
 ---
 
