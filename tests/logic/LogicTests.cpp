@@ -6,6 +6,9 @@
 #include "projection/core/ProjectionRules.h"
 #include "projection/runtime/ProjectionProgress.h"
 #include "settings/SettingsStore.h"
+#include "ui/HotkeyFormat.h"
+
+#include <Windows.h>
 
 namespace {
 
@@ -144,12 +147,25 @@ void testSettingsStore() {
     std::filesystem::remove(path, error);
 }
 
+void testHotkeyFormat() {
+    LHOLO_CHECK(lholo::ui::isModifierKey(VK_CONTROL));
+    LHOLO_CHECK(lholo::ui::isModifierKey(VK_MENU));
+    LHOLO_CHECK(lholo::ui::isModifierKey(VK_LWIN));
+    LHOLO_CHECK(!lholo::ui::isModifierKey('A'));
+    LHOLO_CHECK(lholo::ui::hotkeyName(0) == "未设置");
+    LHOLO_CHECK(lholo::ui::hotkeyChordName(0, 0) == "未设置");
+    auto const chord = lholo::ui::hotkeyChordName(lholo::ui::kHotkeyModifierControl, 'M');
+    LHOLO_CHECK(chord.rfind("Ctrl + ", 0) == 0);
+    LHOLO_CHECK(chord.size() > 7);
+}
+
 } // namespace
 
 int main() {
     testLayoutRules();
     testProgress();
     testSettingsStore();
+    testHotkeyFormat();
     std::printf("LHoloLogicTests: %d checks, %d failures\n", gChecks, gFailures);
     return gFailures == 0 ? 0 : 1;
 }
