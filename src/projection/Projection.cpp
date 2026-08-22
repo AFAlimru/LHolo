@@ -18,6 +18,7 @@
 #include "projection/ProjectionCorrections.h"
 #include "projection/ProjectionInternalTypes.h"
 #include "projection/ProjectionMeshWorker.h"
+#include "projection/ProjectionPlacement.h"
 #include "projection/ProjectionRules.h"
 #include "projection/ProjectionSectionBuilder.h"
 #include "projection/ProjectionState.h"
@@ -78,11 +79,6 @@
 #include "mc/network/MinecraftPacketIds.h"
 #include "mc/network/Packet.h"
 #include "mc/network/packet/TextPacket.h"
-#include "mc/deps/nbt/CompoundTag.h"
-#include "mc/deps/nbt/IntTag.h"
-#include "mc/deps/nbt/StringTag.h"
-#include "mc/deps/nbt/Tag.h"
-#include "mc/dataloadhelper/NewUniqueIdsDataLoadHelper.h"
 #include "mc/world/actor/Actor.h"
 #include "mc/world/Facing.h"
 #include "mc/world/level/ILevel.h"
@@ -92,12 +88,7 @@
 #include "mc/world/level/LevelListener.h"
 #include "mc/world/level/block/Block.h"
 #include "mc/world/level/block/BlockRenderLayer.h"
-#include "mc/world/level/block/BlockType.h"
-#include "mc/world/level/block/VanillaBlockTypeIds.h"
-#include "mc/world/level/block/VanillaStates.h"
 #include "mc/world/level/block/actor/BlockActor.h"
-#include "mc/world/level/block/actor/BlockActorType.h"
-#include "mc/world/level/block/actor/ChestBlockActor.h"
 #include "mc/world/level/biome/biome_color_sampling/BiomeColorSampling.h"
 #include "mc/world/level/chunk/LevelChunk.h"
 #include "mc/world/level/chunk/ChunkViewSource.h"
@@ -121,9 +112,6 @@ using detail::AsyncSectionBuildResult;
 using detail::attachProjectionWorldEvents;
 using detail::disableMeshWorkerForSession;
 using detail::detachProjectionWorldEvents;
-using detail::ExpectedBlockActorMap;
-using detail::ExpectedBlockIndexMap;
-using detail::ExpectedBlockMap;
 using detail::findTessellationBlock;
 using detail::findTessellationBlockActor;
 using detail::getProjectionMirror;
@@ -132,7 +120,6 @@ using detail::isLayerVisible;
 using detail::meshWorkerIsBusy;
 using detail::meshWorkerIsDisabledForSession;
 using detail::projectionStatesMatch;
-using detail::ProjectedBlockActor;
 using detail::ProjectionState;
 using detail::ProjectionSectionBuildSettings;
 using detail::RenderBucket;
@@ -142,42 +129,10 @@ using detail::SubChunkKey;
 using detail::ScopedTessellationBlocks;
 using detail::submitMeshWorkerTask;
 using detail::takeCompletedSectionBuilds;
-using detail::transformExpectedBlock;
 using detail::transformStructurePosition;
 
 auto& logger() {
     return LHolo::getInstance().getSelf().getLogger();
-}
-
-void pairProjectedChests(BlockSource& region, ProjectionState& state) {
-    constexpr std::array<std::pair<int, int>, 4> horizontalNeighbors{{
-        {-1, 0},
-        {1, 0},
-        {0, -1},
-        {0, 1},
-    }};
-
-    ScopedTessellationBlocks projectedWorld{*state.expectedWorldBlocks, *state.expectedWorldBlockActors};
-    for (auto const& [key, actor] : *state.expectedWorldBlockActors) {
-        if (!actor->isType(BlockActorType::Chest)) continue;
-        auto* chest = static_cast<ChestBlockActor*>(actor.get());
-        if (chest->isLargeChest()) continue;
-
-        auto const [x, y, z] = key;
-        for (auto const [dx, dz] : horizontalNeighbors) {
-            BlockPos const neighbor{x + dx, y, z + dz};
-            auto const found = state.expectedWorldBlockActors->find(
-                std::tuple{neighbor.x, neighbor.y, neighbor.z}
-            );
-            if (found == state.expectedWorldBlockActors->end()
-                || !found->second->isType(BlockActorType::Chest)) {
-                continue;
-            }
-
-            chest->_tryToPairWith(region, neighbor);
-            if (chest->isLargeChest()) break;
-        }
-    }
 }
 
 std::atomic<float> gOpacity{1.0f};
@@ -520,96 +475,23 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
             }
 
             if (geometryTransformChanged || placementMoved || layerChanged) {
-                // A moved placement keeps its local GPU geometry, but the virtual
-                // world and correction lookup must follow the new world origin.
-                // Recreate the CPU tessellator cache without touching those meshes.
-                gState.blockTessellator = std::make_unique<BlockTessellator>(
-                    &player->getDimensionBlockSource()
-                );
-                // Publish a new immutable virtual-world version. In-flight
-                // workers keep the previous maps alive without observing a
-                // partially rebuilt placement.
-                gState.expectedWorldBlocks = std::make_shared<ExpectedBlockMap>();
-                gState.expectedWorldBlockActors = std::make_shared<ExpectedBlockActorMap>();
-                gState.projectedBlockActors.clear();
-                std::fill(
-                    gState.blockActorRendererAvailable.begin(),
-                    gState.blockActorRendererAvailable.end(),
-                    0
-                );
-                gState.expectedWorldBlockIndices = std::make_shared<ExpectedBlockIndexMap>();
-                std::vector<Vec3> centerSums(gState.sectionCenters.size(), Vec3{});
-                std::vector<std::size_t> centerCounts(gState.sectionCenters.size(), 0);
-                for (std::size_t index = 0; index < gState.structure->renderBlocks.size(); ++index) {
-                auto const& entry = gState.structure->renderBlocks[index];
-                if (!layerIsVisible(layerAxis == 1 ? entry.x : entry.y)) {
-                    // Hidden layers behave like completed cells for mesh
-                    // generation, but are excluded from the world lookup below.
-                    gState.correctionStates[index] = CorrectionState::Correct;
-                    continue;
-                }
-                auto const transformed = transformStructurePosition(
-                    entry, *gState.structure, mirrorMode, rotationTurns
-                );
-                auto const* transformedBlock = transformExpectedBlock(entry.block, transformSettings, identityTransform);
-                BlockPos const worldPosition{
-                    gState.anchor.x + offsetX + transformed.x,
-                    gState.anchor.y + offsetY + transformed.y,
-                    gState.anchor.z + offsetZ + transformed.z
-                };
-                auto const worldKey = std::tuple{worldPosition.x, worldPosition.y, worldPosition.z};
-                if (transformedBlock) {
-                    gState.expectedWorldBlocks->emplace(worldKey, transformedBlock);
-                    if (transformedBlock->getBlockEntityType() != BlockActorType::Undefined) {
-                        auto blockActor = transformedBlock->getBlockType().newBlockEntity(
-                            worldPosition, *transformedBlock
-                        );
-                        if (blockActor) {
-                            if (entry.blockEntityNbt) {
-                                NewUniqueIdsDataLoadHelper dataLoadHelper{*gState.level};
-                                blockActor->load(*gState.level, *entry.blockEntityNbt, dataLoadHelper);
-                                blockActor->moveTo(worldPosition);
-                            }
-                            auto* actor = blockActor.get();
-                            gState.expectedWorldBlockActors->emplace(worldKey, std::move(blockActor));
-                            auto& dispatcher = renderContext.mBlockEntityRenderDispatcher;
-                            if (dispatcher.getRenderer(*actor)) {
-                                gState.projectedBlockActors.push_back({
-                                    worldPosition, transformedBlock, actor, index
-                                });
-                                gState.blockActorRendererAvailable[index] = 1;
-                            }
-                        }
+                detail::rebuildProjectionPlacement(
+                    gState,
+                    player->getDimensionBlockSource(),
+                    renderContext.mBlockEntityRenderDispatcher,
+                    transformSettings,
+                    detail::ProjectionPlacementSettings{
+                        .mirrorMode        = mirrorMode,
+                        .rotationTurns     = rotationTurns,
+                        .offsetX           = offsetX,
+                        .offsetY           = offsetY,
+                        .offsetZ           = offsetZ,
+                        .layerDisplayMode  = layerDisplayMode,
+                        .displayLayer      = displayLayer,
+                        .layerAxis         = layerAxis,
+                        .identityTransform = identityTransform
                     }
-                } else {
-                    // Liquids join the virtual world so vanilla liquid-height
-                    // queries see stacked virtual water (full-cell columns).
-                    auto const* transformedLiquid = transformExpectedBlock(entry.liquid, transformSettings, identityTransform);
-                    if (transformedLiquid) gState.expectedWorldBlocks->emplace(worldKey, transformedLiquid);
-                }
-                gState.expectedWorldBlockIndices->emplace(worldKey, index);
-                auto const section = gState.blockToSection[index];
-                centerSums[section] += Vec3{
-                    static_cast<float>(transformed.x) + 0.5f,
-                    static_cast<float>(transformed.y) + 0.5f,
-                    static_cast<float>(transformed.z) + 0.5f
-                };
-                ++centerCounts[section];
-            }
-            pairProjectedChests(player->getDimensionBlockSource(), gState);
-            for (std::size_t section = 0; section < gState.sectionCenters.size(); ++section) {
-                if (centerCounts[section] != 0) {
-                    gState.sectionCenters[section] = centerSums[section] / static_cast<float>(centerCounts[section]);
-                }
-            }
-            auto* region = &player->getDimensionBlockSource();
-            gState.blockTessellator->mCachedGetBlock.get() = [region](BlockPos const& position) -> Block const& {
-                auto const found = gState.expectedWorldBlocks->find(
-                    std::tuple{position.x, position.y, position.z}
                 );
-                return found == gState.expectedWorldBlocks->end() ? region->getBlock(position) : *found->second;
-            };
-            gState.correctionScanCursor = 0;
             }
         }
 

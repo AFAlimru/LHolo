@@ -77,6 +77,7 @@ LHolo/
 │  │  ├─ ProjectionCorrections.* 有界世界纠错扫描、进度计数与 section 失效
 │  │  ├─ ProjectionInternalTypes.h 内部键、状态枚举与无资源引用类型
 │  │  ├─ ProjectionMeshWorker.* 单线程 executor、generation 与完成队列
+│  │  ├─ ProjectionPlacement.*  变换/分层后的虚拟世界与方块实体放置视图
 │  │  ├─ ProjectionRules.*      坐标、分层、状态匹配和渲染分类纯规则
 │  │  ├─ ProjectionSectionBuilder.* Worker/同步共用的 section CPU 几何构建
 │  │  ├─ ProjectionState.h      世界身份、CPU 状态、Worker 状态与 Mesh 所有权
@@ -117,6 +118,8 @@ LHolo/
   `Projection.cpp` 的生命周期流程统一执行，禁止在状态类型中暗藏线程启动或游戏 API 调用。
 - `projection/ProjectionMeshWorker.*` 只管理单线程 executor、任务异常边界、generation 失效和完成队列；
   Worker 任务由实现层提供，基础设施不得读取 `gState`、世界对象或渲染上下文。
+- `projection/ProjectionPlacement.*` 在变换、偏移或分层变化后重建虚拟方块/方块实体表、世界坐标索引、
+  section 中心与 Tessellator 查询缓存；它不生成 Mesh、不上传 GPU，也不调度 Worker。
 - `projection/ProjectionVirtualWorld.*` 隐藏 Tessellation 使用的 thread-local 虚拟方块表；只有显式 RAII
   作用域内的 `BlockSource` Hook 查询可以命中投影邻居，作用域结束后必须恢复上一个视图。
 - `projection/ProjectionWorldEvents.*` 只监听真实世界的方块变化和子区块加载并按原顺序排队；它不读取
