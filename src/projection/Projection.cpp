@@ -17,6 +17,7 @@
 #include "projection/Projection.h"
 #include "projection/ProjectionCorrections.h"
 #include "projection/ProjectionInternalTypes.h"
+#include "projection/ProjectionMeshUpload.h"
 #include "projection/ProjectionMeshWorker.h"
 #include "projection/ProjectionPlacement.h"
 #include "projection/ProjectionRules.h"
@@ -128,7 +129,6 @@ using detail::stopMeshWorker;
 using detail::SubChunkKey;
 using detail::ScopedTessellationBlocks;
 using detail::submitMeshWorkerTask;
-using detail::takeCompletedSectionBuilds;
 using detail::transformStructurePosition;
 
 auto& logger() {
@@ -562,156 +562,8 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
 
         if (tessellator.isTessellating()) tessellator.cancel();
 
-        // Upload completed CPU meshes on the render thread. A result is valid
-        // only for the exact worker lifetime, structure, section, and revision.
-        if (auto bufferService = tessellator.mBufferResourceService.lock()) {
-            auto const uploadStarted = std::chrono::steady_clock::now();
-            for (std::size_t uploaded = 0; uploaded < 2; ++uploaded) {
-                if (std::chrono::steady_clock::now() - uploadStarted >= std::chrono::milliseconds(1)) break;
-                auto completed = takeCompletedSectionBuilds(1);
-                if (completed.empty()) break;
-                auto result = std::move(completed.front());
-                if (result.workerGeneration != gState.meshWorkerGeneration
-                    || result.structureGeneration != gState.structureGeneration
-                    || result.section >= gState.sectionDirty.size()) {
-                    continue;
-                }
-
-                auto const section = result.section;
-                gState.sectionBuildInFlight[section] = false;
-                if (!result.success) {
-                    markSectionDirty(gState, section, true);
-                    logger().warn(
-                        "Projection mesh worker section {} revision {} failed: {} (expected {}, actual {}; snapshot {} us, build {} us)",
-                        section,
-                        result.revision,
-                        result.failureReason.empty() ? "unknown failure" : result.failureReason,
-                        result.expectedVertexCount,
-                        result.actualVertexCount,
-                        result.snapshotPrepareMicros,
-                        result.workerBuildMicros
-                    );
-                    if (++gState.consecutiveMeshWorkerFailures >= 3) {
-                        gState.asyncMeshBuildingEnabled = false;
-                        disableMeshWorkerForSession();
-                        stopMeshWorker();
-                        logger().warn("Projection mesh worker failed three times; using synchronous fallback for this session");
-                    }
-                    continue;
-                }
-                if (result.revision != gState.sectionRequestedRevision[section]) {
-                    gState.sectionDirty[section] = true;
-                    continue;
-                }
-
-                auto const sectionUploadStarted = std::chrono::steady_clock::now();
-                auto uploadCpuMesh = [&](std::unique_ptr<mce::Mesh> cpuMesh, std::string_view name) {
-                    if (!cpuMesh || cpuMesh->mMeshData.get().size() == 0) {
-                        return std::unique_ptr<mce::Mesh>{};
-                    }
-                    auto data = std::move(cpuMesh->mMeshData.get());
-                    return std::make_unique<mce::Mesh>(bufferService, std::move(data), false, name);
-                };
-                try {
-                    constexpr std::array<std::string_view, static_cast<std::size_t>(RenderBucket::Count)>
-                        bucketNames{"LHoloOpaque", "LHoloAlphaTest", "LHoloBlend", "LHoloBlendToOpaque"};
-                    std::array<std::unique_ptr<mce::Mesh>, static_cast<std::size_t>(RenderBucket::Count)>
-                        uploadedMeshes;
-                    for (std::size_t bucket = 0; bucket < uploadedMeshes.size(); ++bucket) {
-                        uploadedMeshes[bucket] = uploadCpuMesh(std::move(result.sectionMeshes[bucket]), bucketNames[bucket]);
-                    }
-                    auto warningFill = uploadCpuMesh(std::move(result.warningFillMesh), "LHoloWarningFill");
-                    auto correctionOutline = uploadCpuMesh(
-                        std::move(result.correctionOutlineMesh), "LHoloCorrectionOutline"
-                    );
-                    auto liquidProxy = uploadCpuMesh(std::move(result.liquidProxyMesh), "LHoloLiquidProxy");
-                    auto blockEntityPlaceholder = uploadCpuMesh(
-                        std::move(result.blockEntityPlaceholderMesh), "LHoloBlockEntityPlaceholder"
-                    );
-
-                    for (std::size_t bucket = 0; bucket < uploadedMeshes.size(); ++bucket) {
-                        gState.sectionMeshes[bucket][section] = std::move(uploadedMeshes[bucket]);
-                    }
-                    gState.warningFillSectionMeshes[section] = std::move(warningFill);
-                    gState.correctionOutlineSectionMeshes[section] = std::move(correctionOutline);
-                    gState.liquidProxySectionMeshes[section] = std::move(liquidProxy);
-                    gState.blockEntityPlaceholderSectionMeshes[section] = std::move(blockEntityPlaceholder);
-                    gState.sectionUploadedRevision[section] = result.revision;
-                    gState.sectionIncrementalDirty[section] = false;
-                    gState.sectionDirty[section] = false;
-                    gState.consecutiveMeshWorkerFailures = 0;
-                    gState.meshPreflightDone = false;
-                    auto const uploadMicros = static_cast<std::uint64_t>(
-                        std::chrono::duration_cast<std::chrono::microseconds>(
-                            std::chrono::steady_clock::now() - sectionUploadStarted
-                        ).count()
-                    );
-                    ++gState.meshWorkerUploadedSections;
-                    gState.meshWorkerSnapshotMicros += result.snapshotPrepareMicros;
-                    gState.meshWorkerSnapshotDataMicros += result.snapshotDataMicros;
-                    gState.meshWorkerChunkViewMicros += result.chunkViewMicros;
-                    gState.meshWorkerBuildMicros += result.workerBuildMicros;
-                    gState.meshWorkerUploadMicros += uploadMicros;
-                    gState.meshWorkerPeakSnapshotMicros = std::max(
-                        gState.meshWorkerPeakSnapshotMicros, result.snapshotPrepareMicros
-                    );
-                    gState.meshWorkerPeakSnapshotDataMicros = std::max(
-                        gState.meshWorkerPeakSnapshotDataMicros, result.snapshotDataMicros
-                    );
-                    gState.meshWorkerPeakChunkViewMicros = std::max(
-                        gState.meshWorkerPeakChunkViewMicros, result.chunkViewMicros
-                    );
-                    gState.meshWorkerPeakBuildMicros = std::max(
-                        gState.meshWorkerPeakBuildMicros, result.workerBuildMicros
-                    );
-                    gState.meshWorkerPeakUploadMicros = std::max(
-                        gState.meshWorkerPeakUploadMicros, uploadMicros
-                    );
-                    if (gState.meshWorkerUploadedSections % 64 == 0) {
-                        auto const count = gState.meshWorkerUploadedSections;
-                        logger().debug(
-                            "Projection mesh worker: {} sections; snapshot {}/{} us (data {}/{}, chunkView {}/{}), build {}/{} us, upload {}/{} us",
-                            count,
-                            gState.meshWorkerSnapshotMicros / count,
-                            gState.meshWorkerPeakSnapshotMicros,
-                            gState.meshWorkerSnapshotDataMicros / count,
-                            gState.meshWorkerPeakSnapshotDataMicros,
-                            gState.meshWorkerChunkViewMicros / count,
-                            gState.meshWorkerPeakChunkViewMicros,
-                            gState.meshWorkerBuildMicros / count,
-                            gState.meshWorkerPeakBuildMicros,
-                            gState.meshWorkerUploadMicros / count,
-                            gState.meshWorkerPeakUploadMicros
-                        );
-                    }
-                } catch (std::exception const& exception) {
-                    logger().warn(
-                        "Projection mesh upload for section {} revision {} failed: {}",
-                        section, result.revision, exception.what()
-                    );
-                    markSectionDirty(gState, section, true);
-                    if (++gState.consecutiveMeshWorkerFailures >= 3) {
-                        gState.asyncMeshBuildingEnabled = false;
-                        disableMeshWorkerForSession();
-                        stopMeshWorker();
-                        logger().warn("Projection mesh upload failed three times; using synchronous fallback for this session");
-                    }
-                } catch (...) {
-                    logger().warn(
-                        "Projection mesh upload for section {} revision {} failed with a non-standard exception",
-                        section, result.revision
-                    );
-                    markSectionDirty(gState, section, true);
-                    if (++gState.consecutiveMeshWorkerFailures >= 3) {
-                        gState.asyncMeshBuildingEnabled = false;
-                        disableMeshWorkerForSession();
-                        stopMeshWorker();
-                        logger().warn("Projection mesh upload failed three times; using synchronous fallback for this session");
-                    }
-                }
-            }
-        }
-
+        // Consume completed CPU data only in the opaque render pass.
+        detail::uploadCompletedProjectionMeshes(gState, tessellator);
         // The bounds are only 24 line vertices and are intentionally generated
         // once on the render thread; section BlockTessellator work stays async.
         if (gState.asyncMeshBuildingEnabled && !gState.structureBoundsMesh) {
