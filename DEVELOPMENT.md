@@ -71,7 +71,7 @@ LHolo/
 │  │  ├─ FileDialog.*           通用结构打开与 `.mcstructure` 保存对话框
 │  │  └─ LHoloMenu.*            纯菜单模型、页面和动作回调
 │  ├─ projection/
-│  │  ├─ Projection.cpp         对外门面、状态锁与渲染帧编排
+│  │  ├─ Projection.cpp         对外门面：Hook 生命周期、设置与查询转发
 │  │  ├─ Projection.h           GUI/HUD 和辅助放置使用的投影控制接口
 │  │  ├─ ProjectionTypes.h      对外查询与进度的纯数据类型
 │  │  ├─ core/                  内部共享模型、资源所有权与纯规则
