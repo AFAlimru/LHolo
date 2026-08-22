@@ -10,7 +10,7 @@
 
 #include "projection/core/ProjectionRules.h"
 #include "projection/core/ProjectionState.h"
-#include "projection/ProjectionWorldEvents.h"
+#include "projection/runtime/ProjectionWorldEvents.h"
 #include "structure/StructureLoader.h"
 
 #include <algorithm>

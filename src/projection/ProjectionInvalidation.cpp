@@ -4,7 +4,7 @@
 #include "projection/ProjectionInvalidation.h"
 
 #include "projection/core/ProjectionInternalTypes.h"
-#include "projection/ProjectionProgress.h"
+#include "projection/runtime/ProjectionProgress.h"
 #include "projection/core/ProjectionRules.h"
 #include "projection/core/ProjectionState.h"
 #include "structure/StructureLoader.h"

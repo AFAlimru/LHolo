@@ -6,7 +6,7 @@
 #include "projection/ProjectionCorrections.h"
 #include "projection/mesh/ProjectionMeshScheduler.h"
 #include "projection/mesh/ProjectionMeshUpload.h"
-#include "projection/ProjectionProgress.h"
+#include "projection/runtime/ProjectionProgress.h"
 #include "projection/core/ProjectionState.h"
 #include "structure/StructureLoader.h"
 

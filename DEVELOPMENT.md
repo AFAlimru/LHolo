@@ -88,13 +88,14 @@ LHolo/
 │  │  │  ├─ ProjectionPlacement.* 变换/分层后的虚拟世界与方块实体放置视图
 │  │  │  ├─ ProjectionQueries.* 辅助放置使用的只读单格与范围查询
 │  │  │  └─ ProjectionVirtualWorld.* Tessellation 线程局部虚拟方块与方块实体视图
+│  │  ├─ runtime/               投影会话生命周期与每帧运行时协调
+│  │  │  ├─ ProjectionLifecycle.* ProjectionState 资源准备、停止清理与世界身份匹配
+│  │  │  ├─ ProjectionProgress.* 渲染线程到 HUD 的无锁进度快照发布
+│  │  │  └─ ProjectionWorldEvents.* 真实世界方块/子区块通知的监听与排队
 │  │  ├─ ProjectionCorrections.* 有界世界纠错扫描、进度计数与 section 失效
 │  │  ├─ ProjectionFramePipeline.* opaque 帧纠错、上传、边框与构建调度流水线
 │  │  ├─ ProjectionGameHooks.* 无状态 BlockSource 虚拟查询与客户端命令 Hook
-│  │  ├─ ProjectionInvalidation.* 设置变化检测、section/revision 失效与缓存清理
-│  │  ├─ ProjectionLifecycle.*  ProjectionState 资源准备、停止清理与世界身份匹配
-│  │  ├─ ProjectionProgress.*   渲染线程到 HUD 的无锁进度快照发布
-│  │  └─ ProjectionWorldEvents.* 真实世界方块/子区块通知的监听与排队
+│  │  └─ ProjectionInvalidation.* 设置变化检测、section/revision 失效与缓存清理
 │  ├─ place/
 │  │  ├─ PlaceHelper.cpp        轻松/手动/范围放置：投影查表、背包取物、放置事务
 │  │  └─ PlaceHelper.h          配置开关与 Hook 生命周期接口
@@ -130,10 +131,10 @@ LHolo/
   虚拟 BlockSource 查询和 `/lholo` 客户端命令包拦截；安装失败时必须按原逆序回滚已挂 Hook。
 - `projection/ProjectionInvalidation.*` 对比当前帧设置与缓存值，集中处理旋转/镜像、移动、切层、透明度和
   纠错样式变化引起的 section dirty、revision、旧 Mesh 清理及可见进度重算；placement 重建仍由调用方触发。
-- `projection/ProjectionLifecycle.*` 构造尚未激活的 `ProjectionState`、解析 terrain atlas、建立 section 索引，
+- `projection/runtime/ProjectionLifecycle.*` 构造尚未激活的 `ProjectionState`、解析 terrain atlas、建立 section 索引，
   并按 Worker 停止、世界事件解绑、进度清零、资源释放的顺序执行锁内清理；锁、pending anchor 消费、
   `gState` 激活和解锁后的 `structure::clear()` 仍由 `Projection.cpp` 控制。
-- `projection/ProjectionProgress.*` 保持原有 acquire/release 语义，在渲染状态计数与 GUI/HUD 读取之间发布
+- `projection/runtime/ProjectionProgress.*` 保持原有 acquire/release 语义，在渲染状态计数与 GUI/HUD 读取之间发布
   无锁快照；它不扫描世界，也不自行推导纠错结果。
 - `projection/mesh/ProjectionSectionBuilder.*` 统一生成原版方块、液体代理、方块实体占位、纠错覆盖和结构边框
   的 CPU 几何；构建输入必须来自显式只读设置，Worker 使用 `UploadMode::Never`，同步回退保持 `Buffered`。
@@ -156,7 +157,7 @@ LHolo/
   projection 生命周期；资源预检和提交异常后的清理由 `Projection.cpp` 负责。
 - `projection/world/ProjectionVirtualWorld.*` 隐藏 Tessellation 使用的 thread-local 虚拟方块表；只有显式 RAII
   作用域内的 `BlockSource` Hook 查询可以命中投影邻居，作用域结束后必须恢复上一个视图。
-- `projection/ProjectionWorldEvents.*` 只监听真实世界的方块变化和子区块加载并按原顺序排队；它不读取
+- `projection/runtime/ProjectionWorldEvents.*` 只监听真实世界的方块变化和子区块加载并按原顺序排队；它不读取
   `gState`，也不决定 section 如何失效。事件限流、纠错更新和 dirty 传播仍由 `Projection.cpp` 负责。
 - `overlay` 负责“外部 GUI 如何安全进入游戏图形链”，不解析结构或扫描世界方块。
 - `place` 负责轻松、手动和范围放置：调用 projection 查询接口，在完整背包中查找物品，必要时交换到快捷栏，并发送 `InventoryTransactionPacket`；不碰渲染与配置。
