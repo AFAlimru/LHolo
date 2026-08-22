@@ -20,6 +20,7 @@
 #include "projection/ProjectionRules.h"
 #include "projection/ProjectionState.h"
 #include "projection/ProjectionVirtualWorld.h"
+#include "projection/ProjectionWorldEvents.h"
 
 #include "overlay/BoundsWireframe.h"
 #include "plugin/LHolo.h"
@@ -114,7 +115,9 @@ namespace {
 
 using detail::CorrectionState;
 using detail::AsyncSectionBuildResult;
+using detail::attachProjectionWorldEvents;
 using detail::disableMeshWorkerForSession;
+using detail::detachProjectionWorldEvents;
 using detail::ExpectedBlockActorMap;
 using detail::ExpectedBlockIndexMap;
 using detail::ExpectedBlockMap;
@@ -137,6 +140,8 @@ using detail::SubChunkKey;
 using detail::ScopedTessellationBlocks;
 using detail::submitMeshWorkerTask;
 using detail::takeCompletedSectionBuilds;
+using detail::takePendingBlockChanges;
+using detail::takePendingLoadedSubChunks;
 using detail::transformExpectedBlock;
 using detail::transformStructurePosition;
 
@@ -222,13 +227,6 @@ std::mutex       gStateMutex;
 ProjectionState  gState;
 overlay::BoundsWireframe gCaptureBounds;
 
-std::mutex                 gPendingEventsMutex;
-std::deque<BlockPos>       gIncomingBlockChanges;
-std::deque<SubChunkKey>    gIncomingLoadedSubChunks;
-std::atomic<BlockSource*>  gAttachedBlockSource{};
-std::atomic<ChunkSource*>  gAttachedChunkSource{};
-std::atomic<Level*>        gAttachedLevel{};
-
 void markSectionDirty(ProjectionState& state, std::size_t section, bool incremental) {
     if (section >= state.sectionDirty.size()) return;
     state.sectionDirty[section] = true;
@@ -243,116 +241,11 @@ void markAllSectionsDirty(ProjectionState& state, bool incremental) {
     }
 }
 
-class ProjectionBlockSourceListener final : public BlockSourceListener {
-public:
-    void onSourceDestroyed(BlockSource& source) override {
-        auto* expected = &source;
-        if (gAttachedBlockSource.compare_exchange_strong(
-                expected,
-                nullptr,
-                std::memory_order_acq_rel
-            )) {
-            gAttachedChunkSource.store(nullptr, std::memory_order_release);
-        }
-    }
-
-    void onBlockChanged(
-        BlockSource&,
-        BlockPos const&              pos,
-        uint,
-        Block const&,
-        Block const&,
-        int,
-        ActorBlockSyncMessage const*,
-        BlockChangedEventTarget,
-        Actor*
-    ) override {
-        std::lock_guard lock(gPendingEventsMutex);
-        gIncomingBlockChanges.push_back(pos);
-    }
-};
-
-ProjectionBlockSourceListener gProjectionBlockSourceListener;
-
-class ProjectionLevelListener final : public LevelListener {
-public:
-    void onSubChunkLoaded(
-        ChunkSource& source,
-        LevelChunk&  chunk,
-        short        absoluteSubChunkIndex,
-        bool
-    ) override {
-        if (&source != gAttachedChunkSource.load(std::memory_order_acquire)) return;
-        auto const& chunkPosition = chunk.getPosition();
-        std::lock_guard lock(gPendingEventsMutex);
-        gIncomingLoadedSubChunks.emplace_back(
-            chunkPosition.x,
-            static_cast<int>(absoluteSubChunkIndex),
-            chunkPosition.z
-        );
-    }
-
-    void onLevelDestruction(std::string const&) override {
-        gAttachedLevel.store(nullptr, std::memory_order_release);
-        gAttachedChunkSource.store(nullptr, std::memory_order_release);
-    }
-};
-
-ProjectionLevelListener gProjectionLevelListener;
-
-std::vector<BlockPos> takePendingBlockChanges(std::size_t limit) {
-    std::vector<BlockPos> changes;
-    {
-        std::lock_guard lock(gPendingEventsMutex);
-        auto const count = std::min(limit, gIncomingBlockChanges.size());
-        changes.reserve(count);
-        for (std::size_t index = 0; index < count; ++index) {
-            changes.push_back(gIncomingBlockChanges.front());
-            gIncomingBlockChanges.pop_front();
-        }
-    }
-    std::sort(changes.begin(), changes.end(), [](BlockPos const& lhs, BlockPos const& rhs) {
-        return std::tie(lhs.x, lhs.y, lhs.z) < std::tie(rhs.x, rhs.y, rhs.z);
-    });
-    changes.erase(
-        std::unique(changes.begin(), changes.end(), [](BlockPos const& lhs, BlockPos const& rhs) {
-            return lhs.x == rhs.x && lhs.y == rhs.y && lhs.z == rhs.z;
-        }),
-        changes.end()
-    );
-    return changes;
-}
-
-std::vector<SubChunkKey> takePendingLoadedSubChunks(std::size_t limit) {
-    std::vector<SubChunkKey> loaded;
-    {
-        std::lock_guard lock(gPendingEventsMutex);
-        auto const count = std::min(limit, gIncomingLoadedSubChunks.size());
-        loaded.reserve(count);
-        for (std::size_t index = 0; index < count; ++index) {
-            loaded.push_back(gIncomingLoadedSubChunks.front());
-            gIncomingLoadedSubChunks.pop_front();
-        }
-    }
-    return loaded;
-}
-
 void clearProjectionStateLocked() {
     // Finish CPU mesh work before detaching any world-owned objects captured by
     // the task's private ChunkViewSource/BlockSource snapshot.
     stopMeshWorker();
-    if (auto* level = gAttachedLevel.exchange(nullptr, std::memory_order_acq_rel)) {
-        level->removeListener(gProjectionLevelListener);
-    }
-    gAttachedChunkSource.store(nullptr, std::memory_order_release);
-    if (auto* blockSource = gAttachedBlockSource.exchange(nullptr, std::memory_order_acq_rel)) {
-        blockSource->removeListener(gProjectionBlockSourceListener);
-    }
-    {
-        std::lock_guard lock(gPendingEventsMutex);
-        gIncomingBlockChanges.clear();
-        gIncomingLoadedSubChunks.clear();
-    }
+    detachProjectionWorldEvents();
     gBuildProgressPlaced.store(0, std::memory_order_relaxed);
     gBuildProgressVisiblePlaced.store(0, std::memory_order_relaxed);
     gBuildProgressVisibleTotal.store(0, std::memory_order_relaxed);
@@ -487,24 +380,7 @@ bool enableStructureProjection(
         disableMeshWorkerForSession();
         logger().warn("Projection mesh worker initialization failed; using synchronous fallback");
     }
-    auto* activeBlockSource = &player->getDimensionBlockSource();
-    if (auto* attached = gAttachedBlockSource.load(std::memory_order_acquire);
-        attached != activeBlockSource) {
-        if (attached) {
-            attached->removeListener(gProjectionBlockSourceListener);
-        }
-        activeBlockSource->addListener(gProjectionBlockSourceListener);
-        gAttachedBlockSource.store(activeBlockSource, std::memory_order_release);
-    }
-    gAttachedChunkSource.store(&activeBlockSource->getChunkSource(), std::memory_order_release);
-    auto* activeLevel = &player->getLevel();
-    if (auto* attached = gAttachedLevel.load(std::memory_order_acquire); attached != activeLevel) {
-        if (attached) {
-            attached->removeListener(gProjectionLevelListener);
-        }
-        activeLevel->addListener(gProjectionLevelListener);
-        gAttachedLevel.store(activeLevel, std::memory_order_release);
-    }
+    attachProjectionWorldEvents(player->getLevel(), player->getDimensionBlockSource());
     gBuildProgressPlaced.store(0, std::memory_order_relaxed);
     gBuildProgressVisiblePlaced.store(0, std::memory_order_relaxed);
     gBuildProgressVisibleTotal.store(

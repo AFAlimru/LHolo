@@ -78,7 +78,8 @@ LHolo/
 │  │  ├─ ProjectionMeshWorker.* 单线程 executor、generation 与完成队列
 │  │  ├─ ProjectionRules.*      坐标、分层、状态匹配和渲染分类纯规则
 │  │  ├─ ProjectionState.h      世界身份、CPU 状态、Worker 状态与 Mesh 所有权
-│  │  └─ ProjectionVirtualWorld.* Tessellation 线程局部虚拟方块与方块实体视图
+│  │  ├─ ProjectionVirtualWorld.* Tessellation 线程局部虚拟方块与方块实体视图
+│  │  └─ ProjectionWorldEvents.* 真实世界方块/子区块通知的监听与排队
 │  ├─ place/
 │  │  ├─ PlaceHelper.cpp        轻松/手动/范围放置：投影查表、背包取物、放置事务
 │  │  └─ PlaceHelper.h          配置开关与 Hook 生命周期接口
@@ -112,6 +113,8 @@ LHolo/
   Worker 任务由实现层提供，基础设施不得读取 `gState`、世界对象或渲染上下文。
 - `projection/ProjectionVirtualWorld.*` 隐藏 Tessellation 使用的 thread-local 虚拟方块表；只有显式 RAII
   作用域内的 `BlockSource` Hook 查询可以命中投影邻居，作用域结束后必须恢复上一个视图。
+- `projection/ProjectionWorldEvents.*` 只监听真实世界的方块变化和子区块加载并按原顺序排队；它不读取
+  `gState`，也不决定 section 如何失效。事件限流、纠错更新和 dirty 传播仍由 `Projection.cpp` 负责。
 - `overlay` 负责“外部 GUI 如何安全进入游戏图形链”，不解析结构或扫描世界方块。
 - `place` 负责轻松、手动和范围放置：调用 projection 查询接口，在完整背包中查找物品，必要时交换到快捷栏，并发送 `InventoryTransactionPacket`；不碰渲染与配置。
 - `input` 负责菜单期间的最小游戏动作保护；当前只拦截本地玩家破坏方块，不扩展为移动冻结或全交互封锁。
