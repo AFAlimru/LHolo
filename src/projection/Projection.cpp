@@ -16,7 +16,7 @@
 
 #include "projection/Projection.h"
 #include "projection/runtime/ProjectionFramePipeline.h"
-#include "projection/ProjectionGameHooks.h"
+#include "projection/hooks/ProjectionGameHooks.h"
 #include "projection/core/ProjectionInternalTypes.h"
 #include "projection/runtime/ProjectionInvalidation.h"
 #include "projection/runtime/ProjectionLifecycle.h"
