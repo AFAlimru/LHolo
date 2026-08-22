@@ -5,6 +5,7 @@
 
 #include "projection/core/ProjectionRules.h"
 #include "projection/runtime/ProjectionProgress.h"
+#include "settings/SettingsStore.h"
 
 namespace {
 
@@ -112,11 +113,43 @@ void testProgress() {
     LHOLO_CHECK(progress.wrongState == 0);
 }
 
+void testSettingsStore() {
+    auto const path = std::filesystem::temp_directory_path() / "lholo_settings_test.json";
+    std::error_code error;
+    std::filesystem::remove(path, error);
+
+    lholo::settings::Settings settings;
+    settings.uiScale = 1.25f;
+    settings.guiHotkey = 'L';
+    settings.guiHotkeyModifiers = 1;
+    settings.moveHotkeys[4] = 0x57; // W
+    settings.hasSavedProjection = true;
+    settings.savedAnchorX = 12;
+    settings.savedAnchorZ = -34;
+    lholo::settings::saveSettingsFile(path, settings);
+
+    lholo::settings::Settings loaded;
+    LHOLO_CHECK(lholo::settings::loadSettingsFile(path, loaded));
+    LHOLO_CHECK(loaded.uiScale == 1.25f);
+    LHOLO_CHECK(loaded.guiHotkey == 'L');
+    LHOLO_CHECK(loaded.guiHotkeyModifiers == 1);
+    LHOLO_CHECK(loaded.moveHotkeys[4] == 0x57);
+    LHOLO_CHECK(loaded.hasSavedProjection);
+    LHOLO_CHECK(loaded.savedAnchorX == 12);
+    LHOLO_CHECK(loaded.savedAnchorZ == -34);
+
+    lholo::settings::Settings missing;
+    std::filesystem::remove(path, error);
+    LHOLO_CHECK(!lholo::settings::loadSettingsFile(path, missing));
+    std::filesystem::remove(path, error);
+}
+
 } // namespace
 
 int main() {
     testLayoutRules();
     testProgress();
+    testSettingsStore();
     std::printf("LHoloLogicTests: %d checks, %d failures\n", gChecks, gFailures);
     return gFailures == 0 ? 0 : 1;
 }

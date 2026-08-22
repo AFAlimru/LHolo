@@ -60,6 +60,8 @@ LHolo/
 │  │  └─ MemoryOperators.cpp    Windows 客户端内存运算符适配
 │  ├─ app/
 │  │  └─ AppKernel.*            唯一应用入口：启停编排与加载顺序
+│  ├─ settings/
+│  │  └─ SettingsStore.*        config.json 读写与字段映射
 │  ├─ overlay/
 │  │  ├─ ImGuiOverlay.cpp       DXGI/D3D11On12、WndProc、GUI/HUD 帧提交
 │  │  ├─ ImGuiOverlay.h
@@ -69,7 +71,7 @@ LHolo/
 │  │  ├─ formats/               结构格式解析与 generation 分配
 │  │  │  └─ StructureFormatLoaders.* `.mcstructure`/`.litematic` 解析为 LoadedStructure
 │  │  ├─ java_to_bedrock/       Chunker 生成映射及运行时解析模块
-│  │  ├─ StructureLoader.cpp    会话状态、GUI、HUD、快捷键、配置
+│  │  ├─ StructureLoader.cpp    会话状态、GUI、HUD、快捷键（配置读写由 SettingsStore 负责）
 │  │  └─ StructureLoader.h      LoadedStructure 统一数据模型
 │  ├─ ui/
 │  │  ├─ FileDialog.*           通用结构打开与 `.mcstructure` 保存对话框
@@ -145,6 +147,8 @@ LHolo/
 - `structure/capture` 只维护会话选区、读取当前客户端世界并调用原版捕获/导出 API；不手工生成方块调色板、索引或实体 NBT。
 - `structure/formats` 只把 `.mcstructure`/`.litematic` 解析为 `LoadedStructure` 并分配 generation；不接触
   GUI、配置、投影状态或放置逻辑，也不依赖 `projection`、`ui`、`place`。
+- `settings/SettingsStore` 只负责 `config.json` 的读写与字段映射，不持有运行状态；应用到全局状态由
+  `StructureLoader` 完成，配置默认值与钳制语义保持不变。
 - `projection` 负责“结构如何出现在世界中”，不弹文件选择框、不直接操作 ImGui。
 - `projection/ProjectionTypes.h` 不包含运行状态、Hook 或 Minecraft 资源所有权；内部纯数据定义集中在
   `projection/core/ProjectionInternalTypes.h`，投影状态与 Worker/Mesh 生命周期仍由实现层负责。
@@ -1014,5 +1018,6 @@ xmake r LHoloLogicTests
 
 - `core/ProjectionLayoutRules`：镜像/旋转枚举映射、结构坐标变换、分层可见性、渲染桶分类。
 - `runtime/ProjectionProgress`：进度快照初始化、发布、越界钳制与重置语义。
+- `settings/SettingsStore`：配置文件缺失检测与保存/读取往返一致性。
 
 新增可独立链接的纯逻辑时必须同步补充对应断言；涉及 Minecraft 运行时对象（Block、BlockSource、Tessellator）的代码不进入该测试目标。

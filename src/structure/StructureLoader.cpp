@@ -16,6 +16,7 @@
 
 #include "structure/StructureLoader.h"
 
+#include "settings/SettingsStore.h"
 #include "structure/formats/StructureFormatLoaders.h"
 #include "structure/capture/StructureCapture.h"
 #include "structure/java_to_bedrock/JavaToBedrock.h"
@@ -46,7 +47,6 @@
 #include <unordered_map>
 #include <variant>
 #include <vector>
-#include <nlohmann/json.hpp>
 
 #include <Windows.h>
 
@@ -1138,20 +1138,18 @@ void renderGui() {
 void loadSettings() {
     auto const path = settingsPath();
     try {
-        if (!std::filesystem::exists(path)) {
+        lholo::settings::Settings settings;
+        if (!lholo::settings::loadSettingsFile(path, settings)) {
             saveSettings();
             return;
         }
-        std::ifstream input(path, std::ios::binary);
-        if (!input) throw std::runtime_error("无法打开配置文件");
-        auto const json = nlohmann::json::parse(input, nullptr, true, true);
         std::lock_guard lock(gLoadedMutex);
-        gLastPath = json.value("lastStructurePath", gLastPath);
-        gUiScale.store(std::clamp(json.value("uiScale", 2.0f), 0.0f, 5.0f), std::memory_order_relaxed);
-        projection::setOpacity(json.value("opacity", 1.0f));
-        projection::setCorrectionFillOpacity(json.value("correctionFillOpacity", 0.15f));
-        projection::setCorrectionOutlineOpacity(json.value("correctionOutlineOpacity", 1.0f));
-        projection::setStructureBoundsEnabled(json.value("structureBoundsEnabled", true));
+        gLastPath = settings.lastStructurePath;
+        gUiScale.store(std::clamp(settings.uiScale, 0.0f, 5.0f), std::memory_order_relaxed);
+        projection::setOpacity(settings.opacity);
+        projection::setCorrectionFillOpacity(settings.correctionFillOpacity);
+        projection::setCorrectionOutlineOpacity(settings.correctionOutlineOpacity);
+        projection::setStructureBoundsEnabled(settings.structureBoundsEnabled);
         // Transform and layer state are session-local. Only the explicit
         // "restore last projection" record below is persisted.
         gRotationQuarterTurns.store(0, std::memory_order_relaxed);
@@ -1162,92 +1160,58 @@ void loadSettings() {
         gLayerDisplayMode.store(0, std::memory_order_relaxed);
         gDisplayLayer.store(0, std::memory_order_relaxed);
         gLayerAxis.store(0, std::memory_order_relaxed);
-        gHudEnabled.store(json.value("hudEnabled", true), std::memory_order_relaxed);
-        gHudShowFileName.store(json.value("hudShowFileName", true), std::memory_order_relaxed);
-        gHudShowLayer.store(json.value("hudShowLayer", true), std::memory_order_relaxed);
-        gHudShowOverallProgress.store(
-            json.value("hudShowOverallProgress", false), std::memory_order_relaxed
-        );
-        gHudShowProgress.store(json.value("hudShowProgress", true), std::memory_order_relaxed);
-        gHudShowWrongState.store(json.value("hudShowWrongState", true), std::memory_order_relaxed);
-        gHudShowWrongType.store(json.value("hudShowWrongType", true), std::memory_order_relaxed);
-        gHudShowBlockEntity.store(json.value("hudShowBlockEntity", true), std::memory_order_relaxed);
-        gHudPosition.store(std::clamp(json.value("hudPosition", 1), 0, 3), std::memory_order_relaxed);
+        gHudEnabled.store(settings.hudEnabled, std::memory_order_relaxed);
+        gHudShowFileName.store(settings.hudShowFileName, std::memory_order_relaxed);
+        gHudShowLayer.store(settings.hudShowLayer, std::memory_order_relaxed);
+        gHudShowOverallProgress.store(settings.hudShowOverallProgress, std::memory_order_relaxed);
+        gHudShowProgress.store(settings.hudShowProgress, std::memory_order_relaxed);
+        gHudShowWrongState.store(settings.hudShowWrongState, std::memory_order_relaxed);
+        gHudShowWrongType.store(settings.hudShowWrongType, std::memory_order_relaxed);
+        gHudShowBlockEntity.store(settings.hudShowBlockEntity, std::memory_order_relaxed);
+        gHudPosition.store(std::clamp(settings.hudPosition, 0, 3), std::memory_order_relaxed);
         // Assisted-placement modes are intentionally session-only. Ignore
         // legacy persisted values and always begin a new game session disabled.
         place::setEnabled(false);
         place::setManualMode(false);
         place::setRangeEnabled(false);
-        place::setPlacementRadius(std::clamp(json.value("placementRadius", 4), 1, 4));
-        gGuiHotkey.store(std::clamp(json.value("guiHotkey", static_cast<int>('M')), 0, 255), std::memory_order_relaxed);
+        place::setPlacementRadius(std::clamp(settings.placementRadius, 1, 4));
+        gGuiHotkey.store(std::clamp(settings.guiHotkey, 0, 255), std::memory_order_relaxed);
         gGuiHotkeyModifiers.store(
-            std::clamp(json.value("guiHotkeyModifiers", static_cast<int>(kHotkeyModifierAlt)), 0, 7),
-            std::memory_order_relaxed
+            std::clamp(settings.guiHotkeyModifiers, 0, 7), std::memory_order_relaxed
         );
         gLayerIncreaseHotkey.store(
-            std::clamp(json.value("layerIncreaseHotkey", static_cast<int>(VK_UP)), 0, 255),
-            std::memory_order_relaxed
+            std::clamp(settings.layerIncreaseHotkey, 0, 255), std::memory_order_relaxed
         );
         gLayerDecreaseHotkey.store(
-            std::clamp(json.value("layerDecreaseHotkey", static_cast<int>(VK_DOWN)), 0, 255),
-            std::memory_order_relaxed
+            std::clamp(settings.layerDecreaseHotkey, 0, 255), std::memory_order_relaxed
         );
         gLayerIncreaseHotkeyModifiers.store(
-            std::clamp(json.value("layerIncreaseHotkeyModifiers", static_cast<int>(kHotkeyModifierAlt)), 0, 7),
-            std::memory_order_relaxed
+            std::clamp(settings.layerIncreaseHotkeyModifiers, 0, 7), std::memory_order_relaxed
         );
         gLayerDecreaseHotkeyModifiers.store(
-            std::clamp(json.value("layerDecreaseHotkeyModifiers", static_cast<int>(kHotkeyModifierAlt)), 0, 7),
-            std::memory_order_relaxed
+            std::clamp(settings.layerDecreaseHotkeyModifiers, 0, 7), std::memory_order_relaxed
         );
-        static char const* moveKeyNames[]{
-            "moveXMinusHotkey",
-            "moveXPlusHotkey",
-            "moveZMinusHotkey",
-            "moveZPlusHotkey",
-            "moveYPlusHotkey",
-            "moveYMinusHotkey"
-        };
-        static int const moveKeyDefaults[]{VK_LEFT, VK_RIGHT, VK_UP, VK_DOWN, VK_UP, VK_DOWN};
-        static char const* moveModifierNames[]{
-            "moveXMinusHotkeyModifiers",
-            "moveXPlusHotkeyModifiers",
-            "moveZMinusHotkeyModifiers",
-            "moveZPlusHotkeyModifiers",
-            "moveYPlusHotkeyModifiers",
-            "moveYMinusHotkeyModifiers"
-        };
-        static int const moveModifierDefaults[]{
-            static_cast<int>(kHotkeyModifierControl),
-            static_cast<int>(kHotkeyModifierControl),
-            static_cast<int>(kHotkeyModifierControl),
-            static_cast<int>(kHotkeyModifierControl),
-            static_cast<int>(kHotkeyModifierShift),
-            static_cast<int>(kHotkeyModifierShift)
-        };
         for (std::size_t index = 0; index < gMoveHotkeys.size(); ++index) {
             gMoveHotkeys[index].store(
-                std::clamp(json.value(moveKeyNames[index], moveKeyDefaults[index]), 0, 255),
-                std::memory_order_relaxed
+                std::clamp(settings.moveHotkeys[index], 0, 255), std::memory_order_relaxed
             );
             gMoveHotkeyModifiers[index].store(
-                std::clamp(json.value(moveModifierNames[index], moveModifierDefaults[index]), 0, 7),
-                std::memory_order_relaxed
+                std::clamp(settings.moveHotkeyModifiers[index], 0, 7), std::memory_order_relaxed
             );
         }
-        gHasSavedProjection.store(json.value("hasSavedProjection", false), std::memory_order_relaxed);
-        gSavedAnchorX.store(json.value("savedAnchorX", 0), std::memory_order_relaxed);
-        gSavedAnchorY.store(json.value("savedAnchorY", 0), std::memory_order_relaxed);
-        gSavedAnchorZ.store(json.value("savedAnchorZ", 0), std::memory_order_relaxed);
-        gSavedRotation.store(json.value("savedRotation", 0), std::memory_order_relaxed);
-        gSavedMirror.store(std::clamp(json.value("savedMirror", 0), 0, 2), std::memory_order_relaxed);
-        gSavedOffsetX.store(json.value("savedOffsetX", 0), std::memory_order_relaxed);
-        gSavedOffsetY.store(json.value("savedOffsetY", 0), std::memory_order_relaxed);
-        gSavedOffsetZ.store(json.value("savedOffsetZ", 0), std::memory_order_relaxed);
-        gSavedLayerDisplayMode.store(json.value("savedLayerDisplayMode", 0), std::memory_order_relaxed);
-        gSavedDisplayLayer.store(json.value("savedDisplayLayer", 0), std::memory_order_relaxed);
-        gSavedLayerAxis.store(std::clamp(json.value("savedLayerAxis", 0), 0, 1), std::memory_order_relaxed);
-        gSavedStructurePath = json.value("savedStructurePath", std::string{});
+        gHasSavedProjection.store(settings.hasSavedProjection, std::memory_order_relaxed);
+        gSavedAnchorX.store(settings.savedAnchorX, std::memory_order_relaxed);
+        gSavedAnchorY.store(settings.savedAnchorY, std::memory_order_relaxed);
+        gSavedAnchorZ.store(settings.savedAnchorZ, std::memory_order_relaxed);
+        gSavedRotation.store(settings.savedRotation, std::memory_order_relaxed);
+        gSavedMirror.store(std::clamp(settings.savedMirror, 0, 2), std::memory_order_relaxed);
+        gSavedOffsetX.store(settings.savedOffsetX, std::memory_order_relaxed);
+        gSavedOffsetY.store(settings.savedOffsetY, std::memory_order_relaxed);
+        gSavedOffsetZ.store(settings.savedOffsetZ, std::memory_order_relaxed);
+        gSavedLayerDisplayMode.store(settings.savedLayerDisplayMode, std::memory_order_relaxed);
+        gSavedDisplayLayer.store(settings.savedDisplayLayer, std::memory_order_relaxed);
+        gSavedLayerAxis.store(std::clamp(settings.savedLayerAxis, 0, 1), std::memory_order_relaxed);
+        gSavedStructurePath = settings.savedStructurePath;
         logger().info("Loaded projection settings from {}", path.string());
     } catch (std::exception const& exception) {
         logger().error("Could not load projection settings {}: {}", path.string(), exception.what());
@@ -1257,9 +1221,6 @@ void loadSettings() {
 void saveSettings() {
     auto const path = settingsPath();
     try {
-        std::error_code error;
-        std::filesystem::create_directories(path.parent_path(), error);
-        if (error) throw std::runtime_error(error.message());
         bool hasActiveProjection = false;
         {
             std::lock_guard lock(gLoadedMutex);
@@ -1286,59 +1247,50 @@ void saveSettings() {
             lastPath = gLastPath;
             savedStructurePath = gSavedStructurePath;
         }
-        nlohmann::ordered_json const json{
-            {"version", 8},
-            {"lastStructurePath", lastPath},
-            {"uiScale", gUiScale.load(std::memory_order_relaxed)},
-            {"opacity", projection::getOpacity()},
-            {"correctionFillOpacity", projection::getCorrectionFillOpacity()},
-            {"correctionOutlineOpacity", projection::getCorrectionOutlineOpacity()},
-            {"structureBoundsEnabled", projection::getStructureBoundsEnabled()},
-            {"placementRadius", place::getPlacementRadius()},
-            {"hudEnabled", gHudEnabled.load(std::memory_order_relaxed)},
-            {"hudShowFileName", gHudShowFileName.load(std::memory_order_relaxed)},
-            {"hudShowLayer", gHudShowLayer.load(std::memory_order_relaxed)},
-            {"hudShowOverallProgress", gHudShowOverallProgress.load(std::memory_order_relaxed)},
-            {"hudShowProgress", gHudShowProgress.load(std::memory_order_relaxed)},
-            {"hudShowWrongState", gHudShowWrongState.load(std::memory_order_relaxed)},
-            {"hudShowWrongType", gHudShowWrongType.load(std::memory_order_relaxed)},
-            {"hudShowBlockEntity", gHudShowBlockEntity.load(std::memory_order_relaxed)},
-            {"hudPosition", gHudPosition.load(std::memory_order_relaxed)},
-            {"guiHotkey", gGuiHotkey.load(std::memory_order_relaxed)},
-            {"guiHotkeyModifiers", gGuiHotkeyModifiers.load(std::memory_order_relaxed)},
-            {"layerIncreaseHotkey", gLayerIncreaseHotkey.load(std::memory_order_relaxed)},
-            {"layerDecreaseHotkey", gLayerDecreaseHotkey.load(std::memory_order_relaxed)},
-            {"layerIncreaseHotkeyModifiers", gLayerIncreaseHotkeyModifiers.load(std::memory_order_relaxed)},
-            {"layerDecreaseHotkeyModifiers", gLayerDecreaseHotkeyModifiers.load(std::memory_order_relaxed)},
-            {"moveXMinusHotkey", gMoveHotkeys[0].load(std::memory_order_relaxed)},
-            {"moveXPlusHotkey", gMoveHotkeys[1].load(std::memory_order_relaxed)},
-            {"moveZMinusHotkey", gMoveHotkeys[2].load(std::memory_order_relaxed)},
-            {"moveZPlusHotkey", gMoveHotkeys[3].load(std::memory_order_relaxed)},
-            {"moveYPlusHotkey", gMoveHotkeys[4].load(std::memory_order_relaxed)},
-            {"moveYMinusHotkey", gMoveHotkeys[5].load(std::memory_order_relaxed)},
-            {"moveXMinusHotkeyModifiers", gMoveHotkeyModifiers[0].load(std::memory_order_relaxed)},
-            {"moveXPlusHotkeyModifiers", gMoveHotkeyModifiers[1].load(std::memory_order_relaxed)},
-            {"moveZMinusHotkeyModifiers", gMoveHotkeyModifiers[2].load(std::memory_order_relaxed)},
-            {"moveZPlusHotkeyModifiers", gMoveHotkeyModifiers[3].load(std::memory_order_relaxed)},
-            {"moveYPlusHotkeyModifiers", gMoveHotkeyModifiers[4].load(std::memory_order_relaxed)},
-            {"moveYMinusHotkeyModifiers", gMoveHotkeyModifiers[5].load(std::memory_order_relaxed)},
-            {"hasSavedProjection", gHasSavedProjection.load(std::memory_order_relaxed)},
-            {"savedAnchorX", gSavedAnchorX.load(std::memory_order_relaxed)},
-            {"savedAnchorY", gSavedAnchorY.load(std::memory_order_relaxed)},
-            {"savedAnchorZ", gSavedAnchorZ.load(std::memory_order_relaxed)},
-            {"savedStructurePath", savedStructurePath},
-            {"savedRotation", gSavedRotation.load(std::memory_order_relaxed)},
-            {"savedMirror", gSavedMirror.load(std::memory_order_relaxed)},
-            {"savedOffsetX", gSavedOffsetX.load(std::memory_order_relaxed)},
-            {"savedOffsetY", gSavedOffsetY.load(std::memory_order_relaxed)},
-            {"savedOffsetZ", gSavedOffsetZ.load(std::memory_order_relaxed)},
-            {"savedLayerDisplayMode", gSavedLayerDisplayMode.load(std::memory_order_relaxed)},
-            {"savedDisplayLayer", gSavedDisplayLayer.load(std::memory_order_relaxed)},
-            {"savedLayerAxis", gSavedLayerAxis.load(std::memory_order_relaxed)}
-        };
-        std::ofstream output(path, std::ios::binary | std::ios::trunc);
-        if (!output) throw std::runtime_error("无法写入配置文件");
-        output << json.dump(2);
+        lholo::settings::Settings settings;
+        settings.lastStructurePath = lastPath;
+        settings.uiScale = gUiScale.load(std::memory_order_relaxed);
+        settings.opacity = projection::getOpacity();
+        settings.correctionFillOpacity = projection::getCorrectionFillOpacity();
+        settings.correctionOutlineOpacity = projection::getCorrectionOutlineOpacity();
+        settings.structureBoundsEnabled = projection::getStructureBoundsEnabled();
+        settings.placementRadius = place::getPlacementRadius();
+        settings.hudEnabled = gHudEnabled.load(std::memory_order_relaxed);
+        settings.hudShowFileName = gHudShowFileName.load(std::memory_order_relaxed);
+        settings.hudShowLayer = gHudShowLayer.load(std::memory_order_relaxed);
+        settings.hudShowOverallProgress = gHudShowOverallProgress.load(std::memory_order_relaxed);
+        settings.hudShowProgress = gHudShowProgress.load(std::memory_order_relaxed);
+        settings.hudShowWrongState = gHudShowWrongState.load(std::memory_order_relaxed);
+        settings.hudShowWrongType = gHudShowWrongType.load(std::memory_order_relaxed);
+        settings.hudShowBlockEntity = gHudShowBlockEntity.load(std::memory_order_relaxed);
+        settings.hudPosition = gHudPosition.load(std::memory_order_relaxed);
+        settings.guiHotkey = gGuiHotkey.load(std::memory_order_relaxed);
+        settings.guiHotkeyModifiers = gGuiHotkeyModifiers.load(std::memory_order_relaxed);
+        settings.layerIncreaseHotkey = gLayerIncreaseHotkey.load(std::memory_order_relaxed);
+        settings.layerDecreaseHotkey = gLayerDecreaseHotkey.load(std::memory_order_relaxed);
+        settings.layerIncreaseHotkeyModifiers
+            = gLayerIncreaseHotkeyModifiers.load(std::memory_order_relaxed);
+        settings.layerDecreaseHotkeyModifiers
+            = gLayerDecreaseHotkeyModifiers.load(std::memory_order_relaxed);
+        for (std::size_t index = 0; index < settings.moveHotkeys.size(); ++index) {
+            settings.moveHotkeys[index] = gMoveHotkeys[index].load(std::memory_order_relaxed);
+            settings.moveHotkeyModifiers[index]
+                = gMoveHotkeyModifiers[index].load(std::memory_order_relaxed);
+        }
+        settings.hasSavedProjection = gHasSavedProjection.load(std::memory_order_relaxed);
+        settings.savedAnchorX = gSavedAnchorX.load(std::memory_order_relaxed);
+        settings.savedAnchorY = gSavedAnchorY.load(std::memory_order_relaxed);
+        settings.savedAnchorZ = gSavedAnchorZ.load(std::memory_order_relaxed);
+        settings.savedRotation = gSavedRotation.load(std::memory_order_relaxed);
+        settings.savedMirror = gSavedMirror.load(std::memory_order_relaxed);
+        settings.savedOffsetX = gSavedOffsetX.load(std::memory_order_relaxed);
+        settings.savedOffsetY = gSavedOffsetY.load(std::memory_order_relaxed);
+        settings.savedOffsetZ = gSavedOffsetZ.load(std::memory_order_relaxed);
+        settings.savedLayerDisplayMode = gSavedLayerDisplayMode.load(std::memory_order_relaxed);
+        settings.savedDisplayLayer = gSavedDisplayLayer.load(std::memory_order_relaxed);
+        settings.savedLayerAxis = gSavedLayerAxis.load(std::memory_order_relaxed);
+        settings.savedStructurePath = savedStructurePath;
+        lholo::settings::saveSettingsFile(path, settings);
     } catch (std::exception const& exception) {
         logger().error("Could not save projection settings {}: {}", path.string(), exception.what());
     }
