@@ -66,8 +66,10 @@ LHolo/
 │  │  └─ BoundsWireframe.*      创建结构选区的红色整体线框
 │  ├─ structure/
 │  │  ├─ capture/               客户端选区状态、原版结构捕获与 `.mcstructure` 导出
+│  │  ├─ formats/               结构格式解析与 generation 分配
+│  │  │  └─ StructureFormatLoaders.* `.mcstructure`/`.litematic` 解析为 LoadedStructure
 │  │  ├─ java_to_bedrock/       Chunker 生成映射及运行时解析模块
-│  │  ├─ StructureLoader.cpp    两种格式解析、GUI、HUD、快捷键、配置
+│  │  ├─ StructureLoader.cpp    会话状态、GUI、HUD、快捷键、配置
 │  │  └─ StructureLoader.h      LoadedStructure 统一数据模型
 │  ├─ ui/
 │  │  ├─ FileDialog.*           通用结构打开与 `.mcstructure` 保存对话框
@@ -141,6 +143,8 @@ LHolo/
 
 - `structure` 负责“文件和用户意图”，不直接提交 Minecraft 网格。
 - `structure/capture` 只维护会话选区、读取当前客户端世界并调用原版捕获/导出 API；不手工生成方块调色板、索引或实体 NBT。
+- `structure/formats` 只把 `.mcstructure`/`.litematic` 解析为 `LoadedStructure` 并分配 generation；不接触
+  GUI、配置、投影状态或放置逻辑，也不依赖 `projection`、`ui`、`place`。
 - `projection` 负责“结构如何出现在世界中”，不弹文件选择框、不直接操作 ImGui。
 - `projection/ProjectionTypes.h` 不包含运行状态、Hook 或 Minecraft 资源所有权；内部纯数据定义集中在
   `projection/core/ProjectionInternalTypes.h`，投影状态与 Worker/Mesh 生命周期仍由实现层负责。
