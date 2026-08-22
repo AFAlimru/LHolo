@@ -80,6 +80,7 @@ LHolo/
 │  │  ├─ ProjectionMeshUpload.* 主线程完成队列校验、MeshData 上传与失败回退
 │  │  ├─ ProjectionMeshWorker.* 单线程 executor、generation 与完成队列
 │  │  ├─ ProjectionPlacement.*  变换/分层后的虚拟世界与方块实体放置视图
+│  │  ├─ ProjectionRenderer.*   已构建 Mesh 的 pass 分类、透明排序与材质提交
 │  │  ├─ ProjectionRules.*      坐标、分层、状态匹配和渲染分类纯规则
 │  │  ├─ ProjectionSectionBuilder.* Worker/同步共用的 section CPU 几何构建
 │  │  ├─ ProjectionState.h      世界身份、CPU 状态、Worker 状态与 Mesh 所有权
@@ -127,6 +128,9 @@ LHolo/
   按每帧两个 section、1 ms 预算上传 `MeshData`；连续失败三次时保持原有同步回退策略。
 - `projection/ProjectionPlacement.*` 在变换、偏移或分层变化后重建虚拟方块/方块实体表、世界坐标索引、
   section 中心与 Tessellator 查询缓存；它不生成 Mesh、不上传 GPU，也不调度 Worker。
+- `projection/ProjectionRenderer.*` 只提交已经上传完成的 Mesh：保持 opaque/transparent pass 分类、透明
+  section 后向前排序、液体/方块实体占位、结构边框和纠错覆盖的现有材质语义。它不生成 CPU 几何、
+  不消费 Worker 结果，也不改变 projection 生命周期；资源预检和提交异常后的清理由 `Projection.cpp` 负责。
 - `projection/ProjectionVirtualWorld.*` 隐藏 Tessellation 使用的 thread-local 虚拟方块表；只有显式 RAII
   作用域内的 `BlockSource` Hook 查询可以命中投影邻居，作用域结束后必须恢复上一个视图。
 - `projection/ProjectionWorldEvents.*` 只监听真实世界的方块变化和子区块加载并按原顺序排队；它不读取

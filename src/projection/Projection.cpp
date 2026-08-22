@@ -21,6 +21,7 @@
 #include "projection/ProjectionMeshUpload.h"
 #include "projection/ProjectionMeshWorker.h"
 #include "projection/ProjectionPlacement.h"
+#include "projection/ProjectionRenderer.h"
 #include "projection/ProjectionRules.h"
 #include "projection/ProjectionSectionBuilder.h"
 #include "projection/ProjectionState.h"
@@ -74,7 +75,6 @@
 #include "mc/deps/minecraft_renderer/resources/ClientTexture.h"
 #include "mc/deps/minecraft_renderer/resources/ServerTexture.h"
 #include "mc/deps/minecraft_renderer/renderer/IsMissingTexture.h"
-#include "mc/deps/minecraft_renderer/renderer/RenderMaterial.h"
 #include "mc/deps/minecraft_renderer/renderer/Mesh.h"
 #include "mc/deps/minecraft_renderer/renderer/TexturePtr.h"
 #include "mc/network/LoopbackPacketSender.h"
@@ -671,250 +671,16 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
     }
 
     try {
-        {
-            struct VisibleMesh { std::size_t bucket; std::size_t section; };
-            auto worldCenter = [&](std::size_t section) {
-                return Vec3{
-                    static_cast<float>(renderOrigin.x) + gState.sectionCenters[section].x,
-                    static_cast<float>(renderOrigin.y) + gState.sectionCenters[section].y,
-                    static_cast<float>(renderOrigin.z) + gState.sectionCenters[section].z
-                };
-            };
-            auto distanceSquared = [&](Vec3 const& point) {
-                auto const dx = point.x - camera.x;
-                auto const dy = point.y - camera.y;
-                auto const dz = point.z - camera.z;
-                return dx * dx + dy * dy + dz * dz;
-            };
-            auto sortBackToFront = [&](std::vector<VisibleMesh>& meshes) {
-                std::sort(meshes.begin(), meshes.end(), [&](VisibleMesh const& lhs, VisibleMesh const& rhs) {
-                    return distanceSquared(worldCenter(lhs.section))
-                        > distanceSquared(worldCenter(rhs.section));
-                });
-            };
-            auto renderMeshes = [&](std::vector<VisibleMesh> const& meshes, mce::MaterialPtr const& material) {
-                if (!material) return;
-                for (auto const& visible : meshes) {
-                    auto& mesh = *gState.sectionMeshes[visible.bucket][visible.section];
-                    mesh.renderMesh(
-                        renderContext.getScreenContext(),
-                        material,
-                        *gState.terrainTextureVariant,
-                        0,
-                        static_cast<uint>(mesh.getMeshVertexCount()),
-                        renderContext.mOffscreenCaptureDescription.get(),
-                        nullptr
-                    );
-                }
-            };
-            auto collectBucket = [&](std::size_t bucket) {
-                std::vector<VisibleMesh> result;
-                auto const& meshes = gState.sectionMeshes[bucket];
-                result.reserve(meshes.size());
-                for (std::size_t section = 0; section < meshes.size(); ++section) {
-                    if (meshes[section] && meshes[section]->isValid()) {
-                        result.push_back({bucket, section});
-                    }
-                }
-                return result;
-            };
-
-            auto const opaqueBucket = static_cast<std::size_t>(RenderBucket::Opaque);
-            auto const alphaBucket = static_cast<std::size_t>(RenderBucket::Alpha);
-            auto const alphaOneSidedBucket = static_cast<std::size_t>(RenderBucket::AlphaOneSided);
-            auto const blendBucket = static_cast<std::size_t>(RenderBucket::Blend);
-            if (structureOpacity >= 0.999f) {
-                auto opaqueMeshes = collectBucket(opaqueBucket);
-                auto alphaMeshes = collectBucket(alphaBucket);
-                auto alphaOneSidedMeshes = collectBucket(alphaOneSidedBucket);
-                auto transparentMeshes = collectBucket(blendBucket);
-                sortBackToFront(transparentMeshes);
-
-                auto const& opaqueMaterial = itemRenderer.mMatOpaqueBlock.get();
-                auto const& alphaMaterial = itemRenderer.mMatAlphaBlock.get();
-                auto const& alphaOneSidedMaterial = itemRenderer.mMatAlphaOneSidedBlock.get();
-                if (!renderAlphaLayer) {
-                    renderMeshes(opaqueMeshes, opaqueMaterial ? opaqueMaterial : blendMaterial);
-                    renderMeshes(alphaMeshes, alphaMaterial ? alphaMaterial : blendMaterial);
-                    renderMeshes(
-                        alphaOneSidedMeshes,
-                        alphaOneSidedMaterial ? alphaOneSidedMaterial : (alphaMaterial ? alphaMaterial : blendMaterial)
-                    );
-                } else {
-                    renderMeshes(transparentMeshes, blendMaterial);
-                }
-            } else if (renderAlphaLayer) {
-                // True projection transparency needs a blending material even
-                // for normally opaque/cutout blocks. Sort all buckets together
-                // so changing opacity never reintroduces inter-section flicker.
-                std::vector<VisibleMesh> transparentMeshes;
-                for (std::size_t bucket = 0; bucket < gState.sectionMeshes.size(); ++bucket) {
-                    auto bucketMeshes = collectBucket(bucket);
-                    transparentMeshes.insert(
-                        transparentMeshes.end(), bucketMeshes.begin(), bucketMeshes.end()
-                    );
-                }
-                sortBackToFront(transparentMeshes);
-                renderMeshes(transparentMeshes, blendMaterial);
-            }
-
-            // Textured liquid hulls travel the proven glass path: blend-block
-            // material plus the terrain atlas, sorted back to front by
-            // section like the other transparent meshes.
-            if (renderAlphaLayer) {
-                std::vector<std::size_t> liquidSections;
-                for (std::size_t liquidSection = 0;
-                     liquidSection < gState.liquidProxySectionMeshes.size();
-                     ++liquidSection) {
-                    auto const& mesh = gState.liquidProxySectionMeshes[liquidSection];
-                    if (mesh && mesh->isValid()) liquidSections.push_back(liquidSection);
-                }
-                std::sort(
-                    liquidSections.begin(),
-                    liquidSections.end(),
-                    [&](std::size_t lhs, std::size_t rhs) {
-                        return distanceSquared(worldCenter(lhs))
-                            > distanceSquared(worldCenter(rhs));
-                    }
-                );
-                for (auto const liquidSection : liquidSections) {
-                    auto& mesh = *gState.liquidProxySectionMeshes[liquidSection];
-                    mesh.renderMesh(
-                        renderContext.getScreenContext(),
-                        blendMaterial,
-                        *gState.terrainTextureVariant,
-                        0,
-                        static_cast<uint>(mesh.getMeshVertexCount()),
-                        renderContext.mOffscreenCaptureDescription.get(),
-                        nullptr
-                    );
-                }
-
-                // Textured placeholder hulls for block-entity blocks.
-                for (auto const& placeholder : gState.blockEntityPlaceholderSectionMeshes) {
-                    if (!placeholder || !placeholder->isValid()) continue;
-                    placeholder->renderMesh(
-                        renderContext.getScreenContext(),
-                        blendMaterial,
-                        *gState.terrainTextureVariant,
-                        0,
-                        static_cast<uint>(placeholder->getMeshVertexCount()),
-                        renderContext.mOffscreenCaptureDescription.get(),
-                        nullptr
-                    );
-                }
-            }
-        }
-
-        if (renderAlphaLayer) {
-            auto* levelRenderer = client.getLevelRenderer();
-            auto const& outlineMaterial = levelRenderer
-                ? levelRenderer->getLevelRendererPlayer().mOutlineSelectionMaterial.get()
-                : renderContext.getItemInHandRenderer().mMatBlendBlock.get();
-            if (outlineMaterial && gStructureBoundsEnabled.load(std::memory_order_relaxed)
-                && gState.structureBoundsMesh && gState.structureBoundsMesh->isValid()) {
-                gState.structureBoundsMesh->renderMesh(
-                    renderContext.getScreenContext(),
-                    outlineMaterial,
-                    0,
-                    static_cast<uint>(gState.structureBoundsMesh->getMeshVertexCount()),
-                    renderContext.mOffscreenCaptureDescription.get(),
-                    nullptr
-                );
-            }
-            auto const& warningMaterial = levelRenderer
-                ? levelRenderer->getLevelRendererPlayer().selectionBlockEntityOverlayColorMaterial.get()
-                : renderContext.getItemInHandRenderer().mMatBlendBlockNoColor.get();
-            auto renderOverlayMeshes = [&](
-                std::vector<std::unique_ptr<mce::Mesh>> const& meshes, mce::MaterialPtr const& material
-            ) {
-                if (!material) return;
-                for (auto const& overlay : meshes) {
-                    if (!overlay || !overlay->isValid()) continue;
-                    overlay->renderMesh(
-                        renderContext.getScreenContext(),
-                        material,
-                        0,
-                        static_cast<uint>(overlay->getMeshVertexCount()),
-                        renderContext.mOffscreenCaptureDescription.get(),
-                        nullptr
-                    );
-                }
-            };
-
-            if (static_cast<bool>(itemRenderer.mIsDeferredEnabled)) {
-                // The colored outline material is already proven stable and
-                // correctly exposed by Vibrant Visuals. Reuse the same shader
-                // for the hull, changing only its primitive and blend state
-                // for this submission. Restoring immediately keeps the normal
-                // correction and structure outlines untouched.
-                auto* renderMaterial = outlineMaterial
-                    ? const_cast<mce::RenderMaterial*>(outlineMaterial.operator->())
-                    : nullptr;
-                if (renderMaterial) {
-                    auto const savedPrimitive = renderMaterial->mPrimitiveMode;
-                    auto const savedBlend = renderMaterial->blendStateDescription.get();
-                    auto const savedDepthBias = renderMaterial->mDepthBias;
-                    auto const savedSlopeBias = renderMaterial->mSlopeScaledDepthBias;
-                    renderMaterial->mPrimitiveMode = mce::PrimitiveMode::QuadList;
-                    renderMaterial->blendStateDescription.get()
-                        = blendMaterial->blendStateDescription.get();
-                    renderMaterial->mDepthBias = 100.0f;
-                    renderMaterial->mSlopeScaledDepthBias = 15.0f;
-                    renderOverlayMeshes(gState.warningFillSectionMeshes, outlineMaterial);
-                    renderMaterial->mPrimitiveMode = savedPrimitive;
-                    renderMaterial->blendStateDescription.get() = savedBlend;
-                    renderMaterial->mDepthBias = savedDepthBias;
-                    renderMaterial->mSlopeScaledDepthBias = savedSlopeBias;
-                }
-            } else if (warningMaterial) {
-                // Bedrock's selection overlay already supplies the D3D depth
-                // bias equivalent of Java's polygon offset, but its default
-                // blend equation is multiplicative. Temporarily borrow the
-                // standard SourceAlpha/OneMinusSourceAlpha state from the
-                // vanilla blend-block material so the 0x4C overlay preserves
-                // the real block texture beneath it.
-                auto* renderMaterial = levelRenderer
-                    ? const_cast<mce::RenderMaterial*>(warningMaterial.operator->())
-                    : nullptr;
-                struct MaterialStateRestore {
-                    mce::RenderMaterial* material{};
-                    std::optional<mce::BlendStateDescription> blend;
-                    float depthBias{};
-                    float slopeBias{};
-                    ~MaterialStateRestore() {
-                        if (!material || !blend) return;
-                        material->blendStateDescription.get() = *blend;
-                        material->mDepthBias = depthBias;
-                        material->mSlopeScaledDepthBias = slopeBias;
-                    }
-                } restore;
-                if (renderMaterial && blendMaterial) {
-                    restore.material = renderMaterial;
-                    restore.blend = renderMaterial->blendStateDescription.get();
-                    restore.depthBias = renderMaterial->mDepthBias;
-                    restore.slopeBias = renderMaterial->mSlopeScaledDepthBias;
-                    renderMaterial->blendStateDescription.get()
-                        = blendMaterial->blendStateDescription.get();
-                    renderMaterial->mDepthBias = 100.0f;
-                    renderMaterial->mSlopeScaledDepthBias = 15.0f;
-                }
-                renderOverlayMeshes(gState.warningFillSectionMeshes, warningMaterial);
-            }
-            if (outlineMaterial) {
-                for (auto const& correctionOutline : gState.correctionOutlineSectionMeshes) {
-                    if (!correctionOutline || !correctionOutline->isValid()) continue;
-                    correctionOutline->renderMesh(
-                        renderContext.getScreenContext(),
-                        outlineMaterial,
-                        0,
-                        static_cast<uint>(correctionOutline->getMeshVertexCount()),
-                        renderContext.mOffscreenCaptureDescription.get(),
-                        nullptr
-                    );
-                }
-            }
-        }
+        detail::submitProjectionMeshPass(
+            gState,
+            renderContext,
+            client,
+            renderOrigin,
+            camera,
+            structureOpacity,
+            renderAlphaLayer,
+            gStructureBoundsEnabled.load(std::memory_order_relaxed)
+        );
     } catch (std::exception const& exception) {
         logger().error("Projection immediate mesh submission failed: {}", exception.what());
         tessellator.cancel();
