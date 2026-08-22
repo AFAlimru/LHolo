@@ -5,6 +5,7 @@
 
 #include "projection/ProjectionInternalTypes.h"
 #include "projection/ProjectionState.h"
+#include "projection/ProjectionVirtualWorld.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -15,12 +16,53 @@
 #include "mc/client/game/IClientInstance.h"
 #include "mc/client/gui/screens/ScreenContext.h"
 #include "mc/client/renderer/BaseActorRenderContext.h"
+#include "mc/client/renderer/blockactor/BlockActorRenderDispatcher.h"
 #include "mc/client/renderer/game/ItemInHandRenderer.h"
 #include "mc/client/renderer/game/LevelRenderer.h"
 #include "mc/client/renderer/game/LevelRendererPlayer.h"
+#include "mc/deps/minecraft_renderer/framebuilder/dragon/RenderMetadata.h"
 #include "mc/deps/minecraft_renderer/renderer/RenderMaterial.h"
+#include "mc/world/level/block/actor/BlockActor.h"
 
 namespace lholo::projection::detail {
+
+void submitProjectedBlockActorPass(
+    ProjectionState&        state,
+    BaseActorRenderContext& renderContext,
+    BlockSource&            region,
+    Vec3 const&             camera,
+    bool                    renderAlphaLayer
+) {
+    if (state.projectedBlockActors.empty()) return;
+
+    alignas(mce::MaterialPtr) static const std::byte sNoForcedMaterialStorage[sizeof(mce::MaterialPtr)]{};
+    auto const& noForcedMaterial = *reinterpret_cast<mce::MaterialPtr const*>(sNoForcedMaterialStorage);
+    auto& dispatcher = renderContext.mBlockEntityRenderDispatcher;
+    ScopedTessellationBlocks blockActorWorldScope(
+        *state.expectedWorldBlocks,
+        *state.expectedWorldBlockActors
+    );
+    for (auto const& projected : state.projectedBlockActors) {
+        auto const correctionState = state.correctionStates[projected.structureIndex];
+        if (correctionState == CorrectionState::Correct
+            || correctionState == CorrectionState::WrongType
+            || correctionState == CorrectionState::WrongState
+            || !projected.actor->isWithinRenderDistance(camera)) {
+            continue;
+        }
+        dispatcher.render(
+            renderContext,
+            region,
+            *projected.actor,
+            *projected.block,
+            renderAlphaLayer,
+            noForcedMaterial,
+            nullptr,
+            -1,
+            std::nullopt
+        );
+    }
+}
 
 void submitProjectionMeshPass(
     ProjectionState&        state,

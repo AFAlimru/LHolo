@@ -28,7 +28,6 @@
 #include "projection/ProjectionRules.h"
 #include "projection/ProjectionSectionBuilder.h"
 #include "projection/ProjectionState.h"
-#include "projection/ProjectionVirtualWorld.h"
 #include "projection/ProjectionWorldEvents.h"
 
 #include "overlay/BoundsWireframe.h"
@@ -46,7 +45,6 @@
 #include <functional>
 #include <limits>
 #include <mutex>
-#include <optional>
 #include <memory>
 #include <set>
 #include <string>
@@ -62,8 +60,6 @@
 #include "mc/client/renderer/Tessellator.h"
 #include "mc/client/renderer/TextureGroup.h"
 #include "mc/client/renderer/block/BlockGraphics.h"
-#include "mc/client/renderer/blockactor/BlockActorRenderDispatcher.h"
-#include "mc/deps/minecraft_renderer/framebuilder/dragon/RenderMetadata.h"
 #include "mc/client/renderer/game/ItemInHandRenderer.h"
 #include "mc/client/renderer/game/LevelRenderer.h"
 #include "mc/client/renderer/game/LevelRendererPlayer.h"
@@ -84,7 +80,6 @@
 #include "mc/world/level/LevelListener.h"
 #include "mc/world/level/block/Block.h"
 #include "mc/world/level/block/BlockRenderLayer.h"
-#include "mc/world/level/block/actor/BlockActor.h"
 #include "mc/world/level/biome/biome_color_sampling/BiomeColorSampling.h"
 #include "mc/world/level/levelgen/structure/LegacyStructureSettings.h"
 #include "mc/world/level/levelgen/structure/LegacyStructureTemplate.h"
@@ -110,7 +105,6 @@ using detail::ProjectionSectionBuildSettings;
 using detail::RenderBucket;
 using detail::startMeshWorker;
 using detail::SubChunkKey;
-using detail::ScopedTessellationBlocks;
 
 auto& logger() {
     return LHolo::getInstance().getSelf().getLogger();
@@ -304,36 +298,13 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
         tessellator.cancel();
     }
 
-    if (!gState.projectedBlockActors.empty()) {
-        alignas(mce::MaterialPtr) static const std::byte sNoForcedMaterialStorage[sizeof(mce::MaterialPtr)]{};
-        auto const& noForcedMaterial = *reinterpret_cast<mce::MaterialPtr const*>(sNoForcedMaterialStorage);
-        auto& dispatcher = renderContext.mBlockEntityRenderDispatcher;
-        auto& region = player->getDimensionBlockSource();
-        ScopedTessellationBlocks blockActorWorldScope(
-            *gState.expectedWorldBlocks,
-            *gState.expectedWorldBlockActors
-        );
-        for (auto const& projected : gState.projectedBlockActors) {
-            auto const state = gState.correctionStates[projected.structureIndex];
-            if (state == CorrectionState::Correct
-                || state == CorrectionState::WrongType
-                || state == CorrectionState::WrongState
-                || !projected.actor->isWithinRenderDistance(camera)) {
-                continue;
-            }
-            dispatcher.render(
-                renderContext,
-                region,
-                *projected.actor,
-                *projected.block,
-                renderAlphaLayer,
-                noForcedMaterial,
-                nullptr,
-                -1,
-                std::nullopt
-            );
-        }
-    }
+    detail::submitProjectedBlockActorPass(
+        gState,
+        renderContext,
+        player->getDimensionBlockSource(),
+        camera,
+        renderAlphaLayer
+    );
 
     auto matrix = renderContext.getWorldMatrix().push(false);
     matrix->translate(

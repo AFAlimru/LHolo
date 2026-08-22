@@ -8,12 +8,21 @@
 
 class BaseActorRenderContext;
 class BlockPos;
+class BlockSource;
 class IClientInstance;
 class Vec3;
 
 namespace lholo::projection::detail {
 
 struct ProjectionState;
+
+void submitProjectedBlockActorPass(
+    ProjectionState&        state,
+    BaseActorRenderContext& renderContext,
+    BlockSource&            region,
+    Vec3 const&             camera,
+    bool                    renderAlphaLayer
+);
 
 void submitProjectionMeshPass(
     ProjectionState&        state,

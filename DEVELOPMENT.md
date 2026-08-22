@@ -147,9 +147,10 @@ LHolo/
   section 中心与 Tessellator 查询缓存；它不生成 Mesh、不上传 GPU，也不调度 Worker。
 - `projection/ProjectionQueries.*` 只在调用方已持有投影状态锁且完成世界身份校验后读取虚拟世界索引和
   纠错状态，为手动/轻松/范围放置返回单格或按距离排序的缺失方块；它不持锁、不清理状态，也不修改世界。
-- `projection/ProjectionRenderer.*` 只提交已经上传完成的 Mesh：保持 opaque/transparent pass 分类、透明
-  section 后向前排序、液体/方块实体占位、结构边框和纠错覆盖的现有材质语义。它不生成 CPU 几何、
-  不消费 Worker 结果，也不改变 projection 生命周期；资源预检和提交异常后的清理由 `Projection.cpp` 负责。
+- `projection/ProjectionRenderer.*` 只提交已经上传完成的 Mesh 和投影方块实体：保持 opaque/transparent pass
+  分类、透明 section 后向前排序、液体/方块实体占位、结构边框和纠错覆盖的现有材质语义；方块实体仍在
+  局部虚拟世界作用域内复用原 dispatcher 参数。它不生成 CPU 几何、不消费 Worker 结果，也不改变
+  projection 生命周期；资源预检和提交异常后的清理由 `Projection.cpp` 负责。
 - `projection/ProjectionVirtualWorld.*` 隐藏 Tessellation 使用的 thread-local 虚拟方块表；只有显式 RAII
   作用域内的 `BlockSource` Hook 查询可以命中投影邻居，作用域结束后必须恢复上一个视图。
 - `projection/ProjectionWorldEvents.*` 只监听真实世界的方块变化和子区块加载并按原顺序排队；它不读取
