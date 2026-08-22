@@ -18,6 +18,7 @@
 
 #include "settings/SettingsStore.h"
 #include "structure/formats/StructureFormatLoaders.h"
+#include "structure/StructureSession.h"
 #include "structure/StructureUiState.h"
 #include "ui/HotkeyFormat.h"
 #include "structure/capture/StructureCapture.h"
@@ -78,31 +79,6 @@ constexpr unsigned int   kHotkeyModifierAlt        = 2u;
 constexpr unsigned int   kHotkeyModifierShift      = 4u;
 constexpr char           kMaterialPopupName[]       = "材料清单###LHoloMaterialList";
 
-std::mutex                       gLoadedMutex;
-std::shared_ptr<LoadedStructure> gLoaded;
-std::atomic_int                  gRotationQuarterTurns{0};
-std::atomic_int                  gMirrorMode{0};
-std::atomic_int                  gOffsetX{0};
-std::atomic_int                  gOffsetY{0};
-std::atomic_int                  gOffsetZ{0};
-std::atomic_int                  gLayerDisplayMode{0};
-std::atomic_int                  gDisplayLayer{0};
-std::atomic_int                  gLayerAxis{0};
-std::atomic_bool                 gHasSavedProjection{false};
-std::atomic_int                  gSavedAnchorX{0};
-std::atomic_int                  gSavedAnchorY{0};
-std::atomic_int                  gSavedAnchorZ{0};
-std::atomic_int                  gSavedRotation{0};
-std::atomic_int                  gSavedMirror{0};
-std::atomic_int                  gSavedOffsetX{0};
-std::atomic_int                  gSavedOffsetY{0};
-std::atomic_int                  gSavedOffsetZ{0};
-std::atomic_int                  gSavedLayerDisplayMode{0};
-std::atomic_int                  gSavedDisplayLayer{0};
-std::atomic_int                  gSavedLayerAxis{0};
-std::string                      gSavedStructurePath;
-std::string                      gLastPath;
-std::string                      gStatus = "尚未加载结构文件";
 lholo::ui::MenuPage             gActivePage{lholo::ui::MenuPage::Projection};
 
 int maxLayerFor(LoadedStructure const& structure, int axis) {
@@ -396,7 +372,7 @@ bool handleGuiHotkeyKeyDown(unsigned int virtualKey) {
     auto const layerIncreaseHotkey = detail::uiLayerIncreaseHotkey().load(std::memory_order_acquire);
     if (layerIncreaseHotkey != 0 && virtualKey == layerIncreaseHotkey
         && modifiers == detail::uiLayerIncreaseHotkeyModifiers().load(std::memory_order_acquire)) {
-        if (gLayerDisplayMode.load(std::memory_order_acquire) == 0) return false;
+        if (detail::sessionLayerDisplayMode().load(std::memory_order_acquire) == 0) return false;
         if (GetTickCount64() >= detail::uiIgnoreHotkeyUntil().load(std::memory_order_acquire)
             && !detail::uiLayerIncreaseHotkeyHeld().exchange(true, std::memory_order_acq_rel)) {
             detail::uiPendingLayerDelta().fetch_add(1, std::memory_order_relaxed);
@@ -406,7 +382,7 @@ bool handleGuiHotkeyKeyDown(unsigned int virtualKey) {
     auto const layerDecreaseHotkey = detail::uiLayerDecreaseHotkey().load(std::memory_order_acquire);
     if (layerDecreaseHotkey != 0 && virtualKey == layerDecreaseHotkey
         && modifiers == detail::uiLayerDecreaseHotkeyModifiers().load(std::memory_order_acquire)) {
-        if (gLayerDisplayMode.load(std::memory_order_acquire) == 0) return false;
+        if (detail::sessionLayerDisplayMode().load(std::memory_order_acquire) == 0) return false;
         if (GetTickCount64() >= detail::uiIgnoreHotkeyUntil().load(std::memory_order_acquire)
             && !detail::uiLayerDecreaseHotkeyHeld().exchange(true, std::memory_order_acq_rel)) {
             detail::uiPendingLayerDelta().fetch_sub(1, std::memory_order_relaxed);
@@ -474,7 +450,7 @@ void processPendingHotkeyActions() {
     auto const offsetZ = detail::uiPendingOffsetZ().exchange(0, std::memory_order_acq_rel);
     auto const layerDelta = detail::uiPendingLayerDelta().exchange(0, std::memory_order_acq_rel);
     auto const layerActionEnabled = layerDelta != 0
-        && gLayerDisplayMode.load(std::memory_order_relaxed) != 0;
+        && detail::sessionLayerDisplayMode().load(std::memory_order_relaxed) != 0;
     bool changed = offsetX != 0 || offsetY != 0 || offsetZ != 0 || layerActionEnabled;
 
     auto applyOffset = [](std::atomic_int& target, int delta) {
@@ -487,20 +463,20 @@ void processPendingHotkeyActions() {
         );
         target.store(static_cast<int>(next), std::memory_order_relaxed);
     };
-    applyOffset(gOffsetX, offsetX);
-    applyOffset(gOffsetY, offsetY);
-    applyOffset(gOffsetZ, offsetZ);
+    applyOffset(detail::sessionOffsetX(), offsetX);
+    applyOffset(detail::sessionOffsetY(), offsetY);
+    applyOffset(detail::sessionOffsetZ(), offsetZ);
 
     if (layerActionEnabled) {
         auto maxLayer = 0;
-        auto const layerAxis = gLayerAxis.load(std::memory_order_relaxed);
+        auto const layerAxis = detail::sessionLayerAxis().load(std::memory_order_relaxed);
         {
-            std::lock_guard lock(gLoadedMutex);
-            if (gLoaded) maxLayer = maxLayerFor(*gLoaded, layerAxis);
+            std::lock_guard lock(detail::sessionLoadedMutex());
+            if (detail::sessionLoaded()) maxLayer = maxLayerFor(*detail::sessionLoaded(), layerAxis);
         }
-        auto const current = static_cast<long long>(gDisplayLayer.load(std::memory_order_relaxed));
+        auto const current = static_cast<long long>(detail::sessionDisplayLayer().load(std::memory_order_relaxed));
         auto const next = std::clamp(current + static_cast<long long>(layerDelta), 0LL, static_cast<long long>(maxLayer));
-        gDisplayLayer.store(static_cast<int>(next), std::memory_order_relaxed);
+        detail::sessionDisplayLayer().store(static_cast<int>(next), std::memory_order_relaxed);
     }
 
     changed = detail::uiPendingSettingsSave().exchange(false, std::memory_order_acq_rel) || changed;
@@ -516,8 +492,8 @@ bool hasHudInfo() {
         && !detail::uiHudShowWrongState().load(std::memory_order_relaxed)
         && !detail::uiHudShowWrongType().load(std::memory_order_relaxed)
         && !detail::uiHudShowBlockEntity().load(std::memory_order_relaxed)) return false;
-    std::lock_guard lock(gLoadedMutex);
-    return static_cast<bool>(gLoaded);
+    std::lock_guard lock(detail::sessionLoadedMutex());
+    return static_cast<bool>(detail::sessionLoaded());
 }
 
 void renderHud() {
@@ -535,12 +511,12 @@ void renderHud() {
 
     std::string fileName;
     int maxLayer{};
-    auto const layerAxis = gLayerAxis.load(std::memory_order_relaxed);
+    auto const layerAxis = detail::sessionLayerAxis().load(std::memory_order_relaxed);
     {
-        std::lock_guard lock(gLoadedMutex);
-        if (!gLoaded) return;
-        fileName = pathToUtf8(gLoaded->sourcePath.filename());
-        maxLayer = maxLayerFor(*gLoaded, layerAxis);
+        std::lock_guard lock(detail::sessionLoadedMutex());
+        if (!detail::sessionLoaded()) return;
+        fileName = pathToUtf8(detail::sessionLoaded()->sourcePath.filename());
+        maxLayer = maxLayerFor(*detail::sessionLoaded(), layerAxis);
     }
 
     auto const displaySize = ImGui::GetIO().DisplaySize;
@@ -554,9 +530,9 @@ void renderHud() {
     }
     auto const hudMetrics = lholo::ui::calculateMetrics(displaySize, uiScale);
     lholo::ui::applyFluentTheme(hudMetrics);
-    auto const layerMode = gLayerDisplayMode.load(std::memory_order_relaxed);
+    auto const layerMode = detail::sessionLayerDisplayMode().load(std::memory_order_relaxed);
     auto const currentLayer = std::clamp(
-        gDisplayLayer.load(std::memory_order_relaxed),
+        detail::sessionDisplayLayer().load(std::memory_order_relaxed),
         0,
         maxLayer
     );
@@ -717,19 +693,19 @@ lholo::ui::MenuModel makeMenuModel(float effectiveUiScale) {
         auto const& point = *captureSnapshot.draft.second;
         model.capture.second = {true, point.x, point.y, point.z};
     }
-    model.layerAxis = std::clamp(gLayerAxis.load(std::memory_order_relaxed), 0, 1);
+    model.layerAxis = std::clamp(detail::sessionLayerAxis().load(std::memory_order_relaxed), 0, 1);
 
     {
-        std::lock_guard lock(gLoadedMutex);
-        model.status = gStatus;
-        model.hasLoadedStructure = static_cast<bool>(gLoaded);
-        model.hasSavedProjection = gHasSavedProjection.load(std::memory_order_relaxed);
-        model.savedAnchorX = gSavedAnchorX.load(std::memory_order_relaxed);
-        model.savedAnchorY = gSavedAnchorY.load(std::memory_order_relaxed);
-        model.savedAnchorZ = gSavedAnchorZ.load(std::memory_order_relaxed);
-        if (gLoaded) {
-            model.maxLayerY = maxLayerFor(*gLoaded, 0);
-            model.maxLayerX = maxLayerFor(*gLoaded, 1);
+        std::lock_guard lock(detail::sessionLoadedMutex());
+        model.status = detail::sessionStatus();
+        model.hasLoadedStructure = static_cast<bool>(detail::sessionLoaded());
+        model.hasSavedProjection = detail::sessionHasSavedProjection().load(std::memory_order_relaxed);
+        model.savedAnchorX = detail::sessionSavedAnchorX().load(std::memory_order_relaxed);
+        model.savedAnchorY = detail::sessionSavedAnchorY().load(std::memory_order_relaxed);
+        model.savedAnchorZ = detail::sessionSavedAnchorZ().load(std::memory_order_relaxed);
+        if (detail::sessionLoaded()) {
+            model.maxLayerY = maxLayerFor(*detail::sessionLoaded(), 0);
+            model.maxLayerX = maxLayerFor(*detail::sessionLoaded(), 1);
         }
     }
     model.structureBoundsEnabled = projection::getStructureBoundsEnabled();
@@ -737,17 +713,17 @@ lholo::ui::MenuModel makeMenuModel(float effectiveUiScale) {
     model.manualPlace = place::isManualMode();
     model.rangeEnabled = place::isRangeEnabled();
     model.placementRadius = place::getPlacementRadius();
-    model.offsetX = gOffsetX.load(std::memory_order_relaxed);
-    model.offsetY = gOffsetY.load(std::memory_order_relaxed);
-    model.offsetZ = gOffsetZ.load(std::memory_order_relaxed);
-    model.rotation = std::clamp(gRotationQuarterTurns.load(std::memory_order_relaxed), 0, 3);
-    model.mirror = std::clamp(gMirrorMode.load(std::memory_order_relaxed), 0, 2);
+    model.offsetX = detail::sessionOffsetX().load(std::memory_order_relaxed);
+    model.offsetY = detail::sessionOffsetY().load(std::memory_order_relaxed);
+    model.offsetZ = detail::sessionOffsetZ().load(std::memory_order_relaxed);
+    model.rotation = std::clamp(detail::sessionRotationQuarterTurns().load(std::memory_order_relaxed), 0, 3);
+    model.mirror = std::clamp(detail::sessionMirror().load(std::memory_order_relaxed), 0, 2);
     model.opacity = projection::getOpacity();
     model.correctionFillOpacity = projection::getCorrectionFillOpacity();
     model.correctionOutlineOpacity = projection::getCorrectionOutlineOpacity();
-    model.layerDisplayMode = std::clamp(gLayerDisplayMode.load(std::memory_order_relaxed), 0, 3);
+    model.layerDisplayMode = std::clamp(detail::sessionLayerDisplayMode().load(std::memory_order_relaxed), 0, 3);
     model.displayLayer = std::clamp(
-        gDisplayLayer.load(std::memory_order_relaxed), 0,
+        detail::sessionDisplayLayer().load(std::memory_order_relaxed), 0,
         model.layerAxis == 1 ? model.maxLayerX : model.maxLayerY
     );
     model.hudEnabled = detail::uiHudEnabled().load(std::memory_order_relaxed);
@@ -805,11 +781,11 @@ void applyMenuModel(lholo::ui::MenuModel const& model, float effectiveUiScale) {
     if (place::isRangeEnabled() != model.rangeEnabled) place::setRangeEnabled(model.rangeEnabled);
     auto const radius = std::clamp(model.placementRadius, 1, 4);
     if (place::getPlacementRadius() != radius) { place::setPlacementRadius(radius); changed = true; }
-    update(gOffsetX, model.offsetX);
-    update(gOffsetY, model.offsetY);
-    update(gOffsetZ, model.offsetZ);
-    update(gRotationQuarterTurns, std::clamp(model.rotation, 0, 3));
-    update(gMirrorMode, std::clamp(model.mirror, 0, 2));
+    update(detail::sessionOffsetX(), model.offsetX);
+    update(detail::sessionOffsetY(), model.offsetY);
+    update(detail::sessionOffsetZ(), model.offsetZ);
+    update(detail::sessionRotationQuarterTurns(), std::clamp(model.rotation, 0, 3));
+    update(detail::sessionMirror(), std::clamp(model.mirror, 0, 2));
 
     auto const opacity = std::clamp(model.opacity, 0.0f, 1.0f);
     if (std::abs(projection::getOpacity() - opacity) > 0.0001f) { projection::setOpacity(opacity); changed = true; }
@@ -818,14 +794,14 @@ void applyMenuModel(lholo::ui::MenuModel const& model, float effectiveUiScale) {
     auto const outline = std::clamp(model.correctionOutlineOpacity, 0.0f, 1.0f);
     if (std::abs(projection::getCorrectionOutlineOpacity() - outline) > 0.0001f) { projection::setCorrectionOutlineOpacity(outline); changed = true; }
     auto const layerAxis = std::clamp(model.layerAxis, 0, 1);
-    update(gLayerAxis, layerAxis);
-    update(gLayerDisplayMode, std::clamp(model.layerDisplayMode, 0, 3));
+    update(detail::sessionLayerAxis(), layerAxis);
+    update(detail::sessionLayerDisplayMode(), std::clamp(model.layerDisplayMode, 0, 3));
     auto displayMax = 0;
     {
-        std::lock_guard lock(gLoadedMutex);
-        if (gLoaded) displayMax = maxLayerFor(*gLoaded, layerAxis);
+        std::lock_guard lock(detail::sessionLoadedMutex());
+        if (detail::sessionLoaded()) displayMax = maxLayerFor(*detail::sessionLoaded(), layerAxis);
     }
-    update(gDisplayLayer, std::clamp(model.displayLayer, 0, displayMax));
+    update(detail::sessionDisplayLayer(), std::clamp(model.displayLayer, 0, displayMax));
     update(detail::uiHudEnabled(), model.hudEnabled);
     update(detail::uiHudPosition(), std::clamp(model.hudPosition, 0, 3));
     update(detail::uiHudShowFileName(), model.hudShowFileName);
@@ -861,25 +837,25 @@ lholo::ui::MenuActions makeMenuActions(bool& refreshModel) {
     actions.loadStructure = [&refreshModel](std::string_view pathValue) {
         auto const pathText = std::string{pathValue};
         if (pathText.empty()) {
-            std::lock_guard lock(gLoadedMutex);
-            gStatus = "请选择或输入 .mcstructure / .litematic 文件路径";
+            std::lock_guard lock(detail::sessionLoadedMutex());
+            detail::sessionStatus() = "请选择或输入 .mcstructure / .litematic 文件路径";
             return;
         }
         std::string error;
         auto loaded = detail::loadStructureFile(pathFromUtf8(pathText), error);
         if (!loaded) {
-            std::lock_guard lock(gLoadedMutex);
-            gStatus = "加载失败: " + error;
+            std::lock_guard lock(detail::sessionLoadedMutex());
+            detail::sessionStatus() = "加载失败: " + error;
             logger().error("Could not load structure {}: {}", pathText, error);
             return;
         }
         std::string status;
         {
-            std::lock_guard lock(gLoadedMutex);
-            gLastPath = pathText;
-            gStatus = detail::makeStructureStatus(*loaded);
-            status = gStatus;
-            gLoaded = std::move(loaded);
+            std::lock_guard lock(detail::sessionLoadedMutex());
+            detail::sessionLastPath() = pathText;
+            detail::sessionStatus() = detail::makeStructureStatus(*loaded);
+            status = detail::sessionStatus();
+            detail::sessionLoaded() = std::move(loaded);
         }
         saveSettings();
         refreshModel = true;
@@ -888,37 +864,37 @@ lholo::ui::MenuActions makeMenuActions(bool& refreshModel) {
     actions.restoreProjection = [&refreshModel] {
         std::string savedPath;
         {
-            std::lock_guard lock(gLoadedMutex);
-            savedPath = gSavedStructurePath;
+            std::lock_guard lock(detail::sessionLoadedMutex());
+            savedPath = detail::sessionSavedStructurePath();
         }
-        auto const x = gSavedAnchorX.load(std::memory_order_relaxed);
-        auto const y = gSavedAnchorY.load(std::memory_order_relaxed);
-        auto const z = gSavedAnchorZ.load(std::memory_order_relaxed);
+        auto const x = detail::sessionSavedAnchorX().load(std::memory_order_relaxed);
+        auto const y = detail::sessionSavedAnchorY().load(std::memory_order_relaxed);
+        auto const z = detail::sessionSavedAnchorZ().load(std::memory_order_relaxed);
         std::string error;
         auto loaded = detail::loadStructureFile(pathFromUtf8(savedPath), error);
         if (!loaded) {
-            std::lock_guard lock(gLoadedMutex);
-            gStatus = "恢复失败: " + error;
+            std::lock_guard lock(detail::sessionLoadedMutex());
+            detail::sessionStatus() = "恢复失败: " + error;
             logger().error("Could not restore structure {}: {}", savedPath, error);
             return;
         }
-        gRotationQuarterTurns.store(gSavedRotation.load(std::memory_order_relaxed), std::memory_order_relaxed);
-        gMirrorMode.store(
-            std::clamp(gSavedMirror.load(std::memory_order_relaxed), 0, 2),
+        detail::sessionRotationQuarterTurns().store(detail::sessionSavedRotation().load(std::memory_order_relaxed), std::memory_order_relaxed);
+        detail::sessionMirror().store(
+            std::clamp(detail::sessionSavedMirror().load(std::memory_order_relaxed), 0, 2),
             std::memory_order_relaxed
         );
-        gOffsetX.store(gSavedOffsetX.load(std::memory_order_relaxed), std::memory_order_relaxed);
-        gOffsetY.store(gSavedOffsetY.load(std::memory_order_relaxed), std::memory_order_relaxed);
-        gOffsetZ.store(gSavedOffsetZ.load(std::memory_order_relaxed), std::memory_order_relaxed);
-        gLayerDisplayMode.store(gSavedLayerDisplayMode.load(std::memory_order_relaxed), std::memory_order_relaxed);
-        gDisplayLayer.store(gSavedDisplayLayer.load(std::memory_order_relaxed), std::memory_order_relaxed);
-        gLayerAxis.store(gSavedLayerAxis.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        detail::sessionOffsetX().store(detail::sessionSavedOffsetX().load(std::memory_order_relaxed), std::memory_order_relaxed);
+        detail::sessionOffsetY().store(detail::sessionSavedOffsetY().load(std::memory_order_relaxed), std::memory_order_relaxed);
+        detail::sessionOffsetZ().store(detail::sessionSavedOffsetZ().load(std::memory_order_relaxed), std::memory_order_relaxed);
+        detail::sessionLayerDisplayMode().store(detail::sessionSavedLayerDisplayMode().load(std::memory_order_relaxed), std::memory_order_relaxed);
+        detail::sessionDisplayLayer().store(detail::sessionSavedDisplayLayer().load(std::memory_order_relaxed), std::memory_order_relaxed);
+        detail::sessionLayerAxis().store(detail::sessionSavedLayerAxis().load(std::memory_order_relaxed), std::memory_order_relaxed);
         projection::requestNextStructureAnchor(x, y, z);
         {
-            std::lock_guard lock(gLoadedMutex);
-            gLastPath = savedPath;
-            gStatus = "已恢复上次投影记录，等待进入渲染";
-            gLoaded = std::move(loaded);
+            std::lock_guard lock(detail::sessionLoadedMutex());
+            detail::sessionLastPath() = savedPath;
+            detail::sessionStatus() = "已恢复上次投影记录，等待进入渲染";
+            detail::sessionLoaded() = std::move(loaded);
         }
         std::snprintf(detail::uiPathBuffer().data(), detail::uiPathBuffer().size(), "%s", savedPath.c_str());
         refreshModel = true;
@@ -999,8 +975,8 @@ void renderGui() {
         ? std::clamp(configuredScale, 1.0f, 5.0f)
         : std::clamp(std::min(displaySize.x / 1920.0f, displaySize.y / 1080.0f), 1.0f, 5.0f);
     if (!detail::uiPathInitialized()) {
-        std::lock_guard lock(gLoadedMutex);
-        std::snprintf(detail::uiPathBuffer().data(), detail::uiPathBuffer().size(), "%s", gLastPath.c_str());
+        std::lock_guard lock(detail::sessionLoadedMutex());
+        std::snprintf(detail::uiPathBuffer().data(), detail::uiPathBuffer().size(), "%s", detail::sessionLastPath().c_str());
         detail::uiPathInitialized() = true;
     }
     auto const metrics = lholo::ui::calculateMetrics(displaySize, effectiveScale);
@@ -1028,8 +1004,8 @@ void loadSettings() {
             saveSettings();
             return;
         }
-        std::lock_guard lock(gLoadedMutex);
-        gLastPath = settings.lastStructurePath;
+        std::lock_guard lock(detail::sessionLoadedMutex());
+        detail::sessionLastPath() = settings.lastStructurePath;
         detail::uiUiScale().store(std::clamp(settings.uiScale, 0.0f, 5.0f), std::memory_order_relaxed);
         projection::setOpacity(settings.opacity);
         projection::setCorrectionFillOpacity(settings.correctionFillOpacity);
@@ -1037,14 +1013,14 @@ void loadSettings() {
         projection::setStructureBoundsEnabled(settings.structureBoundsEnabled);
         // Transform and layer state are session-local. Only the explicit
         // "restore last projection" record below is persisted.
-        gRotationQuarterTurns.store(0, std::memory_order_relaxed);
-        gMirrorMode.store(0, std::memory_order_relaxed);
-        gOffsetX.store(0, std::memory_order_relaxed);
-        gOffsetY.store(0, std::memory_order_relaxed);
-        gOffsetZ.store(0, std::memory_order_relaxed);
-        gLayerDisplayMode.store(0, std::memory_order_relaxed);
-        gDisplayLayer.store(0, std::memory_order_relaxed);
-        gLayerAxis.store(0, std::memory_order_relaxed);
+        detail::sessionRotationQuarterTurns().store(0, std::memory_order_relaxed);
+        detail::sessionMirror().store(0, std::memory_order_relaxed);
+        detail::sessionOffsetX().store(0, std::memory_order_relaxed);
+        detail::sessionOffsetY().store(0, std::memory_order_relaxed);
+        detail::sessionOffsetZ().store(0, std::memory_order_relaxed);
+        detail::sessionLayerDisplayMode().store(0, std::memory_order_relaxed);
+        detail::sessionDisplayLayer().store(0, std::memory_order_relaxed);
+        detail::sessionLayerAxis().store(0, std::memory_order_relaxed);
         detail::uiHudEnabled().store(settings.hudEnabled, std::memory_order_relaxed);
         detail::uiHudShowFileName().store(settings.hudShowFileName, std::memory_order_relaxed);
         detail::uiHudShowLayer().store(settings.hudShowLayer, std::memory_order_relaxed);
@@ -1084,19 +1060,19 @@ void loadSettings() {
                 std::clamp(settings.moveHotkeyModifiers[index], 0, 7), std::memory_order_relaxed
             );
         }
-        gHasSavedProjection.store(settings.hasSavedProjection, std::memory_order_relaxed);
-        gSavedAnchorX.store(settings.savedAnchorX, std::memory_order_relaxed);
-        gSavedAnchorY.store(settings.savedAnchorY, std::memory_order_relaxed);
-        gSavedAnchorZ.store(settings.savedAnchorZ, std::memory_order_relaxed);
-        gSavedRotation.store(settings.savedRotation, std::memory_order_relaxed);
-        gSavedMirror.store(std::clamp(settings.savedMirror, 0, 2), std::memory_order_relaxed);
-        gSavedOffsetX.store(settings.savedOffsetX, std::memory_order_relaxed);
-        gSavedOffsetY.store(settings.savedOffsetY, std::memory_order_relaxed);
-        gSavedOffsetZ.store(settings.savedOffsetZ, std::memory_order_relaxed);
-        gSavedLayerDisplayMode.store(settings.savedLayerDisplayMode, std::memory_order_relaxed);
-        gSavedDisplayLayer.store(settings.savedDisplayLayer, std::memory_order_relaxed);
-        gSavedLayerAxis.store(std::clamp(settings.savedLayerAxis, 0, 1), std::memory_order_relaxed);
-        gSavedStructurePath = settings.savedStructurePath;
+        detail::sessionHasSavedProjection().store(settings.hasSavedProjection, std::memory_order_relaxed);
+        detail::sessionSavedAnchorX().store(settings.savedAnchorX, std::memory_order_relaxed);
+        detail::sessionSavedAnchorY().store(settings.savedAnchorY, std::memory_order_relaxed);
+        detail::sessionSavedAnchorZ().store(settings.savedAnchorZ, std::memory_order_relaxed);
+        detail::sessionSavedRotation().store(settings.savedRotation, std::memory_order_relaxed);
+        detail::sessionSavedMirror().store(std::clamp(settings.savedMirror, 0, 2), std::memory_order_relaxed);
+        detail::sessionSavedOffsetX().store(settings.savedOffsetX, std::memory_order_relaxed);
+        detail::sessionSavedOffsetY().store(settings.savedOffsetY, std::memory_order_relaxed);
+        detail::sessionSavedOffsetZ().store(settings.savedOffsetZ, std::memory_order_relaxed);
+        detail::sessionSavedLayerDisplayMode().store(settings.savedLayerDisplayMode, std::memory_order_relaxed);
+        detail::sessionSavedDisplayLayer().store(settings.savedDisplayLayer, std::memory_order_relaxed);
+        detail::sessionSavedLayerAxis().store(std::clamp(settings.savedLayerAxis, 0, 1), std::memory_order_relaxed);
+        detail::sessionSavedStructurePath() = settings.savedStructurePath;
         logger().info("Loaded projection settings from {}", path.string());
     } catch (std::exception const& exception) {
         logger().error("Could not load projection settings {}: {}", path.string(), exception.what());
@@ -1108,29 +1084,29 @@ void saveSettings() {
     try {
         bool hasActiveProjection = false;
         {
-            std::lock_guard lock(gLoadedMutex);
-            hasActiveProjection = static_cast<bool>(gLoaded);
+            std::lock_guard lock(detail::sessionLoadedMutex());
+            hasActiveProjection = static_cast<bool>(detail::sessionLoaded());
         }
-        if (hasActiveProjection && gHasSavedProjection.load(std::memory_order_acquire)) {
+        if (hasActiveProjection && detail::sessionHasSavedProjection().load(std::memory_order_acquire)) {
             // Only an active projection may update its restore snapshot. At
             // startup the session-local transform/layer values intentionally
             // reset to defaults; copying those values before the user restores
             // a structure would silently destroy the saved state.
-            gSavedRotation.store(gRotationQuarterTurns.load(std::memory_order_relaxed), std::memory_order_relaxed);
-            gSavedMirror.store(gMirrorMode.load(std::memory_order_relaxed), std::memory_order_relaxed);
-            gSavedOffsetX.store(gOffsetX.load(std::memory_order_relaxed), std::memory_order_relaxed);
-            gSavedOffsetY.store(gOffsetY.load(std::memory_order_relaxed), std::memory_order_relaxed);
-            gSavedOffsetZ.store(gOffsetZ.load(std::memory_order_relaxed), std::memory_order_relaxed);
-            gSavedLayerDisplayMode.store(gLayerDisplayMode.load(std::memory_order_relaxed), std::memory_order_relaxed);
-            gSavedDisplayLayer.store(gDisplayLayer.load(std::memory_order_relaxed), std::memory_order_relaxed);
-            gSavedLayerAxis.store(gLayerAxis.load(std::memory_order_relaxed), std::memory_order_relaxed);
+            detail::sessionSavedRotation().store(detail::sessionRotationQuarterTurns().load(std::memory_order_relaxed), std::memory_order_relaxed);
+            detail::sessionSavedMirror().store(detail::sessionMirror().load(std::memory_order_relaxed), std::memory_order_relaxed);
+            detail::sessionSavedOffsetX().store(detail::sessionOffsetX().load(std::memory_order_relaxed), std::memory_order_relaxed);
+            detail::sessionSavedOffsetY().store(detail::sessionOffsetY().load(std::memory_order_relaxed), std::memory_order_relaxed);
+            detail::sessionSavedOffsetZ().store(detail::sessionOffsetZ().load(std::memory_order_relaxed), std::memory_order_relaxed);
+            detail::sessionSavedLayerDisplayMode().store(detail::sessionLayerDisplayMode().load(std::memory_order_relaxed), std::memory_order_relaxed);
+            detail::sessionSavedDisplayLayer().store(detail::sessionDisplayLayer().load(std::memory_order_relaxed), std::memory_order_relaxed);
+            detail::sessionSavedLayerAxis().store(detail::sessionLayerAxis().load(std::memory_order_relaxed), std::memory_order_relaxed);
         }
         std::string lastPath;
         std::string savedStructurePath;
         {
-            std::lock_guard lock(gLoadedMutex);
-            lastPath = gLastPath;
-            savedStructurePath = gSavedStructurePath;
+            std::lock_guard lock(detail::sessionLoadedMutex());
+            lastPath = detail::sessionLastPath();
+            savedStructurePath = detail::sessionSavedStructurePath();
         }
         lholo::settings::Settings settings;
         settings.lastStructurePath = lastPath;
@@ -1162,18 +1138,18 @@ void saveSettings() {
             settings.moveHotkeyModifiers[index]
                 = detail::uiMoveHotkeyModifiers()[index].load(std::memory_order_relaxed);
         }
-        settings.hasSavedProjection = gHasSavedProjection.load(std::memory_order_relaxed);
-        settings.savedAnchorX = gSavedAnchorX.load(std::memory_order_relaxed);
-        settings.savedAnchorY = gSavedAnchorY.load(std::memory_order_relaxed);
-        settings.savedAnchorZ = gSavedAnchorZ.load(std::memory_order_relaxed);
-        settings.savedRotation = gSavedRotation.load(std::memory_order_relaxed);
-        settings.savedMirror = gSavedMirror.load(std::memory_order_relaxed);
-        settings.savedOffsetX = gSavedOffsetX.load(std::memory_order_relaxed);
-        settings.savedOffsetY = gSavedOffsetY.load(std::memory_order_relaxed);
-        settings.savedOffsetZ = gSavedOffsetZ.load(std::memory_order_relaxed);
-        settings.savedLayerDisplayMode = gSavedLayerDisplayMode.load(std::memory_order_relaxed);
-        settings.savedDisplayLayer = gSavedDisplayLayer.load(std::memory_order_relaxed);
-        settings.savedLayerAxis = gSavedLayerAxis.load(std::memory_order_relaxed);
+        settings.hasSavedProjection = detail::sessionHasSavedProjection().load(std::memory_order_relaxed);
+        settings.savedAnchorX = detail::sessionSavedAnchorX().load(std::memory_order_relaxed);
+        settings.savedAnchorY = detail::sessionSavedAnchorY().load(std::memory_order_relaxed);
+        settings.savedAnchorZ = detail::sessionSavedAnchorZ().load(std::memory_order_relaxed);
+        settings.savedRotation = detail::sessionSavedRotation().load(std::memory_order_relaxed);
+        settings.savedMirror = detail::sessionSavedMirror().load(std::memory_order_relaxed);
+        settings.savedOffsetX = detail::sessionSavedOffsetX().load(std::memory_order_relaxed);
+        settings.savedOffsetY = detail::sessionSavedOffsetY().load(std::memory_order_relaxed);
+        settings.savedOffsetZ = detail::sessionSavedOffsetZ().load(std::memory_order_relaxed);
+        settings.savedLayerDisplayMode = detail::sessionSavedLayerDisplayMode().load(std::memory_order_relaxed);
+        settings.savedDisplayLayer = detail::sessionSavedDisplayLayer().load(std::memory_order_relaxed);
+        settings.savedLayerAxis = detail::sessionSavedLayerAxis().load(std::memory_order_relaxed);
         settings.savedStructurePath = savedStructurePath;
         lholo::settings::saveSettingsFile(path, settings);
     } catch (std::exception const& exception) {
@@ -1182,53 +1158,53 @@ void saveSettings() {
 }
 
 std::shared_ptr<LoadedStructure const> getLoaded() {
-    std::lock_guard lock(gLoadedMutex);
-    return gLoaded;
+    std::lock_guard lock(detail::sessionLoadedMutex());
+    return detail::sessionLoaded();
 }
 
 int getRotationQuarterTurns() {
-    return gRotationQuarterTurns.load(std::memory_order_relaxed);
+    return detail::sessionRotationQuarterTurns().load(std::memory_order_relaxed);
 }
 
 int getMirrorMode() {
-    return std::clamp(gMirrorMode.load(std::memory_order_relaxed), 0, 2);
+    return std::clamp(detail::sessionMirror().load(std::memory_order_relaxed), 0, 2);
 }
 
-int getOffsetX() { return gOffsetX.load(std::memory_order_relaxed); }
-int getOffsetY() { return gOffsetY.load(std::memory_order_relaxed); }
-int getOffsetZ() { return gOffsetZ.load(std::memory_order_relaxed); }
-int getLayerDisplayMode() { return gLayerDisplayMode.load(std::memory_order_relaxed); }
-int getDisplayLayer() { return gDisplayLayer.load(std::memory_order_relaxed); }
-int getLayerAxis() { return gLayerAxis.load(std::memory_order_relaxed); }
+int getOffsetX() { return detail::sessionOffsetX().load(std::memory_order_relaxed); }
+int getOffsetY() { return detail::sessionOffsetY().load(std::memory_order_relaxed); }
+int getOffsetZ() { return detail::sessionOffsetZ().load(std::memory_order_relaxed); }
+int getLayerDisplayMode() { return detail::sessionLayerDisplayMode().load(std::memory_order_relaxed); }
+int getDisplayLayer() { return detail::sessionDisplayLayer().load(std::memory_order_relaxed); }
+int getLayerAxis() { return detail::sessionLayerAxis().load(std::memory_order_relaxed); }
 
 void recordProjectionAnchor(int x, int y, int z) {
-    gSavedAnchorX.store(x, std::memory_order_relaxed);
-    gSavedAnchorY.store(y, std::memory_order_relaxed);
-    gSavedAnchorZ.store(z, std::memory_order_relaxed);
-    gSavedRotation.store(gRotationQuarterTurns.load(std::memory_order_relaxed), std::memory_order_relaxed);
-    gSavedMirror.store(gMirrorMode.load(std::memory_order_relaxed), std::memory_order_relaxed);
-    gSavedOffsetX.store(gOffsetX.load(std::memory_order_relaxed), std::memory_order_relaxed);
-    gSavedOffsetY.store(gOffsetY.load(std::memory_order_relaxed), std::memory_order_relaxed);
-    gSavedOffsetZ.store(gOffsetZ.load(std::memory_order_relaxed), std::memory_order_relaxed);
-    gSavedLayerDisplayMode.store(gLayerDisplayMode.load(std::memory_order_relaxed), std::memory_order_relaxed);
-    gSavedDisplayLayer.store(gDisplayLayer.load(std::memory_order_relaxed), std::memory_order_relaxed);
-    gSavedLayerAxis.store(gLayerAxis.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    detail::sessionSavedAnchorX().store(x, std::memory_order_relaxed);
+    detail::sessionSavedAnchorY().store(y, std::memory_order_relaxed);
+    detail::sessionSavedAnchorZ().store(z, std::memory_order_relaxed);
+    detail::sessionSavedRotation().store(detail::sessionRotationQuarterTurns().load(std::memory_order_relaxed), std::memory_order_relaxed);
+    detail::sessionSavedMirror().store(detail::sessionMirror().load(std::memory_order_relaxed), std::memory_order_relaxed);
+    detail::sessionSavedOffsetX().store(detail::sessionOffsetX().load(std::memory_order_relaxed), std::memory_order_relaxed);
+    detail::sessionSavedOffsetY().store(detail::sessionOffsetY().load(std::memory_order_relaxed), std::memory_order_relaxed);
+    detail::sessionSavedOffsetZ().store(detail::sessionOffsetZ().load(std::memory_order_relaxed), std::memory_order_relaxed);
+    detail::sessionSavedLayerDisplayMode().store(detail::sessionLayerDisplayMode().load(std::memory_order_relaxed), std::memory_order_relaxed);
+    detail::sessionSavedDisplayLayer().store(detail::sessionDisplayLayer().load(std::memory_order_relaxed), std::memory_order_relaxed);
+    detail::sessionSavedLayerAxis().store(detail::sessionLayerAxis().load(std::memory_order_relaxed), std::memory_order_relaxed);
     {
-        std::lock_guard lock(gLoadedMutex);
-        gSavedStructurePath = gLastPath;
+        std::lock_guard lock(detail::sessionLoadedMutex());
+        detail::sessionSavedStructurePath() = detail::sessionLastPath();
     }
-    gHasSavedProjection.store(true, std::memory_order_release);
+    detail::sessionHasSavedProjection().store(true, std::memory_order_release);
     saveSettings();
 }
 
 void clear() {
     // Withdraw the requested structure before waiting for the mesh worker.
-    // Otherwise the render hook can observe the old gLoaded in the gap after
+    // Otherwise the render hook can observe the old detail::sessionLoaded() in the gap after
     // projection::disable() and immediately enable the projection again.
     {
-        std::lock_guard lock(gLoadedMutex);
-        gLoaded.reset();
-        gStatus = "已关闭投影";
+        std::lock_guard lock(detail::sessionLoadedMutex());
+        detail::sessionLoaded().reset();
+        detail::sessionStatus() = "已关闭投影";
     }
 
     // The active projection and in-flight worker keep non-owning Block pointers

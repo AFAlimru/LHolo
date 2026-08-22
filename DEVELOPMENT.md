@@ -71,6 +71,7 @@ LHolo/
 │  │  ├─ formats/               结构格式解析与 generation 分配
 │  │  │  └─ StructureFormatLoaders.* `.mcstructure`/`.litematic` 解析为 LoadedStructure
 │  │  ├─ java_to_bedrock/       Chunker 生成映射及运行时解析模块
+│  │  ├─ StructureSession.*    结构会话状态（已加载结构、变换/分层、恢复快照、状态文案）
 │  │  ├─ StructureUiState.*     UI/菜单会话状态（GUI、热键、HUD、路径、材料清单）
 │  │  ├─ StructureLoader.cpp    会话状态、GUI、HUD、快捷键（配置读写由 SettingsStore 负责）
 │  │  └─ StructureLoader.h      LoadedStructure 统一数据模型
@@ -153,6 +154,8 @@ LHolo/
   `StructureLoader` 完成，配置默认值与钳制语义保持不变。
 - `structure/StructureUiState` 持有 UI/菜单会话状态：GUI 可见性、热键配置与按下状态、HUD 开关、
   待处理偏移/切层/保存、路径缓冲与材料清单；交互逻辑仍在 `StructureLoader`，只通过访问器读写。
+- `structure/StructureSession` 持有结构会话状态：已加载结构、变换/分层值、恢复快照与状态文案；
+  公开 getter/setter 语义（含钳制）保持在 `StructureLoader`，内部读写经访问器完成。
 - `ui/HotkeyFormat` 只根据显式参数生成按键名与和弦字符串，不读取会话状态；快捷键交互仍由
   `StructureLoader` 的会话状态驱动。
 - `projection` 负责“结构如何出现在世界中”，不弹文件选择框、不直接操作 ImGui。
