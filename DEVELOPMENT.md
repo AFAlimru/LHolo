@@ -116,8 +116,9 @@ LHolo/
 │  │     ├─ ProjectionGameHooks.* 无状态 BlockSource 虚拟查询与客户端命令 Hook
 │  │     └─ ProjectionRenderHooks.* 有状态 LevelRendererPlayer 渲染 Hook 薄壳
 │  ├─ place/
-│  │  ├─ PlaceHelper.cpp        轻松/手动/范围放置：投影查表、背包取物、放置事务
+│  │  ├─ PlaceHelper.cpp        放置 Hook、开关与公开接口
 │  │  ├─ PlacementState.*       放置会话状态（开关、定时、近期格、失败计划缓存）
+│  │  ├─ PlacementExecutor.*    轻松/手动/范围放置规划与执行
 │  │  └─ PlaceHelper.h          配置开关与 Hook 生命周期接口
 │  └─ input/
 │     ├─ MenuInputGuard.cpp     菜单期间阻止本地玩家开始/持续破坏方块
@@ -218,6 +219,8 @@ LHolo/
 - `place` 负责轻松、手动和范围放置：调用 projection 查询接口，在完整背包中查找物品，必要时交换到快捷栏，并发送 `InventoryTransactionPacket`；不碰渲染与配置。
 - `place/PlacementState` 持有放置会话状态：开关、手动/范围定时、近期放置格与失败计划缓存；
   放置逻辑仍在 `PlaceHelper`，只通过访问器读写。
+- `place/PlacementExecutor` 承载轻松/手动/范围放置的规划与执行（背包查找、交换、放置事务、
+  点击候选与预测匹配）；游戏 Hook 留在 `PlaceHelper`，只调用 `tickEasyPlace`/`tickRangePlace`。
 - `input` 负责菜单期间的最小游戏动作保护；当前只拦截本地玩家破坏方块，不扩展为移动冻结或全交互封锁。
 - `plugin` 只把生命周期委托给 `app/AppKernel`，不承载业务逻辑。
 
