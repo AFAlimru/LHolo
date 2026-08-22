@@ -18,6 +18,7 @@
 #include "projection/ProjectionFramePipeline.h"
 #include "projection/ProjectionInternalTypes.h"
 #include "projection/ProjectionInvalidation.h"
+#include "projection/ProjectionLifecycle.h"
 #include "projection/ProjectionMeshWorker.h"
 #include "projection/ProjectionPlacement.h"
 #include "projection/ProjectionProgress.h"
@@ -47,7 +48,6 @@
 #include <mutex>
 #include <optional>
 #include <memory>
-#include <map>
 #include <set>
 #include <string>
 #include <string_view>
@@ -62,7 +62,6 @@
 #include "mc/client/renderer/BaseActorRenderContext.h"
 #include "mc/client/renderer/Tessellator.h"
 #include "mc/client/renderer/TextureGroup.h"
-#include "mc/client/renderer/block/BlockTessellator.h"
 #include "mc/client/renderer/block/BlockGraphics.h"
 #include "mc/client/renderer/blockactor/BlockActorRenderDispatcher.h"
 #include "mc/deps/minecraft_renderer/framebuilder/dragon/RenderMetadata.h"
@@ -75,7 +74,6 @@
 #include "mc/deps/core/math/Color.h"
 #include "mc/deps/minecraft_renderer/resources/ClientTexture.h"
 #include "mc/deps/minecraft_renderer/resources/ServerTexture.h"
-#include "mc/deps/minecraft_renderer/renderer/IsMissingTexture.h"
 #include "mc/deps/minecraft_renderer/renderer/Mesh.h"
 #include "mc/deps/minecraft_renderer/renderer/TexturePtr.h"
 #include "mc/network/LoopbackPacketSender.h"
@@ -108,7 +106,6 @@ namespace {
 using detail::CorrectionState;
 using detail::attachProjectionWorldEvents;
 using detail::disableMeshWorkerForSession;
-using detail::detachProjectionWorldEvents;
 using detail::findTessellationBlock;
 using detail::findTessellationBlockActor;
 using detail::getProjectionMirror;
@@ -119,7 +116,6 @@ using detail::ProjectionState;
 using detail::ProjectionSectionBuildSettings;
 using detail::RenderBucket;
 using detail::startMeshWorker;
-using detail::stopMeshWorker;
 using detail::SubChunkKey;
 using detail::ScopedTessellationBlocks;
 
@@ -140,12 +136,7 @@ ProjectionState  gState;
 overlay::BoundsWireframe gCaptureBounds;
 
 void clearProjectionStateLocked() {
-    // Finish CPU mesh work before detaching any world-owned objects captured by
-    // the task's private ChunkViewSource/BlockSource snapshot.
-    stopMeshWorker();
-    detachProjectionWorldEvents();
-    detail::resetPublishedBuildProgress();
-    gState = ProjectionState{};
+    detail::resetProjectionState(gState);
 }
 
 void clearProjectionState() {
@@ -177,69 +168,14 @@ bool filterProjectionPacket(Packet& packet) {
     return true;
 }
 
-bool resolveTerrainTexture(IClientInstance& client, ProjectionState& state) {
-    auto* levelRenderer = client.getLevelRenderer();
-    if (!levelRenderer) return false;
-    auto const& atlasTexture = levelRenderer->mAtlasTexture.get();
-    if (!atlasTexture || atlasTexture.isMissingTexture() == IsMissingTexture::Yes) return false;
-    state.terrainTexture.emplace(atlasTexture);
-    state.terrainTextureVariant.emplace(*state.terrainTexture);
-    return true;
-}
-
 bool enableStructureProjection(
     BaseActorRenderContext& renderContext,
     std::shared_ptr<structure::LoadedStructure const> loaded
 ) {
+    ProjectionState next;
+    if (!detail::prepareProjectionState(next, renderContext, std::move(loaded))) return false;
     auto& client = renderContext.getClient();
     auto* player = client.getLocalPlayer();
-    if (!player || !loaded || loaded->renderBlocks.empty()) return false;
-
-    ProjectionState next;
-    next.client = &client;
-    next.level = &player->getLevel();
-    next.dimension = &player->getDimension();
-    next.structure = std::move(loaded);
-    next.structureGeneration = next.structure->generation;
-    next.blockTessellator = std::make_unique<BlockTessellator>(&player->getDimensionBlockSource());
-    next.correctionStates.resize(
-        next.structure->renderBlocks.size(), CorrectionState::Unknown
-    );
-    next.progressCorrect.resize(next.structure->renderBlocks.size(), 0);
-    next.progressErrorKind.resize(next.structure->renderBlocks.size(), 0);
-    next.blockActorRendererAvailable.resize(next.structure->renderBlocks.size(), 0);
-    // Force the first render pass to build the transformed virtual-world lookup.
-    next.cachedRotation = -1;
-    next.cachedMirror = -1;
-    std::map<std::tuple<int, int, int>, std::size_t> sectionLookup;
-    next.blockToSection.resize(next.structure->renderBlocks.size());
-    for (std::size_t index = 0; index < next.structure->renderBlocks.size(); ++index) {
-        auto const& entry = next.structure->renderBlocks[index];
-        auto const key = std::tuple{entry.x / 16, entry.y / 16, entry.z / 16};
-        auto [found, inserted] = sectionLookup.try_emplace(key, next.sectionBlockIndices.size());
-        if (inserted) {
-            next.sectionBlockIndices.emplace_back();
-            auto const [sx, sy, sz] = key;
-            next.sectionCenters.emplace_back(
-                static_cast<float>(sx * 16 + 8),
-                static_cast<float>(sy * 16 + 8),
-                static_cast<float>(sz * 16 + 8)
-            );
-        }
-        next.blockToSection[index] = found->second;
-        next.sectionBlockIndices[found->second].push_back(index);
-    }
-    for (auto& meshes : next.sectionMeshes) meshes.resize(next.sectionBlockIndices.size());
-    next.warningFillSectionMeshes.resize(next.sectionBlockIndices.size());
-    next.correctionOutlineSectionMeshes.resize(next.sectionBlockIndices.size());
-    next.liquidProxySectionMeshes.resize(next.sectionBlockIndices.size());
-    next.blockEntityPlaceholderSectionMeshes.resize(next.sectionBlockIndices.size());
-    next.sectionDirty.assign(next.sectionBlockIndices.size(), true);
-    next.sectionIncrementalDirty.assign(next.sectionBlockIndices.size(), false);
-    next.sectionBuildInFlight.assign(next.sectionBlockIndices.size(), false);
-    next.sectionRequestedRevision.assign(next.sectionBlockIndices.size(), 1);
-    next.sectionUploadedRevision.assign(next.sectionBlockIndices.size(), 0);
-    if (!resolveTerrainTexture(client, next)) return false;
     if (gPendingStructureAnchor.exchange(false, std::memory_order_acq_rel)) {
         next.anchor = BlockPos{
             gPendingStructureAnchorX.load(std::memory_order_relaxed),
@@ -284,9 +220,7 @@ bool enableStructureProjection(
 }
 
 bool contextIsValid(IClientInstance& client, Actor* player) {
-    if (!player) return false;
-    return gState.client == &client && gState.level == &player->getLevel()
-        && gState.dimension == &player->getDimension();
+    return detail::projectionContextMatches(gState, client, player);
 }
 
 void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLayer) {

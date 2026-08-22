@@ -78,6 +78,7 @@ LHolo/
 │  │  ├─ ProjectionFramePipeline.* opaque 帧纠错、上传、边框与构建调度流水线
 │  │  ├─ ProjectionInternalTypes.h 内部键、状态枚举与无资源引用类型
 │  │  ├─ ProjectionInvalidation.* 设置变化检测、section/revision 失效与缓存清理
+│  │  ├─ ProjectionLifecycle.*  ProjectionState 资源准备、停止清理与世界身份匹配
 │  │  ├─ ProjectionMeshScheduler.* 主线程 section 选择、局部快照与同步回退调度
 │  │  ├─ ProjectionMeshUpload.* 主线程完成队列校验、MeshData 上传与失败回退
 │  │  ├─ ProjectionMeshWorker.* 单线程 executor、generation 与完成队列
@@ -123,6 +124,9 @@ LHolo/
   轻量结构边框准备和下一 section 调度；它不采集 GUI 设置、不判断 placement 失效，也不提交最终渲染 pass。
 - `projection/ProjectionInvalidation.*` 对比当前帧设置与缓存值，集中处理旋转/镜像、移动、切层、透明度和
   纠错样式变化引起的 section dirty、revision、旧 Mesh 清理及可见进度重算；placement 重建仍由调用方触发。
+- `projection/ProjectionLifecycle.*` 构造尚未激活的 `ProjectionState`、解析 terrain atlas、建立 section 索引，
+  并按 Worker 停止、世界事件解绑、进度清零、资源释放的顺序执行锁内清理；锁、pending anchor 消费、
+  `gState` 激活和解锁后的 `structure::clear()` 仍由 `Projection.cpp` 控制。
 - `projection/ProjectionProgress.*` 保持原有 acquire/release 语义，在渲染状态计数与 GUI/HUD 读取之间发布
   无锁快照；它不扫描世界，也不自行推导纠错结果。
 - `projection/ProjectionSectionBuilder.*` 统一生成原版方块、液体代理、方块实体占位、纠错覆盖和结构边框
