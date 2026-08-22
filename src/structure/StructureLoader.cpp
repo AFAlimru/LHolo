@@ -18,6 +18,7 @@
 
 #include "settings/SettingsStore.h"
 #include "structure/formats/StructureFormatLoaders.h"
+#include "structure/StructureUiState.h"
 #include "ui/HotkeyFormat.h"
 #include "structure/capture/StructureCapture.h"
 #include "structure/java_to_bedrock/JavaToBedrock.h"
@@ -70,14 +71,13 @@
 namespace lholo::structure {
 namespace {
 
+using detail::MaterialRequirement;
+
 constexpr unsigned int   kHotkeyModifierControl    = 1u;
 constexpr unsigned int   kHotkeyModifierAlt        = 2u;
 constexpr unsigned int   kHotkeyModifierShift      = 4u;
 constexpr char           kMaterialPopupName[]       = "材料清单###LHoloMaterialList";
 
-std::atomic_bool                 gGuiVisible{false};
-std::atomic_int                  gOpeningInputBlockFrames{0};
-std::atomic_uint64_t             gBlockGameInputUntil{};
 std::mutex                       gLoadedMutex;
 std::shared_ptr<LoadedStructure> gLoaded;
 std::atomic_int                  gRotationQuarterTurns{0};
@@ -88,50 +88,6 @@ std::atomic_int                  gOffsetZ{0};
 std::atomic_int                  gLayerDisplayMode{0};
 std::atomic_int                  gDisplayLayer{0};
 std::atomic_int                  gLayerAxis{0};
-std::atomic_bool                 gHudEnabled{true};
-std::atomic_bool                 gHudShowFileName{true};
-std::atomic_bool                 gHudShowLayer{true};
-std::atomic_bool                 gHudShowOverallProgress{false};
-std::atomic_bool                 gHudShowProgress{true};
-std::atomic_bool                 gHudShowWrongState{true};
-std::atomic_bool                 gHudShowWrongType{true};
-std::atomic_bool                 gHudShowBlockEntity{true};
-// 0: left-top, 1: left-bottom (default), 2: right-top, 3: right-bottom.
-std::atomic_int                  gHudPosition{1};
-std::atomic<float>              gUiScale{2.0f};
-std::atomic_uint                 gGuiHotkey{'M'};
-std::atomic_uint                 gGuiHotkeyModifiers{kHotkeyModifierAlt};
-std::atomic_bool                 gCapturingGuiHotkey{false};
-std::atomic_bool                 gGuiHotkeyHeld{false};
-std::atomic_uint                 gLayerIncreaseHotkey{VK_UP};
-std::atomic_uint                 gLayerDecreaseHotkey{VK_DOWN};
-std::atomic_uint                 gLayerIncreaseHotkeyModifiers{kHotkeyModifierAlt};
-std::atomic_uint                 gLayerDecreaseHotkeyModifiers{kHotkeyModifierAlt};
-std::atomic_bool                 gCapturingLayerIncreaseHotkey{false};
-std::atomic_bool                 gCapturingLayerDecreaseHotkey{false};
-std::atomic_bool                 gLayerIncreaseHotkeyHeld{false};
-std::atomic_bool                 gLayerDecreaseHotkeyHeld{false};
-std::array<std::atomic_uint, 6>  gMoveHotkeys{VK_LEFT, VK_RIGHT, VK_UP, VK_DOWN, VK_UP, VK_DOWN};
-std::array<std::atomic_uint, 6>  gMoveHotkeyModifiers{
-    kHotkeyModifierControl,
-    kHotkeyModifierControl,
-    kHotkeyModifierControl,
-    kHotkeyModifierControl,
-    kHotkeyModifierShift,
-    kHotkeyModifierShift
-};
-std::array<std::atomic_bool, 6>  gCapturingMoveHotkey{};
-std::array<std::atomic_bool, 6>  gMoveHotkeyHeld{};
-std::atomic_bool                 gControlHeld{false};
-std::atomic_bool                 gAltHeld{false};
-std::atomic_bool                 gShiftHeld{false};
-std::array<std::atomic_uint64_t, 256> gConsumeKeyReleaseUntil{};
-std::atomic_int                  gPendingOffsetX{0};
-std::atomic_int                  gPendingOffsetY{0};
-std::atomic_int                  gPendingOffsetZ{0};
-std::atomic_int                  gPendingLayerDelta{0};
-std::atomic_bool                 gPendingSettingsSave{false};
-std::atomic_uint64_t             gIgnoreHotkeyUntil{0};
 std::atomic_bool                 gHasSavedProjection{false};
 std::atomic_int                  gSavedAnchorX{0};
 std::atomic_int                  gSavedAnchorY{0};
@@ -147,18 +103,6 @@ std::atomic_int                  gSavedLayerAxis{0};
 std::string                      gSavedStructurePath;
 std::string                      gLastPath;
 std::string                      gStatus = "尚未加载结构文件";
-std::mutex                       gMaterialMutex;
-std::atomic_bool                 gMaterialListRequested{false};
-
-struct MaterialRequirement {
-    std::string displayName;
-    std::string typeName;
-    std::uint64_t count{};
-};
-
-std::vector<MaterialRequirement> gMaterialRequirements;
-std::array<char, 2048>          gPathBuffer{};
-bool                            gPathInitialized{};
 lholo::ui::MenuPage             gActivePage{lholo::ui::MenuPage::Projection};
 
 int maxLayerFor(LoadedStructure const& structure, int axis) {
@@ -292,20 +236,20 @@ std::string pathToUtf8(std::filesystem::path const& path) {
 
 unsigned int currentHotkeyModifiers() {
     unsigned int modifiers{};
-    if (gControlHeld.load(std::memory_order_acquire)) modifiers |= kHotkeyModifierControl;
-    if (gAltHeld.load(std::memory_order_acquire)) modifiers |= kHotkeyModifierAlt;
-    if (gShiftHeld.load(std::memory_order_acquire)) modifiers |= kHotkeyModifierShift;
+    if (detail::uiControlHeld().load(std::memory_order_acquire)) modifiers |= kHotkeyModifierControl;
+    if (detail::uiAltHeld().load(std::memory_order_acquire)) modifiers |= kHotkeyModifierAlt;
+    if (detail::uiShiftHeld().load(std::memory_order_acquire)) modifiers |= kHotkeyModifierShift;
     return modifiers;
 }
 
 } // namespace
 
 void requestMaterialList() {
-    gMaterialListRequested.store(true, std::memory_order_release);
+    detail::uiMaterialListRequested().store(true, std::memory_order_release);
 }
 
 void processPendingMaterialList() {
-    if (!gMaterialListRequested.exchange(false, std::memory_order_acq_rel)) return;
+    if (!detail::uiMaterialListRequested().exchange(false, std::memory_order_acq_rel)) return;
 
     auto const loaded = getLoaded();
     std::string localeCode;
@@ -316,55 +260,55 @@ void processPendingMaterialList() {
     std::vector<MaterialRequirement> materials;
     if (loaded) materials = collectMaterials(loaded->renderBlocks, localeCode);
 
-    std::lock_guard lock(gMaterialMutex);
-    gMaterialRequirements = std::move(materials);
+    std::lock_guard lock(detail::uiMaterialMutex());
+    detail::uiMaterialRequirements() = std::move(materials);
 }
 
 void requestOpenGui() {
-    auto const opening = !gGuiVisible.load(std::memory_order_acquire);
-    gGuiVisible.store(opening, std::memory_order_release);
+    auto const opening = !detail::uiGuiVisible().load(std::memory_order_acquire);
+    detail::uiGuiVisible().store(opening, std::memory_order_release);
     if (opening) {
-        gOpeningInputBlockFrames.store(3, std::memory_order_release);
+        detail::uiOpeningInputBlockFrames().store(3, std::memory_order_release);
     } else {
         // Consume the release half of the key/click that closed the menu.
         // Without this, Minecraft receives an unmatched Esc or mouse-up after
         // the ImGui window has already disappeared.
-        gBlockGameInputUntil.store(GetTickCount64() + 180, std::memory_order_release);
+        detail::uiBlockGameInputUntil().store(GetTickCount64() + 180, std::memory_order_release);
     }
 }
 
-bool isGuiVisible() { return gGuiVisible.load(std::memory_order_acquire); }
+bool isGuiVisible() { return detail::uiGuiVisible().load(std::memory_order_acquire); }
 
 bool isInputTransitionBlocked() {
-    return GetTickCount64() <= gBlockGameInputUntil.load(std::memory_order_acquire);
+    return GetTickCount64() <= detail::uiBlockGameInputUntil().load(std::memory_order_acquire);
 }
 
 bool handleGuiHotkeyKeyDown(unsigned int virtualKey) {
     auto const modifierKey = ui::isModifierKey(virtualKey);
     if (virtualKey == VK_CONTROL || virtualKey == VK_LCONTROL || virtualKey == VK_RCONTROL) {
-        gControlHeld.store(true, std::memory_order_release);
+        detail::uiControlHeld().store(true, std::memory_order_release);
     } else if (virtualKey == VK_MENU || virtualKey == VK_LMENU || virtualKey == VK_RMENU) {
-        gAltHeld.store(true, std::memory_order_release);
+        detail::uiAltHeld().store(true, std::memory_order_release);
     } else if (virtualKey == VK_SHIFT || virtualKey == VK_LSHIFT || virtualKey == VK_RSHIFT) {
-        gShiftHeld.store(true, std::memory_order_release);
+        detail::uiShiftHeld().store(true, std::memory_order_release);
     }
 
     std::atomic_uint* captureKey{};
     std::atomic_uint* captureModifiers{};
-    if (gCapturingGuiHotkey.load(std::memory_order_acquire)) {
-        captureKey = &gGuiHotkey;
-        captureModifiers = &gGuiHotkeyModifiers;
-    } else if (gCapturingLayerIncreaseHotkey.load(std::memory_order_acquire)) {
-        captureKey = &gLayerIncreaseHotkey;
-        captureModifiers = &gLayerIncreaseHotkeyModifiers;
-    } else if (gCapturingLayerDecreaseHotkey.load(std::memory_order_acquire)) {
-        captureKey = &gLayerDecreaseHotkey;
-        captureModifiers = &gLayerDecreaseHotkeyModifiers;
+    if (detail::uiCapturingGuiHotkey().load(std::memory_order_acquire)) {
+        captureKey = &detail::uiGuiHotkey();
+        captureModifiers = &detail::uiGuiHotkeyModifiers();
+    } else if (detail::uiCapturingLayerIncreaseHotkey().load(std::memory_order_acquire)) {
+        captureKey = &detail::uiLayerIncreaseHotkey();
+        captureModifiers = &detail::uiLayerIncreaseHotkeyModifiers();
+    } else if (detail::uiCapturingLayerDecreaseHotkey().load(std::memory_order_acquire)) {
+        captureKey = &detail::uiLayerDecreaseHotkey();
+        captureModifiers = &detail::uiLayerDecreaseHotkeyModifiers();
     } else {
-        for (std::size_t index = 0; index < gCapturingMoveHotkey.size(); ++index) {
-            if (gCapturingMoveHotkey[index].load(std::memory_order_acquire)) {
-                captureKey = &gMoveHotkeys[index];
-                captureModifiers = &gMoveHotkeyModifiers[index];
+        for (std::size_t index = 0; index < detail::uiCapturingMoveHotkey().size(); ++index) {
+            if (detail::uiCapturingMoveHotkey()[index].load(std::memory_order_acquire)) {
+                captureKey = &detail::uiMoveHotkeys()[index];
+                captureModifiers = &detail::uiMoveHotkeyModifiers()[index];
                 break;
             }
         }
@@ -374,10 +318,10 @@ bool handleGuiHotkeyKeyDown(unsigned int virtualKey) {
         // consume it as a mod shortcut, including while rebinding controls.
         if (virtualKey == VK_F11) return false;
         auto stopCapturing = [] {
-            gCapturingGuiHotkey.store(false, std::memory_order_release);
-            gCapturingLayerIncreaseHotkey.store(false, std::memory_order_release);
-            gCapturingLayerDecreaseHotkey.store(false, std::memory_order_release);
-            for (auto& capturing : gCapturingMoveHotkey) {
+            detail::uiCapturingGuiHotkey().store(false, std::memory_order_release);
+            detail::uiCapturingLayerIncreaseHotkey().store(false, std::memory_order_release);
+            detail::uiCapturingLayerDecreaseHotkey().store(false, std::memory_order_release);
+            for (auto& capturing : detail::uiCapturingMoveHotkey()) {
                 capturing.store(false, std::memory_order_release);
             }
         };
@@ -387,7 +331,7 @@ bool handleGuiHotkeyKeyDown(unsigned int virtualKey) {
             captureKey->store(0, std::memory_order_release);
             captureModifiers->store(0, std::memory_order_release);
             stopCapturing();
-            gPendingSettingsSave.store(true, std::memory_order_release);
+            detail::uiPendingSettingsSave().store(true, std::memory_order_release);
         } else if (!modifierKey) {
             auto const modifiers = currentHotkeyModifiers();
             auto clearDuplicate = [captureKey, captureModifiers, virtualKey, modifiers](
@@ -401,17 +345,17 @@ bool handleGuiHotkeyKeyDown(unsigned int virtualKey) {
                     keyModifiers.store(0, std::memory_order_relaxed);
                 }
             };
-            clearDuplicate(gGuiHotkey, gGuiHotkeyModifiers);
-            clearDuplicate(gLayerIncreaseHotkey, gLayerIncreaseHotkeyModifiers);
-            clearDuplicate(gLayerDecreaseHotkey, gLayerDecreaseHotkeyModifiers);
-            for (std::size_t index = 0; index < gMoveHotkeys.size(); ++index) {
-                clearDuplicate(gMoveHotkeys[index], gMoveHotkeyModifiers[index]);
+            clearDuplicate(detail::uiGuiHotkey(), detail::uiGuiHotkeyModifiers());
+            clearDuplicate(detail::uiLayerIncreaseHotkey(), detail::uiLayerIncreaseHotkeyModifiers());
+            clearDuplicate(detail::uiLayerDecreaseHotkey(), detail::uiLayerDecreaseHotkeyModifiers());
+            for (std::size_t index = 0; index < detail::uiMoveHotkeys().size(); ++index) {
+                clearDuplicate(detail::uiMoveHotkeys()[index], detail::uiMoveHotkeyModifiers()[index]);
             }
             captureKey->store(virtualKey, std::memory_order_release);
             captureModifiers->store(modifiers, std::memory_order_release);
             stopCapturing();
-            gIgnoreHotkeyUntil.store(GetTickCount64() + 250, std::memory_order_release);
-            gPendingSettingsSave.store(true, std::memory_order_release);
+            detail::uiIgnoreHotkeyUntil().store(GetTickCount64() + 250, std::memory_order_release);
+            detail::uiPendingSettingsSave().store(true, std::memory_order_release);
         }
         return true;
     }
@@ -419,29 +363,29 @@ bool handleGuiHotkeyKeyDown(unsigned int virtualKey) {
     if (modifierKey) return false;
 
     auto const modifiers = currentHotkeyModifiers();
-    auto const hotkey = gGuiHotkey.load(std::memory_order_acquire);
+    auto const hotkey = detail::uiGuiHotkey().load(std::memory_order_acquire);
     if (hotkey != 0 && virtualKey == hotkey
-        && modifiers == gGuiHotkeyModifiers.load(std::memory_order_acquire)) {
-        if (GetTickCount64() >= gIgnoreHotkeyUntil.load(std::memory_order_acquire)
-            && !gGuiHotkeyHeld.exchange(true, std::memory_order_acq_rel)) {
+        && modifiers == detail::uiGuiHotkeyModifiers().load(std::memory_order_acquire)) {
+        if (GetTickCount64() >= detail::uiIgnoreHotkeyUntil().load(std::memory_order_acquire)
+            && !detail::uiGuiHotkeyHeld().exchange(true, std::memory_order_acq_rel)) {
             requestOpenGui();
         }
         return true;
     }
     if (isGuiVisible()) return false;
 
-    for (std::size_t index = 0; index < gMoveHotkeys.size(); ++index) {
-        if (gMoveHotkeys[index].load(std::memory_order_acquire) == virtualKey
-            && gMoveHotkeyModifiers[index].load(std::memory_order_acquire) == modifiers) {
-            if (GetTickCount64() >= gIgnoreHotkeyUntil.load(std::memory_order_acquire)
-                && !gMoveHotkeyHeld[index].exchange(true, std::memory_order_acq_rel)) {
+    for (std::size_t index = 0; index < detail::uiMoveHotkeys().size(); ++index) {
+        if (detail::uiMoveHotkeys()[index].load(std::memory_order_acquire) == virtualKey
+            && detail::uiMoveHotkeyModifiers()[index].load(std::memory_order_acquire) == modifiers) {
+            if (GetTickCount64() >= detail::uiIgnoreHotkeyUntil().load(std::memory_order_acquire)
+                && !detail::uiMoveHotkeyHeld()[index].exchange(true, std::memory_order_acq_rel)) {
                 switch (index) {
-                case 0: gPendingOffsetX.fetch_sub(1, std::memory_order_relaxed); break;
-                case 1: gPendingOffsetX.fetch_add(1, std::memory_order_relaxed); break;
-                case 2: gPendingOffsetZ.fetch_sub(1, std::memory_order_relaxed); break;
-                case 3: gPendingOffsetZ.fetch_add(1, std::memory_order_relaxed); break;
-                case 4: gPendingOffsetY.fetch_add(1, std::memory_order_relaxed); break;
-                case 5: gPendingOffsetY.fetch_sub(1, std::memory_order_relaxed); break;
+                case 0: detail::uiPendingOffsetX().fetch_sub(1, std::memory_order_relaxed); break;
+                case 1: detail::uiPendingOffsetX().fetch_add(1, std::memory_order_relaxed); break;
+                case 2: detail::uiPendingOffsetZ().fetch_sub(1, std::memory_order_relaxed); break;
+                case 3: detail::uiPendingOffsetZ().fetch_add(1, std::memory_order_relaxed); break;
+                case 4: detail::uiPendingOffsetY().fetch_add(1, std::memory_order_relaxed); break;
+                case 5: detail::uiPendingOffsetY().fetch_sub(1, std::memory_order_relaxed); break;
                 default: break;
                 }
             }
@@ -449,23 +393,23 @@ bool handleGuiHotkeyKeyDown(unsigned int virtualKey) {
         }
     }
 
-    auto const layerIncreaseHotkey = gLayerIncreaseHotkey.load(std::memory_order_acquire);
+    auto const layerIncreaseHotkey = detail::uiLayerIncreaseHotkey().load(std::memory_order_acquire);
     if (layerIncreaseHotkey != 0 && virtualKey == layerIncreaseHotkey
-        && modifiers == gLayerIncreaseHotkeyModifiers.load(std::memory_order_acquire)) {
+        && modifiers == detail::uiLayerIncreaseHotkeyModifiers().load(std::memory_order_acquire)) {
         if (gLayerDisplayMode.load(std::memory_order_acquire) == 0) return false;
-        if (GetTickCount64() >= gIgnoreHotkeyUntil.load(std::memory_order_acquire)
-            && !gLayerIncreaseHotkeyHeld.exchange(true, std::memory_order_acq_rel)) {
-            gPendingLayerDelta.fetch_add(1, std::memory_order_relaxed);
+        if (GetTickCount64() >= detail::uiIgnoreHotkeyUntil().load(std::memory_order_acquire)
+            && !detail::uiLayerIncreaseHotkeyHeld().exchange(true, std::memory_order_acq_rel)) {
+            detail::uiPendingLayerDelta().fetch_add(1, std::memory_order_relaxed);
         }
         return true;
     }
-    auto const layerDecreaseHotkey = gLayerDecreaseHotkey.load(std::memory_order_acquire);
+    auto const layerDecreaseHotkey = detail::uiLayerDecreaseHotkey().load(std::memory_order_acquire);
     if (layerDecreaseHotkey != 0 && virtualKey == layerDecreaseHotkey
-        && modifiers == gLayerDecreaseHotkeyModifiers.load(std::memory_order_acquire)) {
+        && modifiers == detail::uiLayerDecreaseHotkeyModifiers().load(std::memory_order_acquire)) {
         if (gLayerDisplayMode.load(std::memory_order_acquire) == 0) return false;
-        if (GetTickCount64() >= gIgnoreHotkeyUntil.load(std::memory_order_acquire)
-            && !gLayerDecreaseHotkeyHeld.exchange(true, std::memory_order_acq_rel)) {
-            gPendingLayerDelta.fetch_sub(1, std::memory_order_relaxed);
+        if (GetTickCount64() >= detail::uiIgnoreHotkeyUntil().load(std::memory_order_acquire)
+            && !detail::uiLayerDecreaseHotkeyHeld().exchange(true, std::memory_order_acq_rel)) {
+            detail::uiPendingLayerDelta().fetch_sub(1, std::memory_order_relaxed);
         }
         return true;
     }
@@ -474,36 +418,36 @@ bool handleGuiHotkeyKeyDown(unsigned int virtualKey) {
 
 bool handleGuiHotkeyKeyUp(unsigned int virtualKey) {
     if (virtualKey == VK_CONTROL || virtualKey == VK_LCONTROL || virtualKey == VK_RCONTROL) {
-        gControlHeld.store(false, std::memory_order_release);
+        detail::uiControlHeld().store(false, std::memory_order_release);
         return false;
     }
     if (virtualKey == VK_MENU || virtualKey == VK_LMENU || virtualKey == VK_RMENU) {
-        gAltHeld.store(false, std::memory_order_release);
+        detail::uiAltHeld().store(false, std::memory_order_release);
         return false;
     }
     if (virtualKey == VK_SHIFT || virtualKey == VK_LSHIFT || virtualKey == VK_RSHIFT) {
-        gShiftHeld.store(false, std::memory_order_release);
+        detail::uiShiftHeld().store(false, std::memory_order_release);
         return false;
     }
 
     bool consumed{};
-    if (virtualKey == gGuiHotkey.load(std::memory_order_acquire)) {
-        consumed = gGuiHotkeyHeld.exchange(false, std::memory_order_acq_rel) || consumed;
+    if (virtualKey == detail::uiGuiHotkey().load(std::memory_order_acquire)) {
+        consumed = detail::uiGuiHotkeyHeld().exchange(false, std::memory_order_acq_rel) || consumed;
     }
-    if (virtualKey == gLayerIncreaseHotkey.load(std::memory_order_acquire)) {
-        consumed = gLayerIncreaseHotkeyHeld.exchange(false, std::memory_order_acq_rel) || consumed;
+    if (virtualKey == detail::uiLayerIncreaseHotkey().load(std::memory_order_acquire)) {
+        consumed = detail::uiLayerIncreaseHotkeyHeld().exchange(false, std::memory_order_acq_rel) || consumed;
     }
-    if (virtualKey == gLayerDecreaseHotkey.load(std::memory_order_acquire)) {
-        consumed = gLayerDecreaseHotkeyHeld.exchange(false, std::memory_order_acq_rel) || consumed;
+    if (virtualKey == detail::uiLayerDecreaseHotkey().load(std::memory_order_acquire)) {
+        consumed = detail::uiLayerDecreaseHotkeyHeld().exchange(false, std::memory_order_acq_rel) || consumed;
     }
-    for (std::size_t index = 0; index < gMoveHotkeys.size(); ++index) {
-        if (virtualKey == gMoveHotkeys[index].load(std::memory_order_acquire)) {
-            consumed = gMoveHotkeyHeld[index].exchange(false, std::memory_order_acq_rel) || consumed;
+    for (std::size_t index = 0; index < detail::uiMoveHotkeys().size(); ++index) {
+        if (virtualKey == detail::uiMoveHotkeys()[index].load(std::memory_order_acquire)) {
+            consumed = detail::uiMoveHotkeyHeld()[index].exchange(false, std::memory_order_acq_rel) || consumed;
         }
     }
-    if (virtualKey < gConsumeKeyReleaseUntil.size()) {
+    if (virtualKey < detail::uiConsumeKeyReleaseUntil().size()) {
         auto const now = GetTickCount64();
-        auto& deadline = gConsumeKeyReleaseUntil[virtualKey];
+        auto& deadline = detail::uiConsumeKeyReleaseUntil()[virtualKey];
         if (consumed) {
             deadline.store(now + 100, std::memory_order_release);
             return true;
@@ -514,21 +458,21 @@ bool handleGuiHotkeyKeyUp(unsigned int virtualKey) {
 }
 
 void resetHotkeyState() {
-    gControlHeld.store(false, std::memory_order_release);
-    gAltHeld.store(false, std::memory_order_release);
-    gShiftHeld.store(false, std::memory_order_release);
-    gGuiHotkeyHeld.store(false, std::memory_order_release);
-    gLayerIncreaseHotkeyHeld.store(false, std::memory_order_release);
-    gLayerDecreaseHotkeyHeld.store(false, std::memory_order_release);
-    for (auto& held : gMoveHotkeyHeld) held.store(false, std::memory_order_release);
-    for (auto& deadline : gConsumeKeyReleaseUntil) deadline.store(0, std::memory_order_release);
+    detail::uiControlHeld().store(false, std::memory_order_release);
+    detail::uiAltHeld().store(false, std::memory_order_release);
+    detail::uiShiftHeld().store(false, std::memory_order_release);
+    detail::uiGuiHotkeyHeld().store(false, std::memory_order_release);
+    detail::uiLayerIncreaseHotkeyHeld().store(false, std::memory_order_release);
+    detail::uiLayerDecreaseHotkeyHeld().store(false, std::memory_order_release);
+    for (auto& held : detail::uiMoveHotkeyHeld()) held.store(false, std::memory_order_release);
+    for (auto& deadline : detail::uiConsumeKeyReleaseUntil()) deadline.store(0, std::memory_order_release);
 }
 
 void processPendingHotkeyActions() {
-    auto const offsetX = gPendingOffsetX.exchange(0, std::memory_order_acq_rel);
-    auto const offsetY = gPendingOffsetY.exchange(0, std::memory_order_acq_rel);
-    auto const offsetZ = gPendingOffsetZ.exchange(0, std::memory_order_acq_rel);
-    auto const layerDelta = gPendingLayerDelta.exchange(0, std::memory_order_acq_rel);
+    auto const offsetX = detail::uiPendingOffsetX().exchange(0, std::memory_order_acq_rel);
+    auto const offsetY = detail::uiPendingOffsetY().exchange(0, std::memory_order_acq_rel);
+    auto const offsetZ = detail::uiPendingOffsetZ().exchange(0, std::memory_order_acq_rel);
+    auto const layerDelta = detail::uiPendingLayerDelta().exchange(0, std::memory_order_acq_rel);
     auto const layerActionEnabled = layerDelta != 0
         && gLayerDisplayMode.load(std::memory_order_relaxed) != 0;
     bool changed = offsetX != 0 || offsetY != 0 || offsetZ != 0 || layerActionEnabled;
@@ -559,33 +503,33 @@ void processPendingHotkeyActions() {
         gDisplayLayer.store(static_cast<int>(next), std::memory_order_relaxed);
     }
 
-    changed = gPendingSettingsSave.exchange(false, std::memory_order_acq_rel) || changed;
+    changed = detail::uiPendingSettingsSave().exchange(false, std::memory_order_acq_rel) || changed;
     if (changed) saveSettings();
 }
 
 bool hasHudInfo() {
-    if (!gHudEnabled.load(std::memory_order_relaxed)) return false;
-    if (!gHudShowFileName.load(std::memory_order_relaxed)
-        && !gHudShowLayer.load(std::memory_order_relaxed)
-        && !gHudShowOverallProgress.load(std::memory_order_relaxed)
-        && !gHudShowProgress.load(std::memory_order_relaxed)
-        && !gHudShowWrongState.load(std::memory_order_relaxed)
-        && !gHudShowWrongType.load(std::memory_order_relaxed)
-        && !gHudShowBlockEntity.load(std::memory_order_relaxed)) return false;
+    if (!detail::uiHudEnabled().load(std::memory_order_relaxed)) return false;
+    if (!detail::uiHudShowFileName().load(std::memory_order_relaxed)
+        && !detail::uiHudShowLayer().load(std::memory_order_relaxed)
+        && !detail::uiHudShowOverallProgress().load(std::memory_order_relaxed)
+        && !detail::uiHudShowProgress().load(std::memory_order_relaxed)
+        && !detail::uiHudShowWrongState().load(std::memory_order_relaxed)
+        && !detail::uiHudShowWrongType().load(std::memory_order_relaxed)
+        && !detail::uiHudShowBlockEntity().load(std::memory_order_relaxed)) return false;
     std::lock_guard lock(gLoadedMutex);
     return static_cast<bool>(gLoaded);
 }
 
 void renderHud() {
     if (isGuiVisible()) return;
-    if (!gHudEnabled.load(std::memory_order_relaxed)) return;
-    auto const showFileName = gHudShowFileName.load(std::memory_order_relaxed);
-    auto const showLayer = gHudShowLayer.load(std::memory_order_relaxed);
-    auto const showOverallProgress = gHudShowOverallProgress.load(std::memory_order_relaxed);
-    auto const showProgress = gHudShowProgress.load(std::memory_order_relaxed);
-    auto const showWrongState = gHudShowWrongState.load(std::memory_order_relaxed);
-    auto const showWrongType = gHudShowWrongType.load(std::memory_order_relaxed);
-    auto const showBlockEntity = gHudShowBlockEntity.load(std::memory_order_relaxed);
+    if (!detail::uiHudEnabled().load(std::memory_order_relaxed)) return;
+    auto const showFileName = detail::uiHudShowFileName().load(std::memory_order_relaxed);
+    auto const showLayer = detail::uiHudShowLayer().load(std::memory_order_relaxed);
+    auto const showOverallProgress = detail::uiHudShowOverallProgress().load(std::memory_order_relaxed);
+    auto const showProgress = detail::uiHudShowProgress().load(std::memory_order_relaxed);
+    auto const showWrongState = detail::uiHudShowWrongState().load(std::memory_order_relaxed);
+    auto const showWrongType = detail::uiHudShowWrongType().load(std::memory_order_relaxed);
+    auto const showBlockEntity = detail::uiHudShowBlockEntity().load(std::memory_order_relaxed);
     if (!showFileName && !showLayer && !showOverallProgress && !showProgress
         && !showWrongState && !showWrongType && !showBlockEntity) return;
 
@@ -600,7 +544,7 @@ void renderHud() {
     }
 
     auto const displaySize = ImGui::GetIO().DisplaySize;
-    auto uiScale = gUiScale.load(std::memory_order_relaxed);
+    auto uiScale = detail::uiUiScale().load(std::memory_order_relaxed);
     if (uiScale <= 0.0f) {
         uiScale = std::clamp(
             std::min(displaySize.x / 1920.0f, displaySize.y / 1080.0f),
@@ -617,7 +561,7 @@ void renderHud() {
         maxLayer
     );
 
-    auto const hudPosition = std::clamp(gHudPosition.load(std::memory_order_relaxed), 0, 3);
+    auto const hudPosition = std::clamp(detail::uiHudPosition().load(std::memory_order_relaxed), 0, 3);
     auto const right = hudPosition >= 2;
     auto const bottom = (hudPosition & 1) != 0;
     auto const margin = hudMetrics.outerPadding;
@@ -719,24 +663,24 @@ struct UiHotkeyBinding {
 
 UiHotkeyBinding hotkeyBinding(lholo::ui::HotkeyId id) {
     switch (id) {
-    case lholo::ui::HotkeyId::Gui: return {&gGuiHotkey, &gGuiHotkeyModifiers, &gCapturingGuiHotkey};
-    case lholo::ui::HotkeyId::MoveXMinus: return {&gMoveHotkeys[0], &gMoveHotkeyModifiers[0], &gCapturingMoveHotkey[0]};
-    case lholo::ui::HotkeyId::MoveXPlus: return {&gMoveHotkeys[1], &gMoveHotkeyModifiers[1], &gCapturingMoveHotkey[1]};
-    case lholo::ui::HotkeyId::MoveZMinus: return {&gMoveHotkeys[2], &gMoveHotkeyModifiers[2], &gCapturingMoveHotkey[2]};
-    case lholo::ui::HotkeyId::MoveZPlus: return {&gMoveHotkeys[3], &gMoveHotkeyModifiers[3], &gCapturingMoveHotkey[3]};
-    case lholo::ui::HotkeyId::MoveYPlus: return {&gMoveHotkeys[4], &gMoveHotkeyModifiers[4], &gCapturingMoveHotkey[4]};
-    case lholo::ui::HotkeyId::MoveYMinus: return {&gMoveHotkeys[5], &gMoveHotkeyModifiers[5], &gCapturingMoveHotkey[5]};
-    case lholo::ui::HotkeyId::LayerIncrease: return {&gLayerIncreaseHotkey, &gLayerIncreaseHotkeyModifiers, &gCapturingLayerIncreaseHotkey};
-    case lholo::ui::HotkeyId::LayerDecrease: return {&gLayerDecreaseHotkey, &gLayerDecreaseHotkeyModifiers, &gCapturingLayerDecreaseHotkey};
+    case lholo::ui::HotkeyId::Gui: return {&detail::uiGuiHotkey(), &detail::uiGuiHotkeyModifiers(), &detail::uiCapturingGuiHotkey()};
+    case lholo::ui::HotkeyId::MoveXMinus: return {&detail::uiMoveHotkeys()[0], &detail::uiMoveHotkeyModifiers()[0], &detail::uiCapturingMoveHotkey()[0]};
+    case lholo::ui::HotkeyId::MoveXPlus: return {&detail::uiMoveHotkeys()[1], &detail::uiMoveHotkeyModifiers()[1], &detail::uiCapturingMoveHotkey()[1]};
+    case lholo::ui::HotkeyId::MoveZMinus: return {&detail::uiMoveHotkeys()[2], &detail::uiMoveHotkeyModifiers()[2], &detail::uiCapturingMoveHotkey()[2]};
+    case lholo::ui::HotkeyId::MoveZPlus: return {&detail::uiMoveHotkeys()[3], &detail::uiMoveHotkeyModifiers()[3], &detail::uiCapturingMoveHotkey()[3]};
+    case lholo::ui::HotkeyId::MoveYPlus: return {&detail::uiMoveHotkeys()[4], &detail::uiMoveHotkeyModifiers()[4], &detail::uiCapturingMoveHotkey()[4]};
+    case lholo::ui::HotkeyId::MoveYMinus: return {&detail::uiMoveHotkeys()[5], &detail::uiMoveHotkeyModifiers()[5], &detail::uiCapturingMoveHotkey()[5]};
+    case lholo::ui::HotkeyId::LayerIncrease: return {&detail::uiLayerIncreaseHotkey(), &detail::uiLayerIncreaseHotkeyModifiers(), &detail::uiCapturingLayerIncreaseHotkey()};
+    case lholo::ui::HotkeyId::LayerDecrease: return {&detail::uiLayerDecreaseHotkey(), &detail::uiLayerDecreaseHotkeyModifiers(), &detail::uiCapturingLayerDecreaseHotkey()};
     }
     return {};
 }
 
 void stopHotkeyCapture() {
-    gCapturingGuiHotkey.store(false, std::memory_order_release);
-    gCapturingLayerIncreaseHotkey.store(false, std::memory_order_release);
-    gCapturingLayerDecreaseHotkey.store(false, std::memory_order_release);
-    for (auto& capturing : gCapturingMoveHotkey) capturing.store(false, std::memory_order_release);
+    detail::uiCapturingGuiHotkey().store(false, std::memory_order_release);
+    detail::uiCapturingLayerIncreaseHotkey().store(false, std::memory_order_release);
+    detail::uiCapturingLayerDecreaseHotkey().store(false, std::memory_order_release);
+    for (auto& capturing : detail::uiCapturingMoveHotkey()) capturing.store(false, std::memory_order_release);
 }
 
 struct HotkeyDefinition { lholo::ui::HotkeyId id; char const* label; };
@@ -755,9 +699,9 @@ constexpr std::array<HotkeyDefinition, 9> kHotkeyDefinitions{{
 lholo::ui::MenuModel makeMenuModel(float effectiveUiScale) {
     lholo::ui::MenuModel model;
     model.page = gActivePage;
-    model.pathBuffer = gPathBuffer.data();
-    model.pathBufferSize = gPathBuffer.size();
-    model.blockOpeningInput = gOpeningInputBlockFrames.load(std::memory_order_acquire) > 0;
+    model.pathBuffer = detail::uiPathBuffer().data();
+    model.pathBufferSize = detail::uiPathBuffer().size();
+    model.blockOpeningInput = detail::uiOpeningInputBlockFrames().load(std::memory_order_acquire) > 0;
     model.uiScale = effectiveUiScale;
     auto const captureSnapshot = capture::getSnapshot();
     model.capture.mode = static_cast<int>(captureSnapshot.draft.mode);
@@ -806,15 +750,15 @@ lholo::ui::MenuModel makeMenuModel(float effectiveUiScale) {
         gDisplayLayer.load(std::memory_order_relaxed), 0,
         model.layerAxis == 1 ? model.maxLayerX : model.maxLayerY
     );
-    model.hudEnabled = gHudEnabled.load(std::memory_order_relaxed);
-    model.hudPosition = std::clamp(gHudPosition.load(std::memory_order_relaxed), 0, 3);
-    model.hudShowFileName = gHudShowFileName.load(std::memory_order_relaxed);
-    model.hudShowLayer = gHudShowLayer.load(std::memory_order_relaxed);
-    model.hudShowOverallProgress = gHudShowOverallProgress.load(std::memory_order_relaxed);
-    model.hudShowProgress = gHudShowProgress.load(std::memory_order_relaxed);
-    model.hudShowWrongState = gHudShowWrongState.load(std::memory_order_relaxed);
-    model.hudShowWrongType = gHudShowWrongType.load(std::memory_order_relaxed);
-    model.hudShowBlockEntity = gHudShowBlockEntity.load(std::memory_order_relaxed);
+    model.hudEnabled = detail::uiHudEnabled().load(std::memory_order_relaxed);
+    model.hudPosition = std::clamp(detail::uiHudPosition().load(std::memory_order_relaxed), 0, 3);
+    model.hudShowFileName = detail::uiHudShowFileName().load(std::memory_order_relaxed);
+    model.hudShowLayer = detail::uiHudShowLayer().load(std::memory_order_relaxed);
+    model.hudShowOverallProgress = detail::uiHudShowOverallProgress().load(std::memory_order_relaxed);
+    model.hudShowProgress = detail::uiHudShowProgress().load(std::memory_order_relaxed);
+    model.hudShowWrongState = detail::uiHudShowWrongState().load(std::memory_order_relaxed);
+    model.hudShowWrongType = detail::uiHudShowWrongType().load(std::memory_order_relaxed);
+    model.hudShowBlockEntity = detail::uiHudShowBlockEntity().load(std::memory_order_relaxed);
     for (auto const& definition : kHotkeyDefinitions) {
         auto const binding = hotkeyBinding(definition.id);
         auto& row = model.hotkeys[static_cast<std::size_t>(definition.id)];
@@ -827,9 +771,9 @@ lholo::ui::MenuModel makeMenuModel(float effectiveUiScale) {
         row.capturing = binding.capturing->load(std::memory_order_acquire);
     }
     {
-        std::lock_guard lock(gMaterialMutex);
-        model.materials.reserve(gMaterialRequirements.size());
-        for (auto const& material : gMaterialRequirements) {
+        std::lock_guard lock(detail::uiMaterialMutex());
+        model.materials.reserve(detail::uiMaterialRequirements().size());
+        for (auto const& material : detail::uiMaterialRequirements()) {
             model.materials.push_back({material.displayName, material.typeName, material.count});
         }
     }
@@ -845,8 +789,8 @@ void applyMenuModel(lholo::ui::MenuModel const& model, float effectiveUiScale) {
     };
     if (std::abs(model.uiScale - effectiveUiScale) > 0.001f) {
         auto const scale = std::clamp(model.uiScale, 1.0f, 5.0f);
-        if (std::abs(gUiScale.load(std::memory_order_relaxed) - scale) > 0.001f) {
-            gUiScale.store(scale, std::memory_order_relaxed);
+        if (std::abs(detail::uiUiScale().load(std::memory_order_relaxed) - scale) > 0.001f) {
+            detail::uiUiScale().store(scale, std::memory_order_relaxed);
             changed = true;
         }
     }
@@ -882,15 +826,15 @@ void applyMenuModel(lholo::ui::MenuModel const& model, float effectiveUiScale) {
         if (gLoaded) displayMax = maxLayerFor(*gLoaded, layerAxis);
     }
     update(gDisplayLayer, std::clamp(model.displayLayer, 0, displayMax));
-    update(gHudEnabled, model.hudEnabled);
-    update(gHudPosition, std::clamp(model.hudPosition, 0, 3));
-    update(gHudShowFileName, model.hudShowFileName);
-    update(gHudShowLayer, model.hudShowLayer);
-    update(gHudShowOverallProgress, model.hudShowOverallProgress);
-    update(gHudShowProgress, model.hudShowProgress);
-    update(gHudShowWrongState, model.hudShowWrongState);
-    update(gHudShowWrongType, model.hudShowWrongType);
-    update(gHudShowBlockEntity, model.hudShowBlockEntity);
+    update(detail::uiHudEnabled(), model.hudEnabled);
+    update(detail::uiHudPosition(), std::clamp(model.hudPosition, 0, 3));
+    update(detail::uiHudShowFileName(), model.hudShowFileName);
+    update(detail::uiHudShowLayer(), model.hudShowLayer);
+    update(detail::uiHudShowOverallProgress(), model.hudShowOverallProgress);
+    update(detail::uiHudShowProgress(), model.hudShowProgress);
+    update(detail::uiHudShowWrongState(), model.hudShowWrongState);
+    update(detail::uiHudShowWrongType(), model.hudShowWrongType);
+    update(detail::uiHudShowBlockEntity(), model.hudShowBlockEntity);
     capture::Draft captureDraft;
     captureDraft.mode = static_cast<capture::CaptureMode>(std::clamp(model.capture.mode, 0, 1));
     captureDraft.includeEntities = model.capture.includeEntities;
@@ -976,7 +920,7 @@ lholo::ui::MenuActions makeMenuActions(bool& refreshModel) {
             gStatus = "已恢复上次投影记录，等待进入渲染";
             gLoaded = std::move(loaded);
         }
-        std::snprintf(gPathBuffer.data(), gPathBuffer.size(), "%s", savedPath.c_str());
+        std::snprintf(detail::uiPathBuffer().data(), detail::uiPathBuffer().size(), "%s", savedPath.c_str());
         refreshModel = true;
         logger().info("Restoring projection {} at ({}, {}, {})", savedPath, x, y, z);
     };
@@ -998,18 +942,18 @@ lholo::ui::MenuActions makeMenuActions(bool& refreshModel) {
         }
     };
     actions.resetHotkeys = [] {
-        gGuiHotkey.store('M', std::memory_order_relaxed);
-        gGuiHotkeyModifiers.store(kHotkeyModifierAlt, std::memory_order_relaxed);
+        detail::uiGuiHotkey().store('M', std::memory_order_relaxed);
+        detail::uiGuiHotkeyModifiers().store(kHotkeyModifierAlt, std::memory_order_relaxed);
         static unsigned int const moveKeys[]{VK_LEFT, VK_RIGHT, VK_UP, VK_DOWN, VK_UP, VK_DOWN};
         static unsigned int const moveModifiers[]{kHotkeyModifierControl, kHotkeyModifierControl, kHotkeyModifierControl, kHotkeyModifierControl, kHotkeyModifierShift, kHotkeyModifierShift};
-        for (std::size_t index = 0; index < gMoveHotkeys.size(); ++index) {
-            gMoveHotkeys[index].store(moveKeys[index], std::memory_order_relaxed);
-            gMoveHotkeyModifiers[index].store(moveModifiers[index], std::memory_order_relaxed);
+        for (std::size_t index = 0; index < detail::uiMoveHotkeys().size(); ++index) {
+            detail::uiMoveHotkeys()[index].store(moveKeys[index], std::memory_order_relaxed);
+            detail::uiMoveHotkeyModifiers()[index].store(moveModifiers[index], std::memory_order_relaxed);
         }
-        gLayerIncreaseHotkey.store(VK_UP, std::memory_order_relaxed);
-        gLayerDecreaseHotkey.store(VK_DOWN, std::memory_order_relaxed);
-        gLayerIncreaseHotkeyModifiers.store(kHotkeyModifierAlt, std::memory_order_relaxed);
-        gLayerDecreaseHotkeyModifiers.store(kHotkeyModifierAlt, std::memory_order_relaxed);
+        detail::uiLayerIncreaseHotkey().store(VK_UP, std::memory_order_relaxed);
+        detail::uiLayerDecreaseHotkey().store(VK_DOWN, std::memory_order_relaxed);
+        detail::uiLayerIncreaseHotkeyModifiers().store(kHotkeyModifierAlt, std::memory_order_relaxed);
+        detail::uiLayerDecreaseHotkeyModifiers().store(kHotkeyModifierAlt, std::memory_order_relaxed);
         stopHotkeyCapture();
         resetHotkeyState();
         saveSettings();
@@ -1050,14 +994,14 @@ lholo::ui::MenuActions makeMenuActions(bool& refreshModel) {
 void renderGui() {
     if (!isGuiVisible()) return;
     auto const displaySize = ImGui::GetIO().DisplaySize;
-    auto const configuredScale = gUiScale.load(std::memory_order_relaxed);
+    auto const configuredScale = detail::uiUiScale().load(std::memory_order_relaxed);
     auto const effectiveScale = configuredScale > 0.0f
         ? std::clamp(configuredScale, 1.0f, 5.0f)
         : std::clamp(std::min(displaySize.x / 1920.0f, displaySize.y / 1080.0f), 1.0f, 5.0f);
-    if (!gPathInitialized) {
+    if (!detail::uiPathInitialized()) {
         std::lock_guard lock(gLoadedMutex);
-        std::snprintf(gPathBuffer.data(), gPathBuffer.size(), "%s", gLastPath.c_str());
-        gPathInitialized = true;
+        std::snprintf(detail::uiPathBuffer().data(), detail::uiPathBuffer().size(), "%s", gLastPath.c_str());
+        detail::uiPathInitialized() = true;
     }
     auto const metrics = lholo::ui::calculateMetrics(displaySize, effectiveScale);
     lholo::ui::applyFluentTheme(metrics);
@@ -1067,12 +1011,12 @@ void renderGui() {
     lholo::ui::renderMenu(model, actions, metrics);
     gActivePage = model.page;
     if (!refreshModel) applyMenuModel(model, effectiveScale);
-    if (gOpeningInputBlockFrames.load(std::memory_order_acquire) > 0) {
-        gOpeningInputBlockFrames.fetch_sub(1, std::memory_order_acq_rel);
+    if (detail::uiOpeningInputBlockFrames().load(std::memory_order_acquire) > 0) {
+        detail::uiOpeningInputBlockFrames().fetch_sub(1, std::memory_order_acq_rel);
     }
     if (model.closeRequested) {
-        gGuiVisible.store(false, std::memory_order_release);
-        gBlockGameInputUntil.store(GetTickCount64() + 180, std::memory_order_release);
+        detail::uiGuiVisible().store(false, std::memory_order_release);
+        detail::uiBlockGameInputUntil().store(GetTickCount64() + 180, std::memory_order_release);
     }
 }
 
@@ -1086,7 +1030,7 @@ void loadSettings() {
         }
         std::lock_guard lock(gLoadedMutex);
         gLastPath = settings.lastStructurePath;
-        gUiScale.store(std::clamp(settings.uiScale, 0.0f, 5.0f), std::memory_order_relaxed);
+        detail::uiUiScale().store(std::clamp(settings.uiScale, 0.0f, 5.0f), std::memory_order_relaxed);
         projection::setOpacity(settings.opacity);
         projection::setCorrectionFillOpacity(settings.correctionFillOpacity);
         projection::setCorrectionOutlineOpacity(settings.correctionOutlineOpacity);
@@ -1101,42 +1045,42 @@ void loadSettings() {
         gLayerDisplayMode.store(0, std::memory_order_relaxed);
         gDisplayLayer.store(0, std::memory_order_relaxed);
         gLayerAxis.store(0, std::memory_order_relaxed);
-        gHudEnabled.store(settings.hudEnabled, std::memory_order_relaxed);
-        gHudShowFileName.store(settings.hudShowFileName, std::memory_order_relaxed);
-        gHudShowLayer.store(settings.hudShowLayer, std::memory_order_relaxed);
-        gHudShowOverallProgress.store(settings.hudShowOverallProgress, std::memory_order_relaxed);
-        gHudShowProgress.store(settings.hudShowProgress, std::memory_order_relaxed);
-        gHudShowWrongState.store(settings.hudShowWrongState, std::memory_order_relaxed);
-        gHudShowWrongType.store(settings.hudShowWrongType, std::memory_order_relaxed);
-        gHudShowBlockEntity.store(settings.hudShowBlockEntity, std::memory_order_relaxed);
-        gHudPosition.store(std::clamp(settings.hudPosition, 0, 3), std::memory_order_relaxed);
+        detail::uiHudEnabled().store(settings.hudEnabled, std::memory_order_relaxed);
+        detail::uiHudShowFileName().store(settings.hudShowFileName, std::memory_order_relaxed);
+        detail::uiHudShowLayer().store(settings.hudShowLayer, std::memory_order_relaxed);
+        detail::uiHudShowOverallProgress().store(settings.hudShowOverallProgress, std::memory_order_relaxed);
+        detail::uiHudShowProgress().store(settings.hudShowProgress, std::memory_order_relaxed);
+        detail::uiHudShowWrongState().store(settings.hudShowWrongState, std::memory_order_relaxed);
+        detail::uiHudShowWrongType().store(settings.hudShowWrongType, std::memory_order_relaxed);
+        detail::uiHudShowBlockEntity().store(settings.hudShowBlockEntity, std::memory_order_relaxed);
+        detail::uiHudPosition().store(std::clamp(settings.hudPosition, 0, 3), std::memory_order_relaxed);
         // Assisted-placement modes are intentionally session-only. Ignore
         // legacy persisted values and always begin a new game session disabled.
         place::setEnabled(false);
         place::setManualMode(false);
         place::setRangeEnabled(false);
         place::setPlacementRadius(std::clamp(settings.placementRadius, 1, 4));
-        gGuiHotkey.store(std::clamp(settings.guiHotkey, 0, 255), std::memory_order_relaxed);
-        gGuiHotkeyModifiers.store(
+        detail::uiGuiHotkey().store(std::clamp(settings.guiHotkey, 0, 255), std::memory_order_relaxed);
+        detail::uiGuiHotkeyModifiers().store(
             std::clamp(settings.guiHotkeyModifiers, 0, 7), std::memory_order_relaxed
         );
-        gLayerIncreaseHotkey.store(
+        detail::uiLayerIncreaseHotkey().store(
             std::clamp(settings.layerIncreaseHotkey, 0, 255), std::memory_order_relaxed
         );
-        gLayerDecreaseHotkey.store(
+        detail::uiLayerDecreaseHotkey().store(
             std::clamp(settings.layerDecreaseHotkey, 0, 255), std::memory_order_relaxed
         );
-        gLayerIncreaseHotkeyModifiers.store(
+        detail::uiLayerIncreaseHotkeyModifiers().store(
             std::clamp(settings.layerIncreaseHotkeyModifiers, 0, 7), std::memory_order_relaxed
         );
-        gLayerDecreaseHotkeyModifiers.store(
+        detail::uiLayerDecreaseHotkeyModifiers().store(
             std::clamp(settings.layerDecreaseHotkeyModifiers, 0, 7), std::memory_order_relaxed
         );
-        for (std::size_t index = 0; index < gMoveHotkeys.size(); ++index) {
-            gMoveHotkeys[index].store(
+        for (std::size_t index = 0; index < detail::uiMoveHotkeys().size(); ++index) {
+            detail::uiMoveHotkeys()[index].store(
                 std::clamp(settings.moveHotkeys[index], 0, 255), std::memory_order_relaxed
             );
-            gMoveHotkeyModifiers[index].store(
+            detail::uiMoveHotkeyModifiers()[index].store(
                 std::clamp(settings.moveHotkeyModifiers[index], 0, 7), std::memory_order_relaxed
             );
         }
@@ -1190,33 +1134,33 @@ void saveSettings() {
         }
         lholo::settings::Settings settings;
         settings.lastStructurePath = lastPath;
-        settings.uiScale = gUiScale.load(std::memory_order_relaxed);
+        settings.uiScale = detail::uiUiScale().load(std::memory_order_relaxed);
         settings.opacity = projection::getOpacity();
         settings.correctionFillOpacity = projection::getCorrectionFillOpacity();
         settings.correctionOutlineOpacity = projection::getCorrectionOutlineOpacity();
         settings.structureBoundsEnabled = projection::getStructureBoundsEnabled();
         settings.placementRadius = place::getPlacementRadius();
-        settings.hudEnabled = gHudEnabled.load(std::memory_order_relaxed);
-        settings.hudShowFileName = gHudShowFileName.load(std::memory_order_relaxed);
-        settings.hudShowLayer = gHudShowLayer.load(std::memory_order_relaxed);
-        settings.hudShowOverallProgress = gHudShowOverallProgress.load(std::memory_order_relaxed);
-        settings.hudShowProgress = gHudShowProgress.load(std::memory_order_relaxed);
-        settings.hudShowWrongState = gHudShowWrongState.load(std::memory_order_relaxed);
-        settings.hudShowWrongType = gHudShowWrongType.load(std::memory_order_relaxed);
-        settings.hudShowBlockEntity = gHudShowBlockEntity.load(std::memory_order_relaxed);
-        settings.hudPosition = gHudPosition.load(std::memory_order_relaxed);
-        settings.guiHotkey = gGuiHotkey.load(std::memory_order_relaxed);
-        settings.guiHotkeyModifiers = gGuiHotkeyModifiers.load(std::memory_order_relaxed);
-        settings.layerIncreaseHotkey = gLayerIncreaseHotkey.load(std::memory_order_relaxed);
-        settings.layerDecreaseHotkey = gLayerDecreaseHotkey.load(std::memory_order_relaxed);
+        settings.hudEnabled = detail::uiHudEnabled().load(std::memory_order_relaxed);
+        settings.hudShowFileName = detail::uiHudShowFileName().load(std::memory_order_relaxed);
+        settings.hudShowLayer = detail::uiHudShowLayer().load(std::memory_order_relaxed);
+        settings.hudShowOverallProgress = detail::uiHudShowOverallProgress().load(std::memory_order_relaxed);
+        settings.hudShowProgress = detail::uiHudShowProgress().load(std::memory_order_relaxed);
+        settings.hudShowWrongState = detail::uiHudShowWrongState().load(std::memory_order_relaxed);
+        settings.hudShowWrongType = detail::uiHudShowWrongType().load(std::memory_order_relaxed);
+        settings.hudShowBlockEntity = detail::uiHudShowBlockEntity().load(std::memory_order_relaxed);
+        settings.hudPosition = detail::uiHudPosition().load(std::memory_order_relaxed);
+        settings.guiHotkey = detail::uiGuiHotkey().load(std::memory_order_relaxed);
+        settings.guiHotkeyModifiers = detail::uiGuiHotkeyModifiers().load(std::memory_order_relaxed);
+        settings.layerIncreaseHotkey = detail::uiLayerIncreaseHotkey().load(std::memory_order_relaxed);
+        settings.layerDecreaseHotkey = detail::uiLayerDecreaseHotkey().load(std::memory_order_relaxed);
         settings.layerIncreaseHotkeyModifiers
-            = gLayerIncreaseHotkeyModifiers.load(std::memory_order_relaxed);
+            = detail::uiLayerIncreaseHotkeyModifiers().load(std::memory_order_relaxed);
         settings.layerDecreaseHotkeyModifiers
-            = gLayerDecreaseHotkeyModifiers.load(std::memory_order_relaxed);
+            = detail::uiLayerDecreaseHotkeyModifiers().load(std::memory_order_relaxed);
         for (std::size_t index = 0; index < settings.moveHotkeys.size(); ++index) {
-            settings.moveHotkeys[index] = gMoveHotkeys[index].load(std::memory_order_relaxed);
+            settings.moveHotkeys[index] = detail::uiMoveHotkeys()[index].load(std::memory_order_relaxed);
             settings.moveHotkeyModifiers[index]
-                = gMoveHotkeyModifiers[index].load(std::memory_order_relaxed);
+                = detail::uiMoveHotkeyModifiers()[index].load(std::memory_order_relaxed);
         }
         settings.hasSavedProjection = gHasSavedProjection.load(std::memory_order_relaxed);
         settings.savedAnchorX = gSavedAnchorX.load(std::memory_order_relaxed);
@@ -1291,9 +1235,9 @@ void clear() {
     // into the Java mapper registry. Stop them before releasing that registry.
     projection::disable();
     resetJavaBlockMappingCache();
-    gMaterialListRequested.store(false, std::memory_order_release);
-    std::lock_guard materialLock(gMaterialMutex);
-    gMaterialRequirements.clear();
+    detail::uiMaterialListRequested().store(false, std::memory_order_release);
+    std::lock_guard materialLock(detail::uiMaterialMutex());
+    detail::uiMaterialRequirements().clear();
 }
 
 } // namespace lholo::structure
