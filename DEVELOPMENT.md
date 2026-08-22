@@ -95,7 +95,7 @@ LHolo/
 │  │  │  ├─ ProjectionLifecycle.* ProjectionState 资源准备、停止清理与世界身份匹配
 │  │  │  ├─ ProjectionProgress.* 渲染线程到 HUD 的无锁进度快照发布
 │  │  │  ├─ ProjectionRenderFrame.* 帧编排：结构激活、世界校验、提交与命中抑制
-│  │  │  ├─ ProjectionSession.* 会话状态访问契约（存储暂由门面提供）
+│  │  │  ├─ ProjectionSession.* 会话状态存储与访问契约
 │  │  │  └─ ProjectionWorldEvents.* 真实世界方块/子区块通知的监听与排队
 │  │  └─ hooks/
 │  │     ├─ ProjectionGameHooks.* 无状态 BlockSource 虚拟查询与客户端命令 Hook
@@ -139,8 +139,8 @@ LHolo/
 - `projection/runtime/ProjectionRenderFrame.*` 在 runtime 内实现结构激活、世界身份校验、opaque/transparent
   Mesh 提交、命中选择抑制和 `$renderBlockEntities` 后的帧入口；它只通过 `ProjectionSession` 访问会话状态，
   不直接触碰 `Projection.cpp` 的全局变量。
-- `projection/runtime/ProjectionSession.*` 提供会话级可变状态的访问契约：状态锁、`ProjectionState`、捕获
-  边框、透明度、结构边框开关与下一次锚点。存储仍由门面持有，这是状态所有权下沉前的中间契约。
+- `projection/runtime/ProjectionSession.*` 持有全部会话级可变状态：状态锁、`ProjectionState`、捕获边框、
+  透明度、结构边框开关与下一次锚点，并通过访问器提供给帧编排和门面；`Projection.cpp` 不再直接读写全局量。
 - `projection/runtime/ProjectionInvalidation.*` 对比当前帧设置与缓存值，集中处理旋转/镜像、移动、切层、透明度和
   纠错样式变化引起的 section dirty、revision、旧 Mesh 清理及可见进度重算；placement 重建仍由调用方触发。
 - `projection/runtime/ProjectionLifecycle.*` 构造尚未激活的 `ProjectionState`、解析 terrain atlas、建立 section 索引，

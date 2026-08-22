@@ -112,68 +112,12 @@ auto& logger() {
     return LHolo::getInstance().getSelf().getLogger();
 }
 
-std::atomic<float> gOpacity{1.0f};
-std::atomic<float> gCorrectionFillOpacity{0.15f};
-std::atomic<float> gCorrectionOutlineOpacity{1.0f};
-std::atomic_bool   gStructureBoundsEnabled{true};
-std::atomic_bool   gPendingStructureAnchor{false};
-std::atomic_int    gPendingStructureAnchorX{0};
-std::atomic_int    gPendingStructureAnchorY{0};
-std::atomic_int    gPendingStructureAnchorZ{0};
-std::mutex       gStateMutex;
-ProjectionState  gState;
-overlay::BoundsWireframe gCaptureBounds;
-
 void clearProjectionState() {
     std::lock_guard lock(detail::projectionStateMutex());
     detail::clearProjectionStateLocked();
 }
 
 } // namespace
-
-namespace detail {
-
-std::mutex& projectionStateMutex() {
-    return gStateMutex;
-}
-
-ProjectionState& projectionState() {
-    return gState;
-}
-
-void clearProjectionStateLocked() {
-    detail::resetProjectionState(gState);
-}
-
-overlay::BoundsWireframe& projectionCaptureBounds() {
-    return gCaptureBounds;
-}
-
-float projectionOpacity() {
-    return gOpacity.load(std::memory_order_relaxed);
-}
-
-float projectionCorrectionFillOpacity() {
-    return gCorrectionFillOpacity.load(std::memory_order_relaxed);
-}
-
-float projectionCorrectionOutlineOpacity() {
-    return gCorrectionOutlineOpacity.load(std::memory_order_relaxed);
-}
-
-bool projectionStructureBoundsEnabled() {
-    return gStructureBoundsEnabled.load(std::memory_order_relaxed);
-}
-
-bool consumeProjectionAnchor(int& x, int& y, int& z) {
-    if (!gPendingStructureAnchor.exchange(false, std::memory_order_acq_rel)) return false;
-    x = gPendingStructureAnchorX.load(std::memory_order_relaxed);
-    y = gPendingStructureAnchorY.load(std::memory_order_relaxed);
-    z = gPendingStructureAnchorZ.load(std::memory_order_relaxed);
-    return true;
-}
-
-} // namespace detail
 
 bool installHook() {
     if (!detail::installProjectionGameHooks()) return false;
@@ -196,42 +140,39 @@ void disable() {
 }
 
 float getOpacity() {
-    return gOpacity.load(std::memory_order_relaxed);
+    return detail::projectionOpacity();
 }
 
 void setOpacity(float opacity) {
-    gOpacity.store(std::clamp(opacity, 0.0f, 1.0f), std::memory_order_relaxed);
+    detail::setProjectionOpacity(opacity);
 }
 
 float getCorrectionFillOpacity() {
-    return gCorrectionFillOpacity.load(std::memory_order_relaxed);
+    return detail::projectionCorrectionFillOpacity();
 }
 
 void setCorrectionFillOpacity(float opacity) {
-    gCorrectionFillOpacity.store(std::clamp(opacity, 0.0f, 1.0f), std::memory_order_relaxed);
+    detail::setProjectionCorrectionFillOpacity(opacity);
 }
 
 float getCorrectionOutlineOpacity() {
-    return gCorrectionOutlineOpacity.load(std::memory_order_relaxed);
+    return detail::projectionCorrectionOutlineOpacity();
 }
 
 void setCorrectionOutlineOpacity(float opacity) {
-    gCorrectionOutlineOpacity.store(std::clamp(opacity, 0.0f, 1.0f), std::memory_order_relaxed);
+    detail::setProjectionCorrectionOutlineOpacity(opacity);
 }
 
 bool getStructureBoundsEnabled() {
-    return gStructureBoundsEnabled.load(std::memory_order_relaxed);
+    return detail::projectionStructureBoundsEnabled();
 }
 
 void setStructureBoundsEnabled(bool enabled) {
-    gStructureBoundsEnabled.store(enabled, std::memory_order_relaxed);
+    detail::setProjectionStructureBoundsEnabled(enabled);
 }
 
 void requestNextStructureAnchor(int x, int y, int z) {
-    gPendingStructureAnchorX.store(x, std::memory_order_relaxed);
-    gPendingStructureAnchorY.store(y, std::memory_order_relaxed);
-    gPendingStructureAnchorZ.store(z, std::memory_order_relaxed);
-    gPendingStructureAnchor.store(true, std::memory_order_release);
+    detail::requestProjectionAnchor(x, y, z);
 }
 
 BuildProgress getBuildProgress() {
@@ -239,27 +180,29 @@ BuildProgress getBuildProgress() {
 }
 
 ProjectionQuery queryProjection(LocalPlayer& player, BlockPos const& worldPos) {
-    std::unique_lock lock(gStateMutex);
-    if (!gState.enabled || !gState.structure) return {nullptr, false};
-    if (gState.level != &player.getLevel() || gState.dimension != &player.getDimension()) {
+    std::unique_lock lock(detail::projectionStateMutex());
+    auto& state = detail::projectionState();
+    if (!state.enabled || !state.structure) return {nullptr, false};
+    if (state.level != &player.getLevel() || state.dimension != &player.getDimension()) {
         detail::clearProjectionStateLocked();
         lock.unlock();
         structure::clear();
         return {nullptr, false};
     }
-    return detail::queryProjectionCell(gState, worldPos);
+    return detail::queryProjectionCell(state, worldPos);
 }
 
 std::vector<RangeCandidate> queryMissingCellsInRange(LocalPlayer& player, Vec3 const& center, float radius) {
-    std::unique_lock lock(gStateMutex);
-    if (!gState.enabled || !gState.structure) return {};
-    if (gState.level != &player.getLevel() || gState.dimension != &player.getDimension()) {
+    std::unique_lock lock(detail::projectionStateMutex());
+    auto& state = detail::projectionState();
+    if (!state.enabled || !state.structure) return {};
+    if (state.level != &player.getLevel() || state.dimension != &player.getDimension()) {
         detail::clearProjectionStateLocked();
         lock.unlock();
         structure::clear();
         return {};
     }
-    return detail::queryMissingProjectionCells(gState, center, radius);
+    return detail::queryMissingProjectionCells(state, center, radius);
 }
 
 } // namespace lholo::projection

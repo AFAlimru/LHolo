@@ -23,10 +23,15 @@ void                      clearProjectionStateLocked();
 overlay::BoundsWireframe& projectionCaptureBounds();
 
 float projectionOpacity();
+void  setProjectionOpacity(float opacity);
 float projectionCorrectionFillOpacity();
+void  setProjectionCorrectionFillOpacity(float opacity);
 float projectionCorrectionOutlineOpacity();
+void  setProjectionCorrectionOutlineOpacity(float opacity);
 bool  projectionStructureBoundsEnabled();
+void  setProjectionStructureBoundsEnabled(bool enabled);
 
 bool consumeProjectionAnchor(int& x, int& y, int& z);
+void requestProjectionAnchor(int x, int y, int z);
 
 } // namespace lholo::projection::detail
