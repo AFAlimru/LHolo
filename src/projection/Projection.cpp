@@ -19,6 +19,7 @@
 #include "projection/ProjectionMeshWorker.h"
 #include "projection/ProjectionRules.h"
 #include "projection/ProjectionState.h"
+#include "projection/ProjectionVirtualWorld.h"
 
 #include "overlay/BoundsWireframe.h"
 #include "plugin/LHolo.h"
@@ -117,6 +118,8 @@ using detail::disableMeshWorkerForSession;
 using detail::ExpectedBlockActorMap;
 using detail::ExpectedBlockIndexMap;
 using detail::ExpectedBlockMap;
+using detail::findTessellationBlock;
+using detail::findTessellationBlockActor;
 using detail::blockFrontFace;
 using detail::getProjectionMirror;
 using detail::getProjectionRotation;
@@ -131,6 +134,7 @@ using detail::renderBucketFor;
 using detail::startMeshWorker;
 using detail::stopMeshWorker;
 using detail::SubChunkKey;
+using detail::ScopedTessellationBlocks;
 using detail::submitMeshWorkerTask;
 using detail::takeCompletedSectionBuilds;
 using detail::transformExpectedBlock;
@@ -168,31 +172,6 @@ std::uint32_t modulateAbgr(std::uint32_t color, std::uint32_t tint) {
 auto& logger() {
     return LHolo::getInstance().getSelf().getLogger();
 }
-
-thread_local ExpectedBlockMap const*      gTessellationBlocks{};
-thread_local ExpectedBlockActorMap const* gTessellationBlockActors{};
-
-class ScopedTessellationBlocks {
-public:
-    explicit ScopedTessellationBlocks(
-        ExpectedBlockMap const& blocks,
-        ExpectedBlockActorMap const& blockActors
-    )
-    : mPreviousBlocks(std::exchange(gTessellationBlocks, &blocks)),
-      mPreviousBlockActors(std::exchange(gTessellationBlockActors, &blockActors)) {}
-
-    ~ScopedTessellationBlocks() {
-        gTessellationBlocks      = mPreviousBlocks;
-        gTessellationBlockActors = mPreviousBlockActors;
-    }
-
-    ScopedTessellationBlocks(ScopedTessellationBlocks const&) = delete;
-    ScopedTessellationBlocks& operator=(ScopedTessellationBlocks const&) = delete;
-
-private:
-    ExpectedBlockMap const*      mPreviousBlocks{};
-    ExpectedBlockActorMap const* mPreviousBlockActors{};
-};
 
 void pairProjectedChests(BlockSource& region, ProjectionState& state) {
     constexpr std::array<std::pair<int, int>, 4> horizontalNeighbors{{
@@ -2309,12 +2288,7 @@ LL_TYPE_INSTANCE_HOOK(
     Block const&,
     BlockPos const& position
 ) {
-    if (gTessellationBlocks) {
-        auto const found = gTessellationBlocks->find(
-            std::tuple{position.x, position.y, position.z}
-        );
-        if (found != gTessellationBlocks->end()) return *found->second;
-    }
+    if (auto const* block = findTessellationBlock(position)) return *block;
     return origin(position);
 }
 
@@ -2327,9 +2301,8 @@ LL_TYPE_INSTANCE_HOOK(
     BlockPos const& position,
     uint layer
 ) {
-    if (layer == 0 && gTessellationBlocks) {
-        auto const found = gTessellationBlocks->find(std::tuple{position.x, position.y, position.z});
-        if (found != gTessellationBlocks->end()) return *found->second;
+    if (layer == 0) {
+        if (auto const* block = findTessellationBlock(position)) return *block;
     }
     return origin(position, layer);
 }
@@ -2342,10 +2315,7 @@ LL_TYPE_INSTANCE_HOOK(
     BlockActor const*,
     BlockPos const& position
 ) {
-    if (gTessellationBlockActors) {
-        auto const found = gTessellationBlockActors->find(std::tuple{position.x, position.y, position.z});
-        if (found != gTessellationBlockActors->end()) return found->second.get();
-    }
+    if (auto const* actor = findTessellationBlockActor(position)) return actor;
     return origin(position);
 }
 
