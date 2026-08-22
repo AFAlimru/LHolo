@@ -1552,9 +1552,11 @@ void applyMenuModel(lholo::ui::MenuModel const& model, float effectiveUiScale) {
         projection::setStructureBoundsEnabled(model.structureBoundsEnabled);
         changed = true;
     }
-    if (place::isEnabled() != model.easyPlaceEnabled) { place::setEnabled(model.easyPlaceEnabled); changed = true; }
-    if (place::isManualMode() != model.manualPlace) { place::setManualMode(model.manualPlace); changed = true; }
-    if (place::isRangeEnabled() != model.rangeEnabled) { place::setRangeEnabled(model.rangeEnabled); changed = true; }
+    // Assisted-placement modes are session-only safety controls. Applying a
+    // mode must not dirty or rewrite the persistent settings file.
+    if (place::isEnabled() != model.easyPlaceEnabled) place::setEnabled(model.easyPlaceEnabled);
+    if (place::isManualMode() != model.manualPlace) place::setManualMode(model.manualPlace);
+    if (place::isRangeEnabled() != model.rangeEnabled) place::setRangeEnabled(model.rangeEnabled);
     auto const radius = std::clamp(model.placementRadius, 1, 4);
     if (place::getPlacementRadius() != radius) { place::setPlacementRadius(radius); changed = true; }
     update(gOffsetX, model.offsetX);
@@ -1810,9 +1812,11 @@ void loadSettings() {
         gHudShowWrongType.store(json.value("hudShowWrongType", true), std::memory_order_relaxed);
         gHudShowBlockEntity.store(json.value("hudShowBlockEntity", true), std::memory_order_relaxed);
         gHudPosition.store(std::clamp(json.value("hudPosition", 1), 0, 3), std::memory_order_relaxed);
-        place::setEnabled(json.value("easyPlaceEnabled", false));
-        place::setManualMode(json.value("easyPlaceManual", false));
-        place::setRangeEnabled(json.value("rangePlaceEnabled", false));
+        // Assisted-placement modes are intentionally session-only. Ignore
+        // legacy persisted values and always begin a new game session disabled.
+        place::setEnabled(false);
+        place::setManualMode(false);
+        place::setRangeEnabled(false);
         place::setPlacementRadius(std::clamp(json.value("placementRadius", 4), 1, 4));
         gGuiHotkey.store(std::clamp(json.value("guiHotkey", static_cast<int>('M')), 0, 255), std::memory_order_relaxed);
         gGuiHotkeyModifiers.store(
@@ -1922,16 +1926,13 @@ void saveSettings() {
             savedStructurePath = gSavedStructurePath;
         }
         nlohmann::ordered_json const json{
-            {"version", 7},
+            {"version", 8},
             {"lastStructurePath", lastPath},
             {"uiScale", gUiScale.load(std::memory_order_relaxed)},
             {"opacity", projection::getOpacity()},
             {"correctionFillOpacity", projection::getCorrectionFillOpacity()},
             {"correctionOutlineOpacity", projection::getCorrectionOutlineOpacity()},
             {"structureBoundsEnabled", projection::getStructureBoundsEnabled()},
-            {"easyPlaceEnabled", place::isEnabled()},
-            {"easyPlaceManual", place::isManualMode()},
-            {"rangePlaceEnabled", place::isRangeEnabled()},
             {"placementRadius", place::getPlacementRadius()},
             {"hudEnabled", gHudEnabled.load(std::memory_order_relaxed)},
             {"hudShowFileName", gHudShowFileName.load(std::memory_order_relaxed)},

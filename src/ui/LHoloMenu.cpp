@@ -484,6 +484,14 @@ void renderExperimentalPage(MenuModel& model, UiMetrics const& metrics) {
         if (model.easyPlaceEnabled) { model.manualPlace = false; model.rangeEnabled = false; }
         renderCheckboxRow("##RangePlace", "范围放置（自动放置周围投影缺块）", model.rangeEnabled, metrics);
         if (model.rangeEnabled) { model.easyPlaceEnabled = false; model.manualPlace = false; }
+        ImGui::Dummy(ImVec2(0.0f, metrics.gap * 0.25f));
+        if (model.manualPlace || model.easyPlaceEnabled || model.rangeEnabled) {
+            char const* mode = model.manualPlace ? "手动放置"
+                : model.easyPlaceEnabled ? "轻松放置" : "范围放置";
+            ImGui::TextWrapped("%s已临时开启", mode);
+        } else {
+            ImGui::TextDisabled("辅助放置未开启");
+        }
         renderSteppedInt("PlacementRadius", "放置半径（范围 1～4）", model.placementRadius, 1, 4, metrics);
     });
 }

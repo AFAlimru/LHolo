@@ -618,7 +618,7 @@ LeviLamina Hook：
 mods/LHolo/config/config.json
 ```
 
-当前配置版本：`7`。
+当前配置版本：`8`。
 
 正式持久化字段：
 
@@ -629,16 +629,13 @@ mods/LHolo/config/config.json
 - `correctionFillOpacity`
 - `correctionOutlineOpacity`
 - `structureBoundsEnabled`
-- `easyPlaceEnabled`
-- `easyPlaceManual`
-- `rangePlaceEnabled`
 - `placementRadius`
 - HUD 开关、各项显示开关（含 `hudShowBlockEntity` 方块实体名称）、位置
 - GUI、移动、显示层快捷键与修饰键
 - 上次投影是否存在、文件路径、绝对锚点
 - 上次投影旋转、镜像、偏移、显示模式、显示层和分层轴
 
-普通结构变换和显示层属于当前会话；只有“恢复上次投影”记录显式跨会话保存。纠错样式、投影透明度、GUI/HUD 和快捷键属于用户偏好，始终持久化。
+普通结构变换和显示层属于当前会话；只有“恢复上次投影”记录显式跨会话保存。手动放置、轻松放置和范围放置为安全敏感的临时功能，不读取、不写入配置，每次启动均默认关闭；放置半径仍持久化。纠错样式、投影透明度、GUI/HUD 和快捷键属于用户偏好，始终持久化。
 
 配置读取必须：
 
