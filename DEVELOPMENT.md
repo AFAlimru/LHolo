@@ -89,13 +89,13 @@ LHolo/
 │  │  │  ├─ ProjectionQueries.* 辅助放置使用的只读单格与范围查询
 │  │  │  └─ ProjectionVirtualWorld.* Tessellation 线程局部虚拟方块与方块实体视图
 │  │  ├─ runtime/               投影会话生命周期与每帧运行时协调
+│  │  │  ├─ ProjectionCorrections.* 有界世界纠错扫描、进度计数与 section 失效
+│  │  │  ├─ ProjectionFramePipeline.* opaque 帧纠错、上传、边框与构建调度流水线
+│  │  │  ├─ ProjectionInvalidation.* 设置变化检测、section/revision 失效与缓存清理
 │  │  │  ├─ ProjectionLifecycle.* ProjectionState 资源准备、停止清理与世界身份匹配
 │  │  │  ├─ ProjectionProgress.* 渲染线程到 HUD 的无锁进度快照发布
 │  │  │  └─ ProjectionWorldEvents.* 真实世界方块/子区块通知的监听与排队
-│  │  ├─ ProjectionCorrections.* 有界世界纠错扫描、进度计数与 section 失效
-│  │  ├─ ProjectionFramePipeline.* opaque 帧纠错、上传、边框与构建调度流水线
-│  │  ├─ ProjectionGameHooks.* 无状态 BlockSource 虚拟查询与客户端命令 Hook
-│  │  └─ ProjectionInvalidation.* 设置变化检测、section/revision 失效与缓存清理
+│  │  └─ ProjectionGameHooks.* 无状态 BlockSource 虚拟查询与客户端命令 Hook
 │  ├─ place/
 │  │  ├─ PlaceHelper.cpp        轻松/手动/范围放置：投影查表、背包取物、放置事务
 │  │  └─ PlaceHelper.h          配置开关与 Hook 生命周期接口
@@ -123,13 +123,13 @@ LHolo/
   `projection/core/ProjectionInternalTypes.h`，投影状态与 Worker/Mesh 生命周期仍由实现层负责。
 - `projection/core/ProjectionRules.*` 只根据显式参数计算结果，不读取全局投影状态，也不持有游戏对象；
   旋转、镜像、分层可见性和状态匹配规则修改时应集中在这里回归。
-- `projection/ProjectionCorrections.*` 在固定每帧预算内比较真实世界与投影单元，维护纠错状态和进度计数；
+- `projection/runtime/ProjectionCorrections.*` 在固定每帧预算内比较真实世界与投影单元，维护纠错状态和进度计数；
   它可以标记受影响 section，但不创建 Mesh、不访问 Tessellator，也不发布 HUD 原子状态。
-- `projection/ProjectionFramePipeline.*` 只在 opaque pass 按固定顺序执行纠错扫描与进度发布、完成队列上传、
+- `projection/runtime/ProjectionFramePipeline.*` 只在 opaque pass 按固定顺序执行纠错扫描与进度发布、完成队列上传、
   轻量结构边框准备和下一 section 调度；它不采集 GUI 设置、不判断 placement 失效，也不提交最终渲染 pass。
 - `projection/ProjectionGameHooks.*` 隔离不依赖活动投影状态的 Minecraft 接口：Tessellation thread-local
   虚拟 BlockSource 查询和 `/lholo` 客户端命令包拦截；安装失败时必须按原逆序回滚已挂 Hook。
-- `projection/ProjectionInvalidation.*` 对比当前帧设置与缓存值，集中处理旋转/镜像、移动、切层、透明度和
+- `projection/runtime/ProjectionInvalidation.*` 对比当前帧设置与缓存值，集中处理旋转/镜像、移动、切层、透明度和
   纠错样式变化引起的 section dirty、revision、旧 Mesh 清理及可见进度重算；placement 重建仍由调用方触发。
 - `projection/runtime/ProjectionLifecycle.*` 构造尚未激活的 `ProjectionState`、解析 terrain atlas、建立 section 索引，
   并按 Worker 停止、世界事件解绑、进度清零、资源释放的顺序执行锁内清理；锁、pending anchor 消费、

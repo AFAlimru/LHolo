@@ -1,9 +1,9 @@
 // LHolo - Client-side projection renderer for Minecraft Bedrock Windows
 // Copyright (C) 2026  MarmieQi
 
-#include "projection/ProjectionFramePipeline.h"
+#include "projection/runtime/ProjectionFramePipeline.h"
 
-#include "projection/ProjectionCorrections.h"
+#include "projection/runtime/ProjectionCorrections.h"
 #include "projection/mesh/ProjectionMeshScheduler.h"
 #include "projection/mesh/ProjectionMeshUpload.h"
 #include "projection/runtime/ProjectionProgress.h"

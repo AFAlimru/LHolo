@@ -15,10 +15,10 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "projection/Projection.h"
-#include "projection/ProjectionFramePipeline.h"
+#include "projection/runtime/ProjectionFramePipeline.h"
 #include "projection/ProjectionGameHooks.h"
 #include "projection/core/ProjectionInternalTypes.h"
-#include "projection/ProjectionInvalidation.h"
+#include "projection/runtime/ProjectionInvalidation.h"
 #include "projection/runtime/ProjectionLifecycle.h"
 #include "projection/mesh/ProjectionMeshWorker.h"
 #include "projection/world/ProjectionPlacement.h"
