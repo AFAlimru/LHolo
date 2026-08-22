@@ -1676,7 +1676,10 @@ lholo::ui::MenuActions makeMenuActions(bool& refreshModel) {
         refreshModel = true;
         logger().info("Restoring projection {} at ({}, {}, {})", savedPath, x, y, z);
     };
-    actions.closeProjection = [] { projection::disable(); clear(); };
+    actions.closeProjection = [&refreshModel] {
+        clear();
+        refreshModel = true;
+    };
     actions.requestMaterials = [] { requestMaterialList(); };
     actions.beginHotkeyCapture = [](lholo::ui::HotkeyId id) {
         stopHotkeyCapture();
@@ -2020,13 +2023,19 @@ void recordProjectionAnchor(int x, int y, int z) {
 }
 
 void clear() {
-    // Loaded litematics and the Java-to-Bedrock mapper both contain non-owning Block
-    // pointers. Clear the mapper's registry cache at the same world-lifetime
-    // boundary as the loaded structure.
+    // Withdraw the requested structure before waiting for the mesh worker.
+    // Otherwise the render hook can observe the old gLoaded in the gap after
+    // projection::disable() and immediately enable the projection again.
+    {
+        std::lock_guard lock(gLoadedMutex);
+        gLoaded.reset();
+        gStatus = "已关闭投影";
+    }
+
+    // The active projection and in-flight worker keep non-owning Block pointers
+    // into the Java mapper registry. Stop them before releasing that registry.
+    projection::disable();
     resetJavaBlockMappingCache();
-    std::lock_guard lock(gLoadedMutex);
-    gLoaded.reset();
-    gStatus = "尚未加载结构文件";
     gMaterialListRequested.store(false, std::memory_order_release);
     std::lock_guard materialLock(gMaterialMutex);
     gMaterialRequirements.clear();
