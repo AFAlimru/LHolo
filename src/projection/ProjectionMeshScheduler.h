@@ -16,7 +16,7 @@ class Vec3;
 
 namespace lholo::projection::detail {
 
-class ProjectionState;
+struct ProjectionState;
 
 void scheduleProjectionMeshBuild(
     ProjectionState&                      state,

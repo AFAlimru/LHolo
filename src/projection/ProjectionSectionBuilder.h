@@ -17,7 +17,7 @@ class BlockTessellator;
 
 namespace lholo::projection::detail {
 
-class ProjectionState;
+struct ProjectionState;
 
 struct ProjectionSectionBuildSettings {
     Mirror   mirror{Mirror::None};

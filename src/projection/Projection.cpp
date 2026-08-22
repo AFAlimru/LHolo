@@ -21,6 +21,7 @@
 #include "projection/ProjectionMeshUpload.h"
 #include "projection/ProjectionMeshWorker.h"
 #include "projection/ProjectionPlacement.h"
+#include "projection/ProjectionQueries.h"
 #include "projection/ProjectionRenderer.h"
 #include "projection/ProjectionRules.h"
 #include "projection/ProjectionSectionBuilder.h"
@@ -94,7 +95,6 @@
 #include "mc/world/level/biome/biome_color_sampling/BiomeColorSampling.h"
 #include "mc/world/level/levelgen/structure/LegacyStructureSettings.h"
 #include "mc/world/level/levelgen/structure/LegacyStructureTemplate.h"
-#include "mc/world/level/material/Material.h"
 #include "mc/util/Mirror.h"
 #include "mc/util/Rotation.h"
 
@@ -959,68 +959,19 @@ ProjectionQuery queryProjection(LocalPlayer& player, BlockPos const& worldPos) {
         structure::clear();
         return {nullptr, false};
     }
-    auto const key = std::tuple{worldPos.x, worldPos.y, worldPos.z};
-    auto const foundIndex = gState.expectedWorldBlockIndices->find(key);
-    if (foundIndex == gState.expectedWorldBlockIndices->end()) return {nullptr, false};
-    auto const foundBlock = gState.expectedWorldBlocks->find(key);
-    Block const* block = foundBlock == gState.expectedWorldBlocks->end() ? nullptr : foundBlock->second;
-    // Liquids have no normal block item, so they are never a valid place target.
-    if (block && block->getMaterial().isLiquid()) block = nullptr;
-    bool const missing = gState.correctionStates[foundIndex->second]
-        == CorrectionState::Missing;
-    return {block, missing};
+    return detail::queryProjectionCell(gState, worldPos);
 }
 
 std::vector<RangeCandidate> queryMissingCellsInRange(LocalPlayer& player, Vec3 const& center, float radius) {
-    std::vector<RangeCandidate> result;
     std::unique_lock lock(gStateMutex);
-    if (!gState.enabled || !gState.structure) return result;
+    if (!gState.enabled || !gState.structure) return {};
     if (gState.level != &player.getLevel() || gState.dimension != &player.getDimension()) {
         clearProjectionStateLocked();
         lock.unlock();
         structure::clear();
-        return result;
+        return {};
     }
-    // Only visit cells in the axis-aligned box around the center: with a small
-    // radius this is far cheaper than walking the whole virtual-world map.
-    int const r = static_cast<int>(std::ceil(radius));
-    int const minX = static_cast<int>(std::floor(center.x)) - r;
-    int const maxX = static_cast<int>(std::floor(center.x)) + r;
-    int const minY = static_cast<int>(std::floor(center.y)) - r;
-    int const maxY = static_cast<int>(std::floor(center.y)) + r;
-    int const minZ = static_cast<int>(std::floor(center.z)) - r;
-    int const maxZ = static_cast<int>(std::floor(center.z)) + r;
-    float const r2 = radius * radius;
-    for (int y = minY; y <= maxY; ++y) {
-        for (int z = minZ; z <= maxZ; ++z) {
-            for (int x = minX; x <= maxX; ++x) {
-                auto const key = std::tuple{x, y, z};
-                auto const foundIndex = gState.expectedWorldBlockIndices->find(key);
-                if (foundIndex == gState.expectedWorldBlockIndices->end()) continue;
-                if (gState.correctionStates[foundIndex->second] != CorrectionState::Missing) continue;
-                float const dx = static_cast<float>(x) + 0.5f - center.x;
-                float const dy = static_cast<float>(y) + 0.5f - center.y;
-                float const dz = static_cast<float>(z) + 0.5f - center.z;
-                if (dx * dx + dy * dy + dz * dz > r2) continue;
-                auto const foundBlock = gState.expectedWorldBlocks->find(key);
-                Block const* block = foundBlock == gState.expectedWorldBlocks->end() ? nullptr : foundBlock->second;
-                // Liquids have no normal block item, so they are never a place target.
-                if (block && block->getMaterial().isLiquid()) block = nullptr;
-                if (!block) continue;
-                result.push_back({x, y, z, block});
-            }
-        }
-    }
-    std::sort(result.begin(), result.end(), [&center](RangeCandidate const& a, RangeCandidate const& b) {
-        auto const distSq = [&center](RangeCandidate const& c) {
-            float const dx = static_cast<float>(c.x) + 0.5f - center.x;
-            float const dy = static_cast<float>(c.y) + 0.5f - center.y;
-            float const dz = static_cast<float>(c.z) + 0.5f - center.z;
-            return dx * dx + dy * dy + dz * dz;
-        };
-        return distSq(a) < distSq(b);
-    });
-    return result;
+    return detail::queryMissingProjectionCells(gState, center, radius);
 }
 
 } // namespace lholo::projection
