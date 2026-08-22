@@ -3,7 +3,7 @@
 
 #include "projection/runtime/ProjectionFramePipeline.h"
 
-#include "projection/correction/CorrectionTracker.h"
+#include "projection/correction/ProjectionCorrectionTracker.h"
 #include "projection/mesh/ProjectionMeshScheduler.h"
 #include "projection/mesh/ProjectionMeshUpload.h"
 #include "projection/runtime/ProjectionProgress.h"

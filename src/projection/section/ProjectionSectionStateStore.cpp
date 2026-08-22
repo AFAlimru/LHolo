@@ -1,7 +1,7 @@
 // LHolo - Client-side projection renderer for Minecraft Bedrock Windows
 // Copyright (C) 2026  MarmieQi
 
-#include "projection/section/SectionStateStore.h"
+#include "projection/section/ProjectionSectionStateStore.h"
 
 #include <cstddef>
 

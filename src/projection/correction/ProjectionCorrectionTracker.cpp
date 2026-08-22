@@ -6,7 +6,7 @@
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-#include "projection/correction/CorrectionTracker.h"
+#include "projection/correction/ProjectionCorrectionTracker.h"
 
 #include "projection/core/ProjectionRules.h"
 #include "projection/core/ProjectionState.h"

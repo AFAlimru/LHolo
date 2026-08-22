@@ -7,7 +7,7 @@
 #include "projection/mesh/ProjectionMeshWorker.h"
 #include "projection/runtime/ProjectionProgress.h"
 #include "projection/core/ProjectionState.h"
-#include "projection/section/SectionStateStore.h"
+#include "projection/section/ProjectionSectionStateStore.h"
 #include "projection/runtime/ProjectionWorldEvents.h"
 #include "structure/StructureLoader.h"
 
