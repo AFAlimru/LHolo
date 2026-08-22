@@ -1,15 +1,23 @@
 // LHolo - Client-side projection renderer for Minecraft Bedrock Windows
 // Copyright (C) 2026  MarmieQi
 //
-// Explicit immutable inputs shared by asynchronous and synchronous section
-// geometry construction. The builder implementation is migrated separately.
+// CPU geometry construction shared by the asynchronous worker and synchronous
+// compatibility fallback.
 
 #pragma once
 
+#include <cstddef>
+
+#include "mc/client/renderer/Tessellator.h"
 #include "mc/util/Mirror.h"
 #include "mc/util/Rotation.h"
 
+class BlockSource;
+class BlockTessellator;
+
 namespace lholo::projection::detail {
+
+class ProjectionState;
 
 struct ProjectionSectionBuildSettings {
     Mirror   mirror{Mirror::None};
@@ -24,5 +32,15 @@ struct ProjectionSectionBuildSettings {
     float    correctionOutlineOpacity{};
     bool     identityTransform{};
 };
+
+void buildProjectionSection(
+    ProjectionState&                      state,
+    Tessellator&                          tessellator,
+    BlockTessellator&                     blockTessellator,
+    BlockSource&                          region,
+    std::size_t                           section,
+    Tessellator::UploadMode               uploadMode,
+    ProjectionSectionBuildSettings const& settings
+);
 
 } // namespace lholo::projection::detail
