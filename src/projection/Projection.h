@@ -16,24 +16,15 @@
 
 #pragma once
 
-#include <cstdint>
 #include <vector>
 
-class Block;
+#include "projection/ProjectionTypes.h"
+
 class BlockPos;
 class LocalPlayer;
 class Vec3;
 
 namespace lholo::projection {
-
-struct BuildProgress {
-    std::uint64_t placed{};
-    std::uint64_t total{};
-    std::uint64_t visiblePlaced{};
-    std::uint64_t visibleTotal{};
-    std::uint64_t wrongType{};
-    std::uint64_t wrongState{};
-};
 
 bool installHook();
 void uninstallHook();
@@ -50,25 +41,8 @@ void setStructureBoundsEnabled(bool enabled);
 void requestNextStructureAnchor(int x, int y, int z);
 BuildProgress getBuildProgress();
 
-// Easy-place support: query the currently projected virtual world in a single
-// locked lookup.
-struct ProjectionQuery {
-    Block const* block;   // transformed expected block, or nullptr when the
-                          // position is not a placeable projection target
-                          // (liquid-only cells and hidden layers excluded)
-    bool missing;         // correction state is Missing, i.e. worth placing
-};
 ProjectionQuery queryProjection(LocalPlayer& player, BlockPos const& worldPos);
 
-// Range-place support: all missing projection cells within `radius` blocks of
-// `center`, sorted nearest-first. `block` is the transformed expected block
-// (nullptr for liquid-only cells and hidden layers, which are never targets).
-struct RangeCandidate {
-    int          x;
-    int          y;
-    int          z;
-    Block const* block;
-};
 std::vector<RangeCandidate> queryMissingCellsInRange(LocalPlayer& player, Vec3 const& center, float radius);
 
 } // namespace lholo::projection

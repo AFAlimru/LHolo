@@ -15,6 +15,9 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "projection/Projection.h"
+#include "projection/ProjectionInternalTypes.h"
+#include "projection/ProjectionRules.h"
+#include "projection/ProjectionState.h"
 
 #include "overlay/BoundsWireframe.h"
 #include "plugin/LHolo.h"
@@ -107,7 +110,22 @@
 namespace lholo::projection {
 namespace {
 
-using SubChunkKey = std::tuple<int, int, int>;
+using detail::CorrectionState;
+using detail::ExpectedBlockActorMap;
+using detail::ExpectedBlockIndexMap;
+using detail::ExpectedBlockMap;
+using detail::blockFrontFace;
+using detail::getProjectionMirror;
+using detail::getProjectionRotation;
+using detail::isLayerVisible;
+using detail::projectionStatesMatch;
+using detail::ProjectedBlockActor;
+using detail::ProjectionState;
+using detail::RenderBucket;
+using detail::renderBucketFor;
+using detail::SubChunkKey;
+using detail::transformExpectedBlock;
+using detail::transformStructurePosition;
 
 // Litematica's default schematic overlay palette, converted from ARGB to the
 // ABGR byte order expected by Tessellator::colorABGR(). Overlay edges are
@@ -138,102 +156,9 @@ std::uint32_t modulateAbgr(std::uint32_t color, std::uint32_t tint) {
     return (color & 0xFF000000U) | channel(0) | channel(8) | channel(16);
 }
 
-using TextureVariant =
-    std::variant<std::monostate, mce::TexturePtr, mce::ClientTexture, mce::ServerTexture>;
-
-using ExpectedBlockMap = std::map<std::tuple<int, int, int>, Block const*>;
-using ExpectedBlockActorMap =
-    std::map<std::tuple<int, int, int>, std::shared_ptr<BlockActor>>;
-using ExpectedBlockIndexMap = std::map<std::tuple<int, int, int>, std::size_t>;
-
 auto& logger() {
     return LHolo::getInstance().getSelf().getLogger();
 }
-
-struct ProjectionState {
-    enum class CorrectionState : uchar { Unknown, Missing, Correct, WrongType, WrongState };
-    enum class RenderBucket : uchar { Opaque, Alpha, AlphaOneSided, Blend, Count };
-    struct ProjectedBlockActor {
-        BlockPos   position{};
-        Block const* block{};
-        BlockActor* actor{};
-        std::size_t structureIndex{};
-    };
-    bool                         enabled{};
-    BlockPos                     anchor{};
-    IClientInstance*             client{};
-    Level*                       level{};
-    Dimension*                   dimension{};
-    std::optional<mce::TexturePtr> terrainTexture;
-    std::optional<TextureVariant> terrainTextureVariant;
-    std::shared_ptr<structure::LoadedStructure const> structure;
-    std::uint64_t                  structureGeneration{};
-    std::unique_ptr<BlockTessellator> blockTessellator;
-    std::vector<CorrectionState>   correctionStates;
-    // One byte per structure block. This is updated by the existing bounded
-    // correction scan, so the HUD never performs its own world-block queries.
-    std::vector<uchar>             progressCorrect;
-    // 0 = no placement error, 1 = wrong block type, 2 = wrong state/direction.
-    // Updating one byte and two counters keeps the HUD O(1) per frame.
-    std::vector<uchar>             progressErrorKind;
-    std::vector<uchar>             blockActorRendererAvailable;
-    std::uint64_t                  progressCorrectCount{};
-    std::uint64_t                  progressVisibleCorrectCount{};
-    std::uint64_t                  progressWrongTypeCount{};
-    std::uint64_t                  progressWrongStateCount{};
-    std::size_t                    correctionScanCursor{};
-    std::set<SubChunkKey>              pendingLoadedSubChunks;
-    int                            cachedRotation{-1};
-    int                            cachedMirror{-1};
-    int                            cachedOffsetX{};
-    int                            cachedOffsetY{};
-    int                            cachedOffsetZ{};
-    int                            cachedLayerDisplayMode{-1};
-    int                            cachedDisplayLayer{-1};
-    int                            cachedLayerAxis{-1};
-    float                          cachedOpacity{-1.0f};
-    float                          cachedCorrectionFillOpacity{-1.0f};
-    float                          cachedCorrectionOutlineOpacity{-1.0f};
-    std::vector<std::vector<std::size_t>> sectionBlockIndices;
-    std::array<std::vector<std::unique_ptr<mce::Mesh>>, static_cast<std::size_t>(RenderBucket::Count)>
-        sectionMeshes;
-    std::vector<std::unique_ptr<mce::Mesh>> warningFillSectionMeshes;
-    std::vector<std::unique_ptr<mce::Mesh>> correctionOutlineSectionMeshes;
-    std::vector<std::unique_ptr<mce::Mesh>> liquidProxySectionMeshes;
-    std::vector<std::unique_ptr<mce::Mesh>> blockEntityPlaceholderSectionMeshes;
-    std::unique_ptr<mce::Mesh>              structureBoundsMesh;
-    std::vector<Vec3>              sectionCenters;
-    std::vector<bool>              sectionDirty;
-    std::vector<bool>              sectionIncrementalDirty;
-    std::vector<bool>              sectionBuildInFlight;
-    std::vector<std::uint64_t>     sectionRequestedRevision;
-    std::vector<std::uint64_t>     sectionUploadedRevision;
-    std::vector<std::size_t>       blockToSection;
-    std::size_t                    dirtySectionCursor{};
-    std::uint64_t                  meshWorkerGeneration{};
-    int                            consecutiveMeshWorkerFailures{};
-    bool                           asyncMeshBuildingEnabled{true};
-    std::uint64_t                  meshWorkerUploadedSections{};
-    std::uint64_t                  meshWorkerSnapshotMicros{};
-    std::uint64_t                  meshWorkerSnapshotDataMicros{};
-    std::uint64_t                  meshWorkerChunkViewMicros{};
-    std::uint64_t                  meshWorkerBuildMicros{};
-    std::uint64_t                  meshWorkerUploadMicros{};
-    std::uint64_t                  meshWorkerPeakSnapshotMicros{};
-    std::uint64_t                  meshWorkerPeakSnapshotDataMicros{};
-    std::uint64_t                  meshWorkerPeakChunkViewMicros{};
-    std::uint64_t                  meshWorkerPeakBuildMicros{};
-    std::uint64_t                  meshWorkerPeakUploadMicros{};
-    std::shared_ptr<ExpectedBlockMap>      expectedWorldBlocks{std::make_shared<ExpectedBlockMap>()};
-    std::shared_ptr<ExpectedBlockActorMap> expectedWorldBlockActors{
-        std::make_shared<ExpectedBlockActorMap>()
-    };
-    std::vector<ProjectedBlockActor> projectedBlockActors;
-    std::shared_ptr<ExpectedBlockIndexMap> expectedWorldBlockIndices{
-        std::make_shared<ExpectedBlockIndexMap>()
-    };
-    bool meshPreflightDone{};
-};
 
 struct AsyncSectionBuildResult {
     std::uint64_t workerGeneration{};
@@ -248,7 +173,7 @@ struct AsyncSectionBuildResult {
     std::string   failureReason;
     std::uint64_t expectedVertexCount{};
     std::uint64_t actualVertexCount{};
-    std::array<std::unique_ptr<mce::Mesh>, static_cast<std::size_t>(ProjectionState::RenderBucket::Count)>
+    std::array<std::unique_ptr<mce::Mesh>, static_cast<std::size_t>(RenderBucket::Count)>
         sectionMeshes;
     std::unique_ptr<mce::Mesh> warningFillMesh;
     std::unique_ptr<mce::Mesh> correctionOutlineMesh;
@@ -309,26 +234,6 @@ void pairProjectedChests(BlockSource& region, ProjectionState& state) {
             chest->_tryToPairWith(region, neighbor);
             if (chest->isLargeChest()) break;
         }
-    }
-}
-
-ProjectionState::RenderBucket renderBucketFor(BlockRenderLayer layer) {
-    using Bucket = ProjectionState::RenderBucket;
-    switch (layer) {
-    case BlockRenderLayer::RenderlayerBlend:
-    case BlockRenderLayer::RenderlayerBlendToOpaque:
-        return Bucket::Blend;
-    case BlockRenderLayer::RenderlayerOpaque:
-    case BlockRenderLayer::RenderlayerSeasonsOpaque:
-    case BlockRenderLayer::RenderlayerShiftOpaqueInternalOnly:
-        return Bucket::Opaque;
-    case BlockRenderLayer::RenderlayerAlphatestSingleSide:
-    case BlockRenderLayer::RenderlayerAlphatestSingleSideToOpaque:
-    case BlockRenderLayer::RenderlayerShiftAlphatestSingleSideInternalOnly:
-    case BlockRenderLayer::RenderlayerShiftAlphatestSingleSideToOpaqueInternalOnly:
-        return Bucket::AlphaOneSided;
-    default:
-        return Bucket::Alpha;
     }
 }
 
@@ -631,7 +536,7 @@ bool enableStructureProjection(
     next.structureGeneration = next.structure->generation;
     next.blockTessellator = std::make_unique<BlockTessellator>(&player->getDimensionBlockSource());
     next.correctionStates.resize(
-        next.structure->renderBlocks.size(), ProjectionState::CorrectionState::Unknown
+        next.structure->renderBlocks.size(), CorrectionState::Unknown
     );
     next.progressCorrect.resize(next.structure->renderBlocks.size(), 0);
     next.progressErrorKind.resize(next.structure->renderBlocks.size(), 0);
@@ -741,129 +646,9 @@ bool contextIsValid(IClientInstance& client, Actor* player) {
         && gState.dimension == &player->getDimension();
 }
 
-Mirror getProjectionMirror(int mirrorMode) {
-    switch (mirrorMode) {
-    // LHolo's UI names the coordinate being flipped. Bedrock names Mirror by
-    // the axis kept fixed: Mirror::Z flips X, while Mirror::X flips Z.
-    case 1: return Mirror::Z;
-    case 2: return Mirror::X;
-    default: return Mirror::None;
-    }
-}
-
-Rotation getProjectionRotation(int quarterTurns) {
-    switch (quarterTurns & 3) {
-    case 1: return Rotation::Clockwise90;
-    case 2: return Rotation::Clockwise180;
-    case 3: return Rotation::CounterClockwise90;
-    default: return Rotation::None;
-    }
-}
-
-Block const* transformExpectedBlock(
-    Block const* block,
-    LegacyStructureSettings const& settings,
-    bool identityTransform
-) {
-    if (!block) return nullptr;
-    if (identityTransform) return block;
-    // Use the same generic permutation mapping as vanilla structure placement.
-    // The engine owns the complete set of transformable states, so new or
-    // uncommon directional blocks require no LHolo-side block/state table.
-    return &LegacyStructureTemplate::_mapToData(*block, settings);
-}
-
-bool projectionStatesMatch(Block const& expected, Block const& actual) {
-    if (expected == actual) return true;
-    if (expected.getTypeName() != actual.getTypeName()) return false;
-
-    auto stateMatches = [&](auto const& state) {
-        using StateValue = typename std::remove_cvref_t<decltype(state)>::Type;
-        auto const expectedValue = expected.getState<StateValue>(state);
-        auto const actualValue = actual.getState<StateValue>(state);
-        return expectedValue && actualValue && *expectedValue == *actualValue;
-    };
-
-    // A real door stores its placement state across two blocks: the lower half
-    // owns direction/open, the upper half owns hinge. Bedrock may normalize the
-    // duplicated fields differently after a structure load, so the complete
-    // serialization hash can differ even for a correctly placed door. Only real
-    // doors carry upper_block_bit; trapdoor names also end with "door", so the
-    // presence of that state is the reliable discriminator.
-    auto const expectedUpper = expected.getState<bool>(VanillaStates::UpperBlockBit());
-    if (expectedUpper) {
-        auto const actualUpper = actual.getState<bool>(VanillaStates::UpperBlockBit());
-        if (!actualUpper || *actualUpper != *expectedUpper) return false;
-        return *expectedUpper
-            ? stateMatches(VanillaStates::DoorHingeBit())
-            : stateMatches(VanillaStates::Direction())
-                && stateMatches(VanillaStates::OpenBit());
-    }
-
-    // Trapdoors are single blocks: compare their own placement states instead
-    // of treating them like a two-block door.
-    auto const expectedOpen = expected.getState<bool>(VanillaStates::OpenBit());
-    if (expectedOpen) {
-        auto const actualOpen = actual.getState<bool>(VanillaStates::OpenBit());
-        return actualOpen && *actualOpen == *expectedOpen
-            && stateMatches(VanillaStates::Direction())
-            && stateMatches(VanillaStates::UpsideDownBit());
-    }
-
-    return false;
-}
-
-// Front face (Facing 0-5) for a block-entity placeholder, read from whichever
-// facing state the block actually carries. Chests and similar block entities
-// moved from the integer facing_direction to the string
-// minecraft:cardinal_direction, so both are handled. Returns -1 when the block
-// has no horizontal facing.
-int blockFrontFace(Block const& block) {
-    for (auto const& [key, value] : block.getSerializationId()) {
-        if (key != "states") continue;
-        if (!value.hold<CompoundTag>()) break;
-        for (auto const& [stateKey, stateValue] : value.get<CompoundTag>()) {
-            if (stateKey == "facing_direction" && stateValue.getId() == Tag::Type::Int) {
-                return stateValue.get<IntTag>().data;
-            }
-            if (stateKey == "minecraft:cardinal_direction" && stateValue.getId() == Tag::Type::String) {
-                std::string const& facing = static_cast<std::string const&>(stateValue.get<StringTag>());
-                if (facing == "north") return static_cast<int>(Facing::Name::North);
-                if (facing == "south") return static_cast<int>(Facing::Name::South);
-                if (facing == "west")  return static_cast<int>(Facing::Name::West);
-                if (facing == "east")  return static_cast<int>(Facing::Name::East);
-            }
-        }
-        break;
-    }
-    return -1;
-}
-
-BlockPos transformStructurePosition(
-    structure::LoadedStructure::RenderBlock const& entry,
-    structure::LoadedStructure const& loaded,
-    int mirrorMode,
-    int rotation
-) {
-    int x = entry.x;
-    int z = entry.z;
-    if (mirrorMode == 1) x = loaded.sizeX - 1 - x;
-    if (mirrorMode == 2) z = loaded.sizeZ - 1 - z;
-    switch (rotation) {
-    case 1: return BlockPos{loaded.sizeZ - 1 - z, entry.y, x};
-    case 2: return BlockPos{loaded.sizeX - 1 - x, entry.y, loaded.sizeZ - 1 - z};
-    case 3: return BlockPos{z, entry.y, loaded.sizeX - 1 - x};
-    default: return BlockPos{x, entry.y, z};
-    }
-}
-
 void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLayer) {
     auto& client = renderContext.getClient();
     auto* player  = client.getLocalPlayer();
-    if (!contextIsValid(client, player)) {
-        clearProjectionStateLocked();
-        structure::clear();        return;
-    }
 
     auto& tessellator = renderContext.getTessellator();
     tessellator.begin(Tessellator::DebugContextCallback{}, 128, false);
@@ -894,12 +679,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
             structure::getDisplayLayer(), 0, maxLayer
         );
         auto const layerIsVisible = [&](int layer) {
-            switch (layerDisplayMode) {
-            case 1: return layer == displayLayer;
-            case 2: return layer <= displayLayer;
-            case 3: return layer >= displayLayer;
-            default: return true;
-            }
+            return isLayerVisible(layer, layerDisplayMode, displayLayer);
         };
         auto const structureOpacity = gOpacity.load(std::memory_order_relaxed);
         auto const correctionFillOpacity = gCorrectionFillOpacity.load(std::memory_order_relaxed);
@@ -937,12 +717,9 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 auto const oldLayerVisible = [&](structure::LoadedStructure::RenderBlock const& entry) {
                     if (gState.cachedLayerDisplayMode < 0 || gState.cachedLayerAxis < 0) return false;
                     auto const layer = gState.cachedLayerAxis == 1 ? entry.x : entry.y;
-                    switch (gState.cachedLayerDisplayMode) {
-                    case 1: return layer == gState.cachedDisplayLayer;
-                    case 2: return layer <= gState.cachedDisplayLayer;
-                    case 3: return layer >= gState.cachedDisplayLayer;
-                    default: return true;
-                    }
+                    return isLayerVisible(
+                        layer, gState.cachedLayerDisplayMode, gState.cachedDisplayLayer
+                    );
                 };
                 for (std::size_t index = 0; index < gState.structure->renderBlocks.size(); ++index) {
                     auto const& entry = gState.structure->renderBlocks[index];
@@ -950,8 +727,8 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     if (oldLayerVisible(entry) == visible) continue;
                     markSectionDirty(gState, gState.blockToSection[index], false);
                     gState.correctionStates[index] = visible
-                        ? ProjectionState::CorrectionState::Unknown
-                        : ProjectionState::CorrectionState::Correct;
+                        ? CorrectionState::Unknown
+                        : CorrectionState::Correct;
                 }
             }
 
@@ -973,7 +750,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 std::fill(
                     gState.correctionStates.begin(),
                     gState.correctionStates.end(),
-                    ProjectionState::CorrectionState::Unknown
+                    CorrectionState::Unknown
                 );
                 for (auto& meshes : gState.sectionMeshes) {
                     for (auto& mesh : meshes) mesh.reset();
@@ -1040,7 +817,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 if (!layerIsVisible(layerAxis == 1 ? entry.x : entry.y)) {
                     // Hidden layers behave like completed cells for mesh
                     // generation, but are excluded from the world lookup below.
-                    gState.correctionStates[index] = ProjectionState::CorrectionState::Correct;
+                    gState.correctionStates[index] = CorrectionState::Correct;
                     continue;
                 }
                 auto const transformed = transformStructurePosition(
@@ -1144,16 +921,16 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 && !actualLiquid.isAir() && actualLiquid.getTypeName() != expectedLiquid->getTypeName();
             auto const liquidCellOccupiedBySolid = !expected && expectedLiquid && !actual.isAir()
                 && actual.getTypeName() != expectedLiquid->getTypeName();
-            auto nextState = ProjectionState::CorrectionState::Correct;
+            auto nextState = CorrectionState::Correct;
             if (bodyMissing || liquidMissing) {
-                nextState = ProjectionState::CorrectionState::Missing;
+                nextState = CorrectionState::Missing;
             } else if (bodyTypeWrong || liquidTypeWrong || liquidCellOccupiedBySolid) {
-                nextState = ProjectionState::CorrectionState::WrongType;
+                nextState = CorrectionState::WrongType;
             } else if ((expected && !projectionStatesMatch(*expected, actual))
                 || (expectedLiquid && actualLiquid != *expectedLiquid)) {
-                nextState = ProjectionState::CorrectionState::WrongState;
+                nextState = CorrectionState::WrongState;
             }
-            auto const nowCorrect = nextState == ProjectionState::CorrectionState::Correct;
+            auto const nowCorrect = nextState == CorrectionState::Correct;
             auto const wasCorrect = gState.progressCorrect[index] != 0;
             if (nowCorrect != wasCorrect) {
                 gState.progressCorrect[index] = nowCorrect ? 1 : 0;
@@ -1166,8 +943,8 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     visibleProgressChanged = true;
                 }
             }
-            auto const nextErrorKind = nextState == ProjectionState::CorrectionState::WrongType ? uchar{1}
-                : nextState == ProjectionState::CorrectionState::WrongState ? uchar{2}
+            auto const nextErrorKind = nextState == CorrectionState::WrongType ? uchar{1}
+                : nextState == CorrectionState::WrongState ? uchar{2}
                 : uchar{0};
             auto const previousErrorKind = gState.progressErrorKind[index];
             if (nextErrorKind != previousErrorKind) {
@@ -1284,7 +1061,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 Block const*                  block{};
                 BlockPos                      position{};
                 BlockRenderLayer              layer{BlockRenderLayer::RenderlayerOpaque};
-                ProjectionState::RenderBucket bucket{ProjectionState::RenderBucket::Opaque};
+                RenderBucket bucket{RenderBucket::Opaque};
                 std::size_t                   structureIndex{};
             };
             // Blocks whose model produced no geometry during tessellation
@@ -1298,9 +1075,9 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 // world block. Correct blocks disappear; wrong type/state use
                 // only their red/yellow outline below. This removes the
                 // coincident textured surfaces that caused correction flicker.
-                if (state == ProjectionState::CorrectionState::Correct
-                    || state == ProjectionState::CorrectionState::WrongType
-                    || state == ProjectionState::CorrectionState::WrongState) {
+                if (state == CorrectionState::Correct
+                    || state == CorrectionState::WrongType
+                    || state == CorrectionState::WrongState) {
                     continue;
                 }
                 auto const& entry = gState.structure->renderBlocks[index];
@@ -1333,7 +1110,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 gState.anchor.y + offsetY,
                 gState.anchor.z + offsetZ
             };
-            constexpr std::array<char const*, static_cast<std::size_t>(ProjectionState::RenderBucket::Count)>
+            constexpr std::array<char const*, static_cast<std::size_t>(RenderBucket::Count)>
                 meshNames{
                     "LHoloOpaque",
                     "LHoloAlpha",
@@ -1352,7 +1129,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     false
                 );
                 bool bucketTessellated{};
-                auto const bucket = static_cast<ProjectionState::RenderBucket>(bucketIndex);
+                auto const bucket = static_cast<RenderBucket>(bucketIndex);
                 for (auto const& layered : layeredBlocks) {
                     if (layered.bucket != bucket) continue;
                     blockTessellator.setRenderLayer(static_cast<int>(layered.layer));
@@ -1438,7 +1215,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
             std::vector<std::size_t> liquidProxyIndices;
             for (auto const index : gState.sectionBlockIndices[section]) {
                 if (gState.structure->renderBlocks[index].liquid == nullptr) continue;
-                if (gState.correctionStates[index] != ProjectionState::CorrectionState::Missing) continue;
+                if (gState.correctionStates[index] != CorrectionState::Missing) continue;
                 liquidProxyIndices.push_back(index);
             }
             if (!liquidProxyIndices.empty()) {
@@ -1579,7 +1356,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
             // that render normally (hoppers, beds, ...) are left untouched.
             std::vector<std::size_t> blockEntityIndices;
             for (auto const index : failedTessellationIndices) {
-                if (gState.correctionStates[index] != ProjectionState::CorrectionState::Missing) continue;
+                if (gState.correctionStates[index] != CorrectionState::Missing) continue;
                 if (gState.blockActorRendererAvailable[index]) continue;
                 blockEntityIndices.push_back(index);
             }
@@ -1665,15 +1442,15 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
             std::size_t warningCount{};
             for (auto const index : gState.sectionBlockIndices[section]) {
                 auto const state = gState.correctionStates[index];
-                warningCount += state == ProjectionState::CorrectionState::Missing
-                    || state == ProjectionState::CorrectionState::WrongType
-                    || state == ProjectionState::CorrectionState::WrongState;
+                warningCount += state == CorrectionState::Missing
+                    || state == CorrectionState::WrongType
+                    || state == CorrectionState::WrongState;
             }
             if (warningCount != 0) {
-                auto correctionPriority = [](ProjectionState::CorrectionState state) {
-                    return state == ProjectionState::CorrectionState::WrongType ? 4
-                        : state == ProjectionState::CorrectionState::WrongState ? 3
-                        : state == ProjectionState::CorrectionState::Missing ? 1
+                auto correctionPriority = [](CorrectionState state) {
+                    return state == CorrectionState::WrongType ? 4
+                        : state == CorrectionState::WrongState ? 3
+                        : state == CorrectionState::Missing ? 1
                         : 0;
                 };
 
@@ -1697,12 +1474,12 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     auto const& entry = gState.structure->renderBlocks[index];
                     // A missing pure-liquid cell is already communicated by its
                     // blue translucent proxy hull; skip the duplicate outline.
-                    if (state == ProjectionState::CorrectionState::Missing
+                    if (state == CorrectionState::Missing
                         && !entry.block && entry.liquid) continue;
                     auto const p = transformStructurePosition(entry, *gState.structure, mirrorMode, rotationTurns);
-                    auto const outlineColor = state == ProjectionState::CorrectionState::Missing
+                    auto const outlineColor = state == CorrectionState::Missing
                         ? withAlpha(MissingColorAbgrRgb, correctionOutlineOpacity)
-                        : state == ProjectionState::CorrectionState::WrongState
+                        : state == CorrectionState::WrongState
                             ? withAlpha(WrongStateColorAbgrRgb, correctionOutlineOpacity)
                             : withAlpha(WrongBlockColorAbgrRgb, correctionOutlineOpacity);
                     float const x0 = static_cast<float>(p.x) + outlineInset;
@@ -1747,7 +1524,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     auto const& entry = gState.structure->renderBlocks[index];
                     // Same as the outline above: the blue proxy hull already
                     // marks a missing pure-liquid cell.
-                    if (state == ProjectionState::CorrectionState::Missing
+                    if (state == CorrectionState::Missing
                         && !entry.block && entry.liquid) continue;
                     auto const p = transformStructurePosition(entry, *gState.structure, mirrorMode, rotationTurns);
                     BlockPos const worldPosition{
@@ -1768,9 +1545,9 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     float const x1 = static_cast<float>(p.x + 1);
                     float const y1 = static_cast<float>(p.y + 1);
                     float const z1 = static_cast<float>(p.z + 1);
-                    auto const fillColor = state == ProjectionState::CorrectionState::Missing
+                    auto const fillColor = state == CorrectionState::Missing
                         ? withAlpha(MissingColorAbgrRgb, correctionFillOpacity)
-                        : state == ProjectionState::CorrectionState::WrongState
+                        : state == CorrectionState::WrongState
                             ? withAlpha(WrongStateColorAbgrRgb, correctionFillOpacity)
                             : withAlpha(WrongBlockColorAbgrRgb, correctionFillOpacity);
                     tessellator.colorABGR(static_cast<int>(fillColor));
@@ -1886,9 +1663,9 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     return std::make_unique<mce::Mesh>(bufferService, std::move(data), false, name);
                 };
                 try {
-                    constexpr std::array<std::string_view, static_cast<std::size_t>(ProjectionState::RenderBucket::Count)>
+                    constexpr std::array<std::string_view, static_cast<std::size_t>(RenderBucket::Count)>
                         bucketNames{"LHoloOpaque", "LHoloAlphaTest", "LHoloBlend", "LHoloBlendToOpaque"};
-                    std::array<std::unique_ptr<mce::Mesh>, static_cast<std::size_t>(ProjectionState::RenderBucket::Count)>
+                    std::array<std::unique_ptr<mce::Mesh>, static_cast<std::size_t>(RenderBucket::Count)>
                         uploadedMeshes;
                     for (std::size_t bucket = 0; bucket < uploadedMeshes.size(); ++bucket) {
                         uploadedMeshes[bucket] = uploadCpuMesh(std::move(result.sectionMeshes[bucket]), bucketNames[bucket]);
@@ -2304,9 +2081,9 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
         );
         for (auto const& projected : gState.projectedBlockActors) {
             auto const state = gState.correctionStates[projected.structureIndex];
-            if (state == ProjectionState::CorrectionState::Correct
-                || state == ProjectionState::CorrectionState::WrongType
-                || state == ProjectionState::CorrectionState::WrongState
+            if (state == CorrectionState::Correct
+                || state == CorrectionState::WrongType
+                || state == CorrectionState::WrongState
                 || !projected.actor->isWithinRenderDistance(camera)) {
                 continue;
             }
@@ -2412,10 +2189,10 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 return result;
             };
 
-            auto const opaqueBucket = static_cast<std::size_t>(ProjectionState::RenderBucket::Opaque);
-            auto const alphaBucket = static_cast<std::size_t>(ProjectionState::RenderBucket::Alpha);
-            auto const alphaOneSidedBucket = static_cast<std::size_t>(ProjectionState::RenderBucket::AlphaOneSided);
-            auto const blendBucket = static_cast<std::size_t>(ProjectionState::RenderBucket::Blend);
+            auto const opaqueBucket = static_cast<std::size_t>(RenderBucket::Opaque);
+            auto const alphaBucket = static_cast<std::size_t>(RenderBucket::Alpha);
+            auto const alphaOneSidedBucket = static_cast<std::size_t>(RenderBucket::AlphaOneSided);
+            auto const blendBucket = static_cast<std::size_t>(RenderBucket::Blend);
             if (structureOpacity >= 0.999f) {
                 auto opaqueMeshes = collectBucket(opaqueBucket);
                 auto alphaMeshes = collectBucket(alphaBucket);
@@ -2713,8 +2490,8 @@ LL_TYPE_INSTANCE_HOOK(
             );
             if (found != gState.expectedWorldBlockIndices->end()) {
                 auto const state = gState.correctionStates[found->second];
-                if (state == ProjectionState::CorrectionState::WrongType
-                    || state == ProjectionState::CorrectionState::WrongState) {
+                if (state == CorrectionState::WrongType
+                    || state == CorrectionState::WrongState) {
                     // LHolo already renders a complete red/yellow hull and
                     // outline for this cell. Vanilla's coincident hit-select
                     // overlay adds a second surface only while the crosshair
@@ -2738,7 +2515,7 @@ LL_TYPE_INSTANCE_HOOK(
 ) {
     origin(renderContext, renderAlphaLayer);
 
-    std::lock_guard lock(gStateMutex);
+    std::unique_lock lock(gStateMutex);
 
     if (auto const bounds = structure::capture::getBounds()) {
         gCaptureBounds.setBounds(
@@ -2760,6 +2537,13 @@ LL_TYPE_INSTANCE_HOOK(
     }
 
     if (!gState.enabled) return;
+    auto& client = renderContext.getClient();
+    if (!contextIsValid(client, client.getLocalPlayer())) {
+        clearProjectionStateLocked();
+        lock.unlock();
+        structure::clear();
+        return;
+    }
     renderProjection(renderContext, renderAlphaLayer);
 }
 
@@ -2880,10 +2664,11 @@ BuildProgress getBuildProgress() {
 }
 
 ProjectionQuery queryProjection(LocalPlayer& player, BlockPos const& worldPos) {
-    std::lock_guard lock(gStateMutex);
+    std::unique_lock lock(gStateMutex);
     if (!gState.enabled || !gState.structure) return {nullptr, false};
     if (gState.level != &player.getLevel() || gState.dimension != &player.getDimension()) {
         clearProjectionStateLocked();
+        lock.unlock();
         structure::clear();
         return {nullptr, false};
     }
@@ -2895,16 +2680,17 @@ ProjectionQuery queryProjection(LocalPlayer& player, BlockPos const& worldPos) {
     // Liquids have no normal block item, so they are never a valid place target.
     if (block && block->getMaterial().isLiquid()) block = nullptr;
     bool const missing = gState.correctionStates[foundIndex->second]
-        == ProjectionState::CorrectionState::Missing;
+        == CorrectionState::Missing;
     return {block, missing};
 }
 
 std::vector<RangeCandidate> queryMissingCellsInRange(LocalPlayer& player, Vec3 const& center, float radius) {
     std::vector<RangeCandidate> result;
-    std::lock_guard lock(gStateMutex);
+    std::unique_lock lock(gStateMutex);
     if (!gState.enabled || !gState.structure) return result;
     if (gState.level != &player.getLevel() || gState.dimension != &player.getDimension()) {
         clearProjectionStateLocked();
+        lock.unlock();
         structure::clear();
         return result;
     }
@@ -2924,7 +2710,7 @@ std::vector<RangeCandidate> queryMissingCellsInRange(LocalPlayer& player, Vec3 c
                 auto const key = std::tuple{x, y, z};
                 auto const foundIndex = gState.expectedWorldBlockIndices->find(key);
                 if (foundIndex == gState.expectedWorldBlockIndices->end()) continue;
-                if (gState.correctionStates[foundIndex->second] != ProjectionState::CorrectionState::Missing) continue;
+                if (gState.correctionStates[foundIndex->second] != CorrectionState::Missing) continue;
                 float const dx = static_cast<float>(x) + 0.5f - center.x;
                 float const dy = static_cast<float>(y) + 0.5f - center.y;
                 float const dz = static_cast<float>(z) + 0.5f - center.z;

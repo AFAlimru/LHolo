@@ -72,7 +72,11 @@ LHolo/
 │  │  └─ LHoloMenu.*            纯菜单模型、页面和动作回调
 │  ├─ projection/
 │  │  ├─ Projection.cpp         投影网格、纠错、分区缓存、渲染 Hook
-│  │  └─ Projection.h           GUI/HUD 使用的投影控制接口
+│  │  ├─ Projection.h           GUI/HUD 和辅助放置使用的投影控制接口
+│  │  ├─ ProjectionTypes.h      对外查询与进度的纯数据类型
+│  │  ├─ ProjectionInternalTypes.h 内部键、状态枚举与无资源引用类型
+│  │  ├─ ProjectionRules.*      坐标、分层、状态匹配和渲染分类纯规则
+│  │  └─ ProjectionState.h      世界身份、CPU 状态、Worker 状态与 Mesh 所有权
 │  ├─ place/
 │  │  ├─ PlaceHelper.cpp        轻松/手动/范围放置：投影查表、背包取物、放置事务
 │  │  └─ PlaceHelper.h          配置开关与 Hook 生命周期接口
@@ -96,6 +100,12 @@ LHolo/
 - `structure` 负责“文件和用户意图”，不直接提交 Minecraft 网格。
 - `structure/capture` 只维护会话选区、读取当前客户端世界并调用原版捕获/导出 API；不手工生成方块调色板、索引或实体 NBT。
 - `projection` 负责“结构如何出现在世界中”，不弹文件选择框、不直接操作 ImGui。
+- `projection/ProjectionTypes.h` 不包含运行状态、Hook 或 Minecraft 资源所有权；内部纯数据定义集中在
+  `ProjectionInternalTypes.h`，投影状态与 Worker/Mesh 生命周期仍由实现层负责。
+- `projection/ProjectionRules.*` 只根据显式参数计算结果，不读取全局投影状态，也不持有游戏对象；
+  旋转、镜像、分层可见性和状态匹配规则修改时应集中在这里回归。
+- `projection/ProjectionState.h` 只声明投影运行态及资源所有权；创建、替换、清理和跨世界校验仍由
+  `Projection.cpp` 的生命周期流程统一执行，禁止在状态类型中暗藏线程启动或游戏 API 调用。
 - `overlay` 负责“外部 GUI 如何安全进入游戏图形链”，不解析结构或扫描世界方块。
 - `place` 负责轻松、手动和范围放置：调用 projection 查询接口，在完整背包中查找物品，必要时交换到快捷栏，并发送 `InventoryTransactionPacket`；不碰渲染与配置。
 - `input` 负责菜单期间的最小游戏动作保护；当前只拦截本地玩家破坏方块，不扩展为移动冻结或全交互封锁。
@@ -146,6 +156,8 @@ LHolo/
 - 跨世界保留 `BlockSource`、ECS Storage、组件指针或实体裸指针。
 - 仅依据玩家是否为空判断世界相同。
 - 在旧维度的 `BlockTessellator` 上继续查询新维度。
+- 持有 projection 的 `gStateMutex` 时调用 `structure::clear()`：后者会回调
+  `projection::disable()` 并再次获取同一把锁。必须先在锁内清理投影状态，再解锁后清理结构模块。
 
 ---
 
