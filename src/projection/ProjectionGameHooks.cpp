@@ -5,7 +5,7 @@
 
 #include "overlay/ImGuiOverlay.h"
 #include "plugin/LHolo.h"
-#include "projection/ProjectionVirtualWorld.h"
+#include "projection/world/ProjectionVirtualWorld.h"
 #include "structure/StructureLoader.h"
 
 #include <cstddef>

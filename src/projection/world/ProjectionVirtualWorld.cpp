@@ -6,7 +6,7 @@
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-#include "projection/ProjectionVirtualWorld.h"
+#include "projection/world/ProjectionVirtualWorld.h"
 
 #include <tuple>
 #include <utility>

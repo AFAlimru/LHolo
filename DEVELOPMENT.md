@@ -80,18 +80,19 @@ LHolo/
 │  │  │  ├─ ProjectionMeshWorker.* 单线程 executor、generation 与完成队列
 │  │  │  ├─ ProjectionRenderer.* 已构建 Mesh/方块实体的 pass 分类与材质提交
 │  │  │  └─ ProjectionSectionBuilder.* Worker/同步共用的 section CPU 几何构建
+│  │  ├─ world/                 投影局部世界视图与对外只读查询
+│  │  │  ├─ ProjectionPlacement.* 变换/分层后的虚拟世界与方块实体放置视图
+│  │  │  ├─ ProjectionQueries.* 辅助放置使用的只读单格与范围查询
+│  │  │  └─ ProjectionVirtualWorld.* Tessellation 线程局部虚拟方块与方块实体视图
 │  │  ├─ ProjectionCorrections.* 有界世界纠错扫描、进度计数与 section 失效
 │  │  ├─ ProjectionFramePipeline.* opaque 帧纠错、上传、边框与构建调度流水线
 │  │  ├─ ProjectionGameHooks.* 无状态 BlockSource 虚拟查询与客户端命令 Hook
 │  │  ├─ ProjectionInternalTypes.h 内部键、状态枚举与无资源引用类型
 │  │  ├─ ProjectionInvalidation.* 设置变化检测、section/revision 失效与缓存清理
 │  │  ├─ ProjectionLifecycle.*  ProjectionState 资源准备、停止清理与世界身份匹配
-│  │  ├─ ProjectionPlacement.*  变换/分层后的虚拟世界与方块实体放置视图
 │  │  ├─ ProjectionProgress.*   渲染线程到 HUD 的无锁进度快照发布
-│  │  ├─ ProjectionQueries.*    辅助放置使用的只读单格与范围查询
 │  │  ├─ ProjectionRules.*      坐标、分层、状态匹配和渲染分类纯规则
 │  │  ├─ ProjectionState.h      世界身份、CPU 状态、Worker 状态与 Mesh 所有权
-│  │  ├─ ProjectionVirtualWorld.* Tessellation 线程局部虚拟方块与方块实体视图
 │  │  └─ ProjectionWorldEvents.* 真实世界方块/子区块通知的监听与排队
 │  ├─ place/
 │  │  ├─ PlaceHelper.cpp        轻松/手动/范围放置：投影查表、背包取物、放置事务
@@ -144,15 +145,15 @@ LHolo/
   Task 只持有显式快照，不得捕获 `gState`、`renderContext` 或活动共享 `BlockTessellator`。
 - `projection/mesh/ProjectionMeshUpload.*` 仅在主线程消费完成队列，校验 Worker/结构 generation 与 section revision，
   按每帧两个 section、1 ms 预算上传 `MeshData`；连续失败三次时保持原有同步回退策略。
-- `projection/ProjectionPlacement.*` 在变换、偏移或分层变化后重建虚拟方块/方块实体表、世界坐标索引、
+- `projection/world/ProjectionPlacement.*` 在变换、偏移或分层变化后重建虚拟方块/方块实体表、世界坐标索引、
   section 中心与 Tessellator 查询缓存；它不生成 Mesh、不上传 GPU，也不调度 Worker。
-- `projection/ProjectionQueries.*` 只在调用方已持有投影状态锁且完成世界身份校验后读取虚拟世界索引和
+- `projection/world/ProjectionQueries.*` 只在调用方已持有投影状态锁且完成世界身份校验后读取虚拟世界索引和
   纠错状态，为手动/轻松/范围放置返回单格或按距离排序的缺失方块；它不持锁、不清理状态，也不修改世界。
 - `projection/mesh/ProjectionRenderer.*` 只提交已经上传完成的 Mesh 和投影方块实体：保持 opaque/transparent pass
   分类、透明 section 后向前排序、液体/方块实体占位、结构边框和纠错覆盖的现有材质语义；方块实体仍在
   局部虚拟世界作用域内复用原 dispatcher 参数。它不生成 CPU 几何、不消费 Worker 结果，也不改变
   projection 生命周期；资源预检和提交异常后的清理由 `Projection.cpp` 负责。
-- `projection/ProjectionVirtualWorld.*` 隐藏 Tessellation 使用的 thread-local 虚拟方块表；只有显式 RAII
+- `projection/world/ProjectionVirtualWorld.*` 隐藏 Tessellation 使用的 thread-local 虚拟方块表；只有显式 RAII
   作用域内的 `BlockSource` Hook 查询可以命中投影邻居，作用域结束后必须恢复上一个视图。
 - `projection/ProjectionWorldEvents.*` 只监听真实世界的方块变化和子区块加载并按原顺序排队；它不读取
   `gState`，也不决定 section 如何失效。事件限流、纠错更新和 dirty 传播仍由 `Projection.cpp` 负责。

@@ -5,7 +5,7 @@
 
 #include "projection/ProjectionInternalTypes.h"
 #include "projection/ProjectionState.h"
-#include "projection/ProjectionVirtualWorld.h"
+#include "projection/world/ProjectionVirtualWorld.h"
 
 #include <algorithm>
 #include <cstddef>

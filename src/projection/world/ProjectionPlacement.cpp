@@ -6,11 +6,11 @@
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-#include "projection/ProjectionPlacement.h"
+#include "projection/world/ProjectionPlacement.h"
 
 #include "projection/ProjectionRules.h"
 #include "projection/ProjectionState.h"
-#include "projection/ProjectionVirtualWorld.h"
+#include "projection/world/ProjectionVirtualWorld.h"
 #include "structure/StructureLoader.h"
 
 #include <algorithm>
