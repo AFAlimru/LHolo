@@ -92,26 +92,24 @@ constexpr std::uint64_t kSwapRetryMs = 50;
 // changing the player's aim invalidates the cache immediately.
 constexpr int           kRangePlanBudgetPerTick = 16;
 constexpr std::uint64_t kFailedPlanCacheMs      = 250;
-// Manual-mode typematic repeat: after the first block on press, holding pauses
-// for kManualInitialDelayMs and then auto-repeats every kManualRepeatIntervalMs
-// (like keyboard key-repeat), so a tap places one and a hold streams at a steady
-// rate.
+// Manual-mode repeat: after the first block on press, holding pauses for
+// kManualInitialDelayMs and then repeats every kManualRepeatIntervalMs (like
+// keyboard key-repeat), so a tap places one and a hold streams at a steady rate.
 constexpr std::uint64_t kManualInitialDelayMs   = 150;
 constexpr std::uint64_t kManualRepeatIntervalMs = 120;
-// A pending first-block request expires if it cannot be fulfilled this long
-// after the press, so a stale click never places a block later.
+// A pending first-block request expires this long after the press so a stale
+// click never places a block later.
 constexpr std::uint64_t kManualRequestTimeoutMs = 400;
 
 std::atomic_bool gEnabled{false};
 std::atomic_bool gRangeEnabled{false};
-// Manual mode: hold the right mouse button to place, instead of auto-placing.
+// Manual mode: right-click a projection cell to place it (hold to stream).
 std::atomic_bool gManualMode{false};
-// Manual-mode press/hold tracking (typematic repeat). gManualHeld spans the
-// press (startBuildBlock) to the release (stopBuildBlock); the timestamps drive
-// the repeat rate.
+// Manual-mode press/hold tracking. gManualHeld spans the press (startBuildBlock)
+// to the release (stopBuildBlock); the timestamps drive the repeat rate.
 std::atomic_bool     gManualHeld{false};
-// Pending first block of a press; set on press and kept until placed so a quick
-// tap (released before the next game tick) still places one block.
+// Pending first block of a press; set on press over a target and kept until
+// placed so a quick tap still places one block.
 std::atomic_bool     gManualPlaceRequested{false};
 std::atomic_uint64_t gManualPressAt{0};
 std::atomic_uint64_t gLastManualPlaceAt{0};
@@ -220,6 +218,25 @@ struct ItemFind {
     ItemStack const* item;
 };
 
+// Some blocks exist in the world only as a redstone/heat/light-driven runtime
+// state the player can never place directly: a lit redstone lamp/ore, a burning
+// furnace, a powered-off redstone torch, a powered repeater/comparator. Map such
+// a name to the base block that actually gets placed so the inventory lookup, the
+// placement prediction and the correction display all line up. The game restores
+// the lit/powered/heat bit on its own once the block is powered or fuelled.
+std::string_view basePlacedName(std::string_view name) {
+    if (name == "minecraft:lit_redstone_lamp")          return "minecraft:redstone_lamp";
+    if (name == "minecraft:lit_redstone_ore")           return "minecraft:redstone_ore";
+    if (name == "minecraft:lit_deepslate_redstone_ore") return "minecraft:deepslate_redstone_ore";
+    if (name == "minecraft:lit_furnace")                return "minecraft:furnace";
+    if (name == "minecraft:lit_blast_furnace")          return "minecraft:blast_furnace";
+    if (name == "minecraft:lit_smoker")                 return "minecraft:smoker";
+    if (name == "minecraft:unlit_redstone_torch")       return "minecraft:redstone_torch";
+    if (name == "minecraft:powered_repeater")           return "minecraft:unpowered_repeater";
+    if (name == "minecraft:powered_comparator")         return "minecraft:unpowered_comparator";
+    return name;
+}
+
 // Blocks whose placing item has a different name than the block. ItemStack(Block)
 // does not resolve these to the right inventory item (the item was never found),
 // so the item is built from its real name instead.
@@ -234,12 +251,15 @@ char const* placingItemName(std::string const& blockName) {
 }
 
 ItemStack makePlacingItem(Block const& block) {
-    char const* const itemName = placingItemName(block.getTypeName());
+    // Normalize a runtime lit/heat variant to its base block first, then apply
+    // the block->item name remaps (redstone wire/comparator/repeater).
+    std::string const blockName{basePlacedName(block.getTypeName())};
+    char const* const itemName = placingItemName(blockName);
     // Construct the inventory form by item name with neutral aux. Constructing
     // ItemStack directly from an oriented Block copies legacy placement bits
     // (stairs direction/half, pillar axis, ...), but inventory items do not
     // carry those world-state bits and therefore never matched.
-    std::string_view const name = itemName ? std::string_view{itemName} : std::string_view{block.getTypeName()};
+    std::string_view const name = itemName ? std::string_view{itemName} : std::string_view{blockName};
     return ItemStack(name, 1, 0, nullptr);
 }
 
@@ -609,7 +629,7 @@ bool placementPredictionMatches(
     Block const& ghost,
     Block const* expectedDoorUpper = nullptr
 ) {
-    if (predicted.getTypeName() != ghost.getTypeName()) return false;
+    if (basePlacedName(predicted.getTypeName()) != basePlacedName(ghost.getTypeName())) return false;
 
     auto const& name = ghost.getTypeName();
     if (name.ends_with("_stairs")) {
@@ -622,6 +642,15 @@ bool placementPredictionMatches(
     if (!serializedState(ghost, "pillar_axis").empty()) {
         return sameSerializedState(predicted, ghost, "pillar_axis");
     }
+    // Repeaters and comparators: only facing is chosen at placement. The delay
+    // (repeater) and mode (comparator) are set by right-clicking the placed
+    // block, and the powered/output bit is redstone-driven, so none of them can
+    // gate placement. Match on facing alone, for both the powered and unpowered
+    // name variants (the powered ones reach here via basePlacedName above).
+    if (name == "minecraft:unpowered_repeater" || name == "minecraft:powered_repeater"
+        || name == "minecraft:unpowered_comparator" || name == "minecraft:powered_comparator") {
+        return sameSerializedState(predicted, ghost, "minecraft:cardinal_direction");
+    }
     if (expectedDoorUpper) {
         // A door item places both cells. The lower ghost owns direction/open,
         // while the upper ghost owns the hinge. Require the official predictor
@@ -633,6 +662,18 @@ bool placementPredictionMatches(
             && sameSerializedState(predicted, ghost, "open_bit")
             && !expectedHinge.empty()
             && serializedState(predicted, "door_hinge_bit") == expectedHinge;
+    }
+    // A runtime lit/heat variant (lit lamp/ore, burning furnace) is placed as
+    // its base block and switched on by the game afterwards, so the names only
+    // matched after normalization and the runtime id is expected to differ.
+    // Accept on facing where the block is directional (furnaces), otherwise
+    // unconditionally (a plain full block such as a redstone lamp or ore).
+    if (basePlacedName(ghost.getTypeName()) != ghost.getTypeName()) {
+        if (!serializedState(ghost, "facing_direction").empty())
+            return sameSerializedState(predicted, ghost, "facing_direction");
+        if (!serializedState(ghost, "minecraft:cardinal_direction").empty())
+            return sameSerializedState(predicted, ghost, "minecraft:cardinal_direction");
+        return true;
     }
     return predicted.getRuntimeId() == ghost.getRuntimeId();
 }
@@ -840,15 +881,13 @@ void tickEasyPlace() {
     }
 
     // Single-crosshair placement: auto (轻松放置) or manual (手动放置), which are
-    // mutually exclusive in the UI. Manual mode places exactly one block per
-    // right-click press: startBuildBlock sets a one-shot request (consumed by
-    // the placement below); the buildBlock hook cancels the vanilla build so
-    // nothing is placed twice.
+    // mutually exclusive in the UI. Manual mode places on the right button only
+    // when the crosshair is over a projection target (see the build hooks, which
+    // let off-target clicks run vanilla). A tap places one block; holding pauses
+    // for the initial delay and then repeats at a steady rate (typematic).
     if (gManualMode.load(std::memory_order_acquire)) {
         auto const nowManual = GetTickCount64();
         bool allowed = false;
-        // First block of a press: place it even if the button was already
-        // released (a quick tap), until the request goes stale.
         if (gManualPlaceRequested.load(std::memory_order_acquire)) {
             if (nowManual - gManualPressAt.load(std::memory_order_acquire) <= kManualRequestTimeoutMs) {
                 allowed = true;
@@ -856,8 +895,6 @@ void tickEasyPlace() {
                 gManualPlaceRequested.store(false, std::memory_order_release);
             }
         }
-        // While the button stays held, pause for the initial delay and then
-        // repeat at a steady rate (typematic).
         if (!allowed && gManualHeld.load(std::memory_order_acquire)
             && nowManual - gManualPressAt.load(std::memory_order_acquire) >= kManualInitialDelayMs
             && nowManual - gLastManualPlaceAt.load(std::memory_order_acquire) >= kManualRepeatIntervalMs) {
@@ -912,8 +949,8 @@ void tickEasyPlace() {
     player->setSelectedSlot(found.slot);
     if (!placeBlock(*player, placement, found.slot, *found.item)) return;
     markPlaced(placement.cell, now);
-    // Manual repeat bookkeeping: record this placement and mark the current
-    // press as having placed its first block (so holding then auto-repeats).
+    // Manual repeat bookkeeping: consume the one-shot press request and timestamp
+    // this placement so a held button then repeats at a steady rate.
     gLastManualPlaceAt.store(now, std::memory_order_release);
     gManualPlaceRequested.store(false, std::memory_order_release);
 }
@@ -930,20 +967,38 @@ LL_TYPE_INSTANCE_HOOK(
     origin(currentTick);
 }
 
-// Returns true when manual mode is on and `gm` belongs to the local player, i.e.
-// this is the client-side right-click we should take over. The local-player
-// check is essential: the server processes LHolo's own placement through these
-// same functions on the ServerPlayer, and that must not be suppressed.
-bool isLocalManualBuild(GameMode& gm) {
-    if (!gManualMode.load(std::memory_order_acquire)) return false;
+// Returns the local player when manual mode is on and `gm` belongs to it, i.e.
+// this is the client-side right-click we should take over; nullptr otherwise.
+// The local-player check is essential: the server processes LHolo's own
+// placement through these same functions on the ServerPlayer, and that must not
+// be suppressed.
+LocalPlayer* localManualBuildPlayer(GameMode& gm) {
+    if (!gManualMode.load(std::memory_order_acquire)) return nullptr;
     auto client = ll::service::getClientInstance();
     auto* localPlayer = client ? client->getLocalPlayer() : nullptr;
-    return localPlayer && &gm.mPlayer == static_cast<Player*>(localPlayer);
+    if (localPlayer && &gm.mPlayer == static_cast<Player*>(localPlayer)) return localPlayer;
+    return nullptr;
 }
 
-// Manual-mode press edge: the initial right-click. Begin a held sequence (first
-// block placed immediately by tickEasyPlace, then typematic repeat) and cancel
-// the vanilla build start so nothing is placed twice.
+// Fresh, synchronous check of whether the crosshair is over a placeable missing
+// projection cell. The build hooks call this at click time so the decision never
+// lags a game tick behind (a stale check let vanilla place a stray block when
+// the crosshair had just moved onto a projected cell).
+bool crosshairOverManualTarget(LocalPlayer& player) {
+    Vec3 const eye = player.getEyePos();
+    Vec3 const rawDir = player.getViewVector(1.0f);
+    float const length = std::sqrt(rawDir.x * rawDir.x + rawDir.y * rawDir.y + rawDir.z * rawDir.z);
+    if (length <= 0.0f) return false;
+    Vec3 const dir{rawDir.x / length, rawDir.y / length, rawDir.z / length};
+    auto const target = findProjectionTarget(player, eye, dir, player.getPickRange());
+    return target && findItemSlot(player, *target->block).slot >= 0;
+}
+
+// Manual-mode press edge: begin a held sequence and, when the crosshair is over
+// a projection target, request the first block and cancel the vanilla build so
+// LHolo (which auto-selects the right item) places it. Off-target the press runs
+// vanilla so a tap can still open a chest, change a repeater's delay or place
+// scaffolding.
 LL_TYPE_INSTANCE_HOOK(
     GameModeStartBuildHook,
     ll::memory::HookPriority::Normal,
@@ -953,16 +1008,18 @@ LL_TYPE_INSTANCE_HOOK(
     ::BlockPos const& pos,
     uchar             face
 ) {
-    if (isLocalManualBuild(*this)) {
+    if (auto* player = localManualBuildPlayer(*this)) {
         gManualPressAt.store(GetTickCount64(), std::memory_order_release);
-        gManualPlaceRequested.store(true, std::memory_order_release);
         gManualHeld.store(true, std::memory_order_release);
-        return;  // LHolo handles the placement from tickEasyPlace.
+        if (crosshairOverManualTarget(*player)) {
+            gManualPlaceRequested.store(true, std::memory_order_release);
+            return;  // LHolo handles the placement from tickEasyPlace.
+        }
     }
     origin(pos, face);
 }
 
-// Manual-mode release edge: stop the typematic repeat when the button is let go.
+// Manual-mode release edge: stop the repeat when the button is let go.
 LL_TYPE_INSTANCE_HOOK(
     GameModeStopBuildHook,
     ll::memory::HookPriority::Normal,
@@ -970,15 +1027,17 @@ LL_TYPE_INSTANCE_HOOK(
     &GameMode::$stopBuildBlock,
     void
 ) {
-    if (isLocalManualBuild(*this)) {
+    if (localManualBuildPlayer(*this)) {
         gManualHeld.store(false, std::memory_order_release);
-        return;
     }
     origin();
 }
 
-// Suppress the vanilla continuous build while the button is held in manual mode;
-// LHolo drives placement from the press/hold state above.
+// GameMode::buildBlock is the shared right-click entry for interacting with a
+// block (chest, repeater, ...) AND for placing one, so it must NOT be cancelled
+// outright — that would disable right-click entirely in manual mode. Suppress
+// the vanilla build only while the crosshair is over a projection target, where
+// LHolo is placing; off-target clicks fall through to vanilla.
 LL_TYPE_INSTANCE_HOOK(
     GameModeBuildBlockHook,
     ll::memory::HookPriority::Normal,
@@ -989,7 +1048,9 @@ LL_TYPE_INSTANCE_HOOK(
     uchar             face,
     bool const        isSimTick
 ) {
-    if (isLocalManualBuild(*this)) return false;
+    if (auto* player = localManualBuildPlayer(*this); player && crosshairOverManualTarget(*player)) {
+        return false;
+    }
     return origin(pos, face, isSimTick);
 }
 
@@ -1030,9 +1091,10 @@ int getPlacementRadius() {
 }
 
 void setManualMode(bool manual) {
+    logger().info("Manual placement {}", manual ? "enabled" : "disabled");
     if (!manual) {
         // A release hook can be missed while menus or mode switches are active.
-        // Never carry a stale press/hold request into the next manual session.
+        // Never carry a stale press/hold state into the next manual session.
         gManualHeld.store(false, std::memory_order_release);
         gManualPlaceRequested.store(false, std::memory_order_release);
         gManualPressAt.store(0, std::memory_order_release);

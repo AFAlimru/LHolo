@@ -43,7 +43,7 @@ struct CaptureDraftModel {
 
 enum class HotkeyId : std::uint8_t {
     Gui, MoveXMinus, MoveXPlus, MoveZMinus, MoveZPlus,
-    MoveYPlus, MoveYMinus, LayerIncrease, LayerDecrease
+    MoveYPlus, MoveYMinus, LayerIncrease, LayerDecrease, ToggleManual
 };
 
 struct HotkeyRow {
@@ -97,7 +97,7 @@ struct MenuModel {
     int maxLayerY{};
     int maxLayerX{};
 
-    std::array<HotkeyRow, 9> hotkeys{};
+    std::array<HotkeyRow, 10> hotkeys{};
     bool hudEnabled{true};
     int hudPosition{1};
     bool hudShowFileName{true};

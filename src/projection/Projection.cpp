@@ -773,8 +773,30 @@ Block const* transformExpectedBlock(
     return &LegacyStructureTemplate::_mapToData(*block, settings);
 }
 
+// Maps a game-driven runtime variant (lit_redstone_lamp, powered_repeater, ...)
+// to the base block a player actually places. Used only by the WrongType check
+// so a same-base block in a different runtime state is treated as a WrongState
+// (orange) rather than a WrongType (red); projectionStatesMatch still compares
+// the runtime state strictly so the mismatch is surfaced.
+std::string_view basePlacedName(std::string_view name) {
+    if (name == "minecraft:lit_redstone_lamp")          return "minecraft:redstone_lamp";
+    if (name == "minecraft:lit_redstone_ore")           return "minecraft:redstone_ore";
+    if (name == "minecraft:lit_deepslate_redstone_ore") return "minecraft:deepslate_redstone_ore";
+    if (name == "minecraft:lit_furnace")                return "minecraft:furnace";
+    if (name == "minecraft:lit_blast_furnace")          return "minecraft:blast_furnace";
+    if (name == "minecraft:lit_smoker")                 return "minecraft:smoker";
+    if (name == "minecraft:unlit_redstone_torch")       return "minecraft:redstone_torch";
+    if (name == "minecraft:powered_repeater")           return "minecraft:unpowered_repeater";
+    if (name == "minecraft:powered_comparator")         return "minecraft:unpowered_comparator";
+    return name;
+}
+
 bool projectionStatesMatch(Block const& expected, Block const& actual) {
     if (expected == actual) return true;
+    // Runtime lit/powered state must match exactly here: a lit-lamp projection is
+    // only satisfied by a lit lamp, an off projection by an off block. The base
+    // normalization is intentionally NOT applied so the mismatch surfaces (as a
+    // WrongState, kept out of WrongType by the base compare in the caller).
     if (expected.getTypeName() != actual.getTypeName()) return false;
 
     auto stateMatches = [&](auto const& state) {
@@ -1139,7 +1161,8 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
             auto const bodyMissing = expected && actual.isAir();
             auto const liquidMissing = expectedLiquid && actualLiquid.isAir();
             auto const bodyTypeWrong = expected
-                && !actual.isAir() && actual.getTypeName() != expected->getTypeName();
+                && !actual.isAir()
+                && basePlacedName(actual.getTypeName()) != basePlacedName(expected->getTypeName());
             auto const liquidTypeWrong = expectedLiquid
                 && !actualLiquid.isAir() && actualLiquid.getTypeName() != expectedLiquid->getTypeName();
             auto const liquidCellOccupiedBySolid = !expected && expectedLiquid && !actual.isAir()

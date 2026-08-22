@@ -119,6 +119,10 @@ std::atomic_bool                 gCapturingLayerIncreaseHotkey{false};
 std::atomic_bool                 gCapturingLayerDecreaseHotkey{false};
 std::atomic_bool                 gLayerIncreaseHotkeyHeld{false};
 std::atomic_bool                 gLayerDecreaseHotkeyHeld{false};
+std::atomic_uint                 gToggleManualHotkey{'R'};
+std::atomic_uint                 gToggleManualHotkeyModifiers{0};
+std::atomic_bool                 gCapturingToggleManualHotkey{false};
+std::atomic_bool                 gToggleManualHotkeyHeld{false};
 std::array<std::atomic_uint, 6>  gMoveHotkeys{VK_LEFT, VK_RIGHT, VK_UP, VK_DOWN, VK_UP, VK_DOWN};
 std::array<std::atomic_uint, 6>  gMoveHotkeyModifiers{
     kHotkeyModifierControl,
@@ -138,6 +142,7 @@ std::atomic_int                  gPendingOffsetX{0};
 std::atomic_int                  gPendingOffsetY{0};
 std::atomic_int                  gPendingOffsetZ{0};
 std::atomic_int                  gPendingLayerDelta{0};
+std::atomic_bool                 gPendingToggleManual{false};
 std::atomic_bool                 gPendingSettingsSave{false};
 std::atomic_uint64_t             gIgnoreHotkeyUntil{0};
 std::atomic_bool                 gHasSavedProjection{false};
@@ -1058,6 +1063,9 @@ bool handleGuiHotkeyKeyDown(unsigned int virtualKey) {
     } else if (gCapturingLayerDecreaseHotkey.load(std::memory_order_acquire)) {
         captureKey = &gLayerDecreaseHotkey;
         captureModifiers = &gLayerDecreaseHotkeyModifiers;
+    } else if (gCapturingToggleManualHotkey.load(std::memory_order_acquire)) {
+        captureKey = &gToggleManualHotkey;
+        captureModifiers = &gToggleManualHotkeyModifiers;
     } else {
         for (std::size_t index = 0; index < gCapturingMoveHotkey.size(); ++index) {
             if (gCapturingMoveHotkey[index].load(std::memory_order_acquire)) {
@@ -1075,6 +1083,7 @@ bool handleGuiHotkeyKeyDown(unsigned int virtualKey) {
             gCapturingGuiHotkey.store(false, std::memory_order_release);
             gCapturingLayerIncreaseHotkey.store(false, std::memory_order_release);
             gCapturingLayerDecreaseHotkey.store(false, std::memory_order_release);
+            gCapturingToggleManualHotkey.store(false, std::memory_order_release);
             for (auto& capturing : gCapturingMoveHotkey) {
                 capturing.store(false, std::memory_order_release);
             }
@@ -1102,6 +1111,7 @@ bool handleGuiHotkeyKeyDown(unsigned int virtualKey) {
             clearDuplicate(gGuiHotkey, gGuiHotkeyModifiers);
             clearDuplicate(gLayerIncreaseHotkey, gLayerIncreaseHotkeyModifiers);
             clearDuplicate(gLayerDecreaseHotkey, gLayerDecreaseHotkeyModifiers);
+            clearDuplicate(gToggleManualHotkey, gToggleManualHotkeyModifiers);
             for (std::size_t index = 0; index < gMoveHotkeys.size(); ++index) {
                 clearDuplicate(gMoveHotkeys[index], gMoveHotkeyModifiers[index]);
             }
@@ -1167,6 +1177,15 @@ bool handleGuiHotkeyKeyDown(unsigned int virtualKey) {
         }
         return true;
     }
+    auto const toggleManualHotkey = gToggleManualHotkey.load(std::memory_order_acquire);
+    if (toggleManualHotkey != 0 && virtualKey == toggleManualHotkey
+        && modifiers == gToggleManualHotkeyModifiers.load(std::memory_order_acquire)) {
+        if (GetTickCount64() >= gIgnoreHotkeyUntil.load(std::memory_order_acquire)
+            && !gToggleManualHotkeyHeld.exchange(true, std::memory_order_acq_rel)) {
+            gPendingToggleManual.store(true, std::memory_order_release);
+        }
+        return true;
+    }
     return false;
 }
 
@@ -1194,6 +1213,9 @@ bool handleGuiHotkeyKeyUp(unsigned int virtualKey) {
     if (virtualKey == gLayerDecreaseHotkey.load(std::memory_order_acquire)) {
         consumed = gLayerDecreaseHotkeyHeld.exchange(false, std::memory_order_acq_rel) || consumed;
     }
+    if (virtualKey == gToggleManualHotkey.load(std::memory_order_acquire)) {
+        consumed = gToggleManualHotkeyHeld.exchange(false, std::memory_order_acq_rel) || consumed;
+    }
     for (std::size_t index = 0; index < gMoveHotkeys.size(); ++index) {
         if (virtualKey == gMoveHotkeys[index].load(std::memory_order_acquire)) {
             consumed = gMoveHotkeyHeld[index].exchange(false, std::memory_order_acq_rel) || consumed;
@@ -1218,6 +1240,7 @@ void resetHotkeyState() {
     gGuiHotkeyHeld.store(false, std::memory_order_release);
     gLayerIncreaseHotkeyHeld.store(false, std::memory_order_release);
     gLayerDecreaseHotkeyHeld.store(false, std::memory_order_release);
+    gToggleManualHotkeyHeld.store(false, std::memory_order_release);
     for (auto& held : gMoveHotkeyHeld) held.store(false, std::memory_order_release);
     for (auto& deadline : gConsumeKeyReleaseUntil) deadline.store(0, std::memory_order_release);
 }
@@ -1255,6 +1278,17 @@ void processPendingHotkeyActions() {
         auto const current = static_cast<long long>(gDisplayLayer.load(std::memory_order_relaxed));
         auto const next = std::clamp(current + static_cast<long long>(layerDelta), 0LL, static_cast<long long>(maxLayer));
         gDisplayLayer.store(static_cast<int>(next), std::memory_order_relaxed);
+    }
+
+    if (gPendingToggleManual.exchange(false, std::memory_order_acq_rel)) {
+        bool const enable = !place::isManualMode();
+        place::setManualMode(enable);
+        // Manual, easy and range placement are mutually exclusive (as in the UI).
+        if (enable) {
+            place::setEnabled(false);
+            place::setRangeEnabled(false);
+        }
+        changed = true;
     }
 
     changed = gPendingSettingsSave.exchange(false, std::memory_order_acq_rel) || changed;
@@ -1426,6 +1460,7 @@ UiHotkeyBinding hotkeyBinding(lholo::ui::HotkeyId id) {
     case lholo::ui::HotkeyId::MoveYMinus: return {&gMoveHotkeys[5], &gMoveHotkeyModifiers[5], &gCapturingMoveHotkey[5]};
     case lholo::ui::HotkeyId::LayerIncrease: return {&gLayerIncreaseHotkey, &gLayerIncreaseHotkeyModifiers, &gCapturingLayerIncreaseHotkey};
     case lholo::ui::HotkeyId::LayerDecrease: return {&gLayerDecreaseHotkey, &gLayerDecreaseHotkeyModifiers, &gCapturingLayerDecreaseHotkey};
+    case lholo::ui::HotkeyId::ToggleManual: return {&gToggleManualHotkey, &gToggleManualHotkeyModifiers, &gCapturingToggleManualHotkey};
     }
     return {};
 }
@@ -1434,11 +1469,12 @@ void stopHotkeyCapture() {
     gCapturingGuiHotkey.store(false, std::memory_order_release);
     gCapturingLayerIncreaseHotkey.store(false, std::memory_order_release);
     gCapturingLayerDecreaseHotkey.store(false, std::memory_order_release);
+    gCapturingToggleManualHotkey.store(false, std::memory_order_release);
     for (auto& capturing : gCapturingMoveHotkey) capturing.store(false, std::memory_order_release);
 }
 
 struct HotkeyDefinition { lholo::ui::HotkeyId id; char const* label; };
-constexpr std::array<HotkeyDefinition, 9> kHotkeyDefinitions{{
+constexpr std::array<HotkeyDefinition, 10> kHotkeyDefinitions{{
     {lholo::ui::HotkeyId::Gui, "打开投影菜单"},
     {lholo::ui::HotkeyId::MoveXMinus, "结构偏移 X -1"},
     {lholo::ui::HotkeyId::MoveXPlus, "结构偏移 X +1"},
@@ -1447,7 +1483,8 @@ constexpr std::array<HotkeyDefinition, 9> kHotkeyDefinitions{{
     {lholo::ui::HotkeyId::MoveYPlus, "结构偏移 Y +1"},
     {lholo::ui::HotkeyId::MoveYMinus, "结构偏移 Y -1"},
     {lholo::ui::HotkeyId::LayerIncrease, "上一层"},
-    {lholo::ui::HotkeyId::LayerDecrease, "下一层"}
+    {lholo::ui::HotkeyId::LayerDecrease, "下一层"},
+    {lholo::ui::HotkeyId::ToggleManual, "开关手动放置"}
 }};
 
 lholo::ui::MenuModel makeMenuModel(float effectiveUiScale) {
@@ -1706,6 +1743,8 @@ lholo::ui::MenuActions makeMenuActions(bool& refreshModel) {
         gLayerDecreaseHotkey.store(VK_DOWN, std::memory_order_relaxed);
         gLayerIncreaseHotkeyModifiers.store(kHotkeyModifierAlt, std::memory_order_relaxed);
         gLayerDecreaseHotkeyModifiers.store(kHotkeyModifierAlt, std::memory_order_relaxed);
+        gToggleManualHotkey.store('R', std::memory_order_relaxed);
+        gToggleManualHotkeyModifiers.store(0, std::memory_order_relaxed);
         stopHotkeyCapture();
         resetHotkeyState();
         saveSettings();
@@ -1835,6 +1874,14 @@ void loadSettings() {
             std::clamp(json.value("layerDecreaseHotkeyModifiers", static_cast<int>(kHotkeyModifierAlt)), 0, 7),
             std::memory_order_relaxed
         );
+        gToggleManualHotkey.store(
+            std::clamp(json.value("toggleManualHotkey", static_cast<int>('R')), 0, 255),
+            std::memory_order_relaxed
+        );
+        gToggleManualHotkeyModifiers.store(
+            std::clamp(json.value("toggleManualHotkeyModifiers", 0), 0, 7),
+            std::memory_order_relaxed
+        );
         static char const* moveKeyNames[]{
             "moveXMinusHotkey",
             "moveXPlusHotkey",
@@ -1948,6 +1995,8 @@ void saveSettings() {
             {"layerDecreaseHotkey", gLayerDecreaseHotkey.load(std::memory_order_relaxed)},
             {"layerIncreaseHotkeyModifiers", gLayerIncreaseHotkeyModifiers.load(std::memory_order_relaxed)},
             {"layerDecreaseHotkeyModifiers", gLayerDecreaseHotkeyModifiers.load(std::memory_order_relaxed)},
+            {"toggleManualHotkey", gToggleManualHotkey.load(std::memory_order_relaxed)},
+            {"toggleManualHotkeyModifiers", gToggleManualHotkeyModifiers.load(std::memory_order_relaxed)},
             {"moveXMinusHotkey", gMoveHotkeys[0].load(std::memory_order_relaxed)},
             {"moveXPlusHotkey", gMoveHotkeys[1].load(std::memory_order_relaxed)},
             {"moveZMinusHotkey", gMoveHotkeys[2].load(std::memory_order_relaxed)},
