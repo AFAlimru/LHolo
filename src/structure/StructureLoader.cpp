@@ -1676,7 +1676,14 @@ lholo::ui::MenuActions makeMenuActions(bool& refreshModel) {
         refreshModel = true;
         logger().info("Restoring projection {} at ({}, {}, {})", savedPath, x, y, z);
     };
-    actions.closeProjection = [] { projection::disable(); clear(); };
+    actions.closeProjection = [&refreshModel] {
+        // Clear the loaded structure BEFORE disabling so a render frame can never
+        // rebuild the projection from a still-present gLoaded after gState was
+        // reset. See the getLoaded()==null guard in the render sync.
+        clear();
+        projection::disable();
+        refreshModel = true;
+    };
     actions.requestMaterials = [] { requestMaterialList(); };
     actions.beginHotkeyCapture = [](lholo::ui::HotkeyId id) {
         stopHotkeyCapture();

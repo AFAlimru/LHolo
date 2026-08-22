@@ -2107,12 +2107,21 @@ LL_TYPE_INSTANCE_HOOK(
     }
     gCaptureBounds.render(renderContext, renderAlphaLayer);
 
-    if (auto loaded = structure::getLoaded(); loaded && loaded->generation != gState.structureGeneration) {
-        clearProjectionStateLocked();
-        if (!enableStructureProjection(renderContext, std::move(loaded))) {
+    if (auto loaded = structure::getLoaded()) {
+        if (loaded->generation != gState.structureGeneration) {
             clearProjectionStateLocked();
-            logger().error("Could not enable loaded structure projection");
+            if (!enableStructureProjection(renderContext, std::move(loaded))) {
+                clearProjectionStateLocked();
+                logger().error("Could not enable loaded structure projection");
+            }
         }
+    } else if (gState.enabled) {
+        // No structure is loaded, yet a projection is still live. This happens
+        // when closeProjection() cleared the loaded structure on another thread
+        // right after a frame had already rebuilt gState from the not-yet-cleared
+        // structure (gState holds its own shared_ptr, so clearing gLoaded alone
+        // never stops it). Tear the projection down so "close" always takes.
+        clearProjectionStateLocked();
     }
 
     if (!gState.enabled) return;
