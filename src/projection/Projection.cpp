@@ -1942,7 +1942,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     );
                     if (gState.meshWorkerUploadedSections % 64 == 0) {
                         auto const count = gState.meshWorkerUploadedSections;
-                        logger().info(
+                        logger().debug(
                             "Projection mesh worker: {} sections; snapshot {}/{} us (data {}/{}, chunkView {}/{}), build {}/{} us, upload {}/{} us",
                             count,
                             gState.meshWorkerSnapshotMicros / count,
