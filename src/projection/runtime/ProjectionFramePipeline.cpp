@@ -3,7 +3,7 @@
 
 #include "projection/runtime/ProjectionFramePipeline.h"
 
-#include "projection/runtime/ProjectionCorrections.h"
+#include "projection/correction/CorrectionTracker.h"
 #include "projection/mesh/ProjectionMeshScheduler.h"
 #include "projection/mesh/ProjectionMeshUpload.h"
 #include "projection/runtime/ProjectionProgress.h"
@@ -77,7 +77,7 @@ void processProjectionOpaqueFrame(
     auto& blockTessellator = *state.blockTessellator;
     blockTessellator.setRegion(region);
 
-    auto const correctionChanges = updateProjectionCorrections(
+    auto const correctionChanges = updateCorrectionTracker(
         state,
         region,
         transformSettings,

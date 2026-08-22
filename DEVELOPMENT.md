@@ -89,12 +89,13 @@ LHolo/
 │  │  │  └─ ProjectionSectionBuilder.* Worker/同步共用的 section CPU 几何构建
 │  │  ├─ section/               section 状态结构与初始化
 │  │  │  └─ SectionStateStore.* 并行数组合并后的 SectionState 与初始化
+│  │  ├─ correction/            纠错状态机与进度维护
+│  │  │  └─ CorrectionTracker.* 有界扫描、事件刷新、四态纠错与六邻居失效
 │  │  ├─ world/                 投影局部世界视图与对外只读查询
 │  │  │  ├─ ProjectionPlacement.* 变换/分层后的虚拟世界与方块实体放置视图
 │  │  │  ├─ ProjectionQueries.* 辅助放置使用的只读单格与范围查询
 │  │  │  └─ ProjectionVirtualWorld.* Tessellation 线程局部虚拟方块与方块实体视图
 │  │  ├─ runtime/               投影会话生命周期与每帧运行时协调
-│  │  │  ├─ ProjectionCorrections.* 有界世界纠错扫描、进度计数与 section 失效
 │  │  │  ├─ ProjectionFramePipeline.* opaque 帧纠错、上传、边框与构建调度流水线
 │  │  │  ├─ ProjectionInvalidation.* 设置变化检测、section/revision 失效与缓存清理
 │  │  │  ├─ ProjectionLifecycle.* ProjectionState 资源准备、停止清理与世界身份匹配
@@ -145,7 +146,7 @@ LHolo/
   `projection/core/ProjectionInternalTypes.h`，投影状态与 Worker/Mesh 生命周期仍由实现层负责。
 - `projection/core/ProjectionRules.*` 只根据显式参数计算结果，不读取全局投影状态，也不持有游戏对象；
   旋转、镜像、分层可见性和状态匹配规则修改时应集中在这里回归。
-- `projection/runtime/ProjectionCorrections.*` 在固定每帧预算内比较真实世界与投影单元，维护纠错状态和进度计数；
+- `projection/correction/CorrectionTracker.*` 在固定每帧预算内比较真实世界与投影单元，维护纠错状态和进度计数；
   它可以标记受影响 section，但不创建 Mesh、不访问 Tessellator，也不发布 HUD 原子状态。
 - `projection/runtime/ProjectionFramePipeline.*` 只在 opaque pass 按固定顺序执行纠错扫描与进度发布、完成队列上传、
   轻量结构边框准备和下一 section 调度；它不采集 GUI 设置、不判断 placement 失效，也不提交最终渲染 pass。
@@ -189,7 +190,7 @@ LHolo/
   作用域内的 `BlockSource` Hook 查询可以命中投影邻居，作用域结束后必须恢复上一个视图。
 - `projection/runtime/ProjectionWorldEvents.*` 只监听真实世界的方块变化和子区块加载并按原顺序排队；它不读取
   `gState`，也不决定 section 如何失效；事件消费、纠错更新和 dirty 传播由
-  `ProjectionFramePipeline`/`ProjectionCorrections` 负责。
+  `ProjectionFramePipeline`/`CorrectionTracker` 负责。
 - `overlay` 负责“外部 GUI 如何安全进入游戏图形链”，不解析结构或扫描世界方块。
 - `place` 负责轻松、手动和范围放置：调用 projection 查询接口，在完整背包中查找物品，必要时交换到快捷栏，并发送 `InventoryTransactionPacket`；不碰渲染与配置。
 - `input` 负责菜单期间的最小游戏动作保护；当前只拦截本地玩家破坏方块，不扩展为移动冻结或全交互封锁。

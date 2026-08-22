@@ -1,8 +1,9 @@
 // LHolo - Client-side projection renderer for Minecraft Bedrock Windows
 // Copyright (C) 2026  MarmieQi
 //
-// Bounded real-world comparison for projected cells. Mesh generation and HUD
-// publication remain owned by Projection.cpp.
+// Bounded real-world comparison for projected cells: initial scan, block and
+// subchunk refreshes, four-state correction, HUD counts and six-neighbor dirty
+// propagation. Mesh generation and HUD publication remain outside this module.
 
 #pragma once
 
@@ -19,7 +20,7 @@ struct CorrectionProgressChanges {
     bool errors{};
 };
 
-CorrectionProgressChanges updateProjectionCorrections(
+CorrectionProgressChanges updateCorrectionTracker(
     ProjectionState&                state,
     BlockSource&                    region,
     LegacyStructureSettings const& transformSettings,

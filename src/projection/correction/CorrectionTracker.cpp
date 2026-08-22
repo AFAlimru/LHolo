@@ -6,7 +6,7 @@
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-#include "projection/runtime/ProjectionCorrections.h"
+#include "projection/correction/CorrectionTracker.h"
 
 #include "projection/core/ProjectionRules.h"
 #include "projection/core/ProjectionState.h"
@@ -34,7 +34,7 @@ void markSectionDirty(ProjectionState& state, std::size_t section) {
 
 } // namespace
 
-CorrectionProgressChanges updateProjectionCorrections(
+CorrectionProgressChanges updateCorrectionTracker(
     ProjectionState&                state,
     BlockSource&                    region,
     LegacyStructureSettings const& transformSettings,
