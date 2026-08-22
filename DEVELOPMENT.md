@@ -118,6 +118,16 @@ LHolo/
    └─ LICENSE
 ```
 
+投影子系统依赖方向（只允许从上往下，禁止反向）：
+
+- `core/` 不依赖 `world/`、`mesh/`、`runtime/`、`hooks/` 与门面。
+- `world/` 只依赖 `core/`；不依赖 mesh/runtime/hooks 与门面。
+- `mesh/` 依赖 `core/` 与 `world/`；不依赖 runtime/hooks 与门面。
+- `runtime/` 依赖 `core/`、`world/`、`mesh/`；不依赖 hooks 与门面。
+- `hooks/` 依赖 `world/` 与 `runtime/ProjectionRenderFrame` 回调契约；不直接持有投影状态。
+- 内部模块不得 include `projection/Projection.h`；只有门面自身和外部消费者（`place`、`ui`、`plugin`）可以。
+- `ProjectionSession` 是运行时可变状态的唯一所有者，其余模块通过访问器使用。
+
 模块边界必须保持清晰：
 
 - `structure` 负责“文件和用户意图”，不直接提交 Minecraft 网格。
@@ -145,13 +155,13 @@ LHolo/
   纠错样式变化引起的 section dirty、revision、旧 Mesh 清理及可见进度重算；placement 重建仍由调用方触发。
 - `projection/runtime/ProjectionLifecycle.*` 构造尚未激活的 `ProjectionState`、解析 terrain atlas、建立 section 索引，
   并按 Worker 停止、世界事件解绑、进度清零、资源释放的顺序执行锁内清理；锁、pending anchor 消费、
-  `gState` 激活和解锁后的 `structure::clear()` 仍由 `Projection.cpp` 控制。
+  状态激活和解锁后的 `structure::clear()` 由 `ProjectionRenderFrame`/`ProjectionSession` 负责，门面只转发。
 - `projection/runtime/ProjectionProgress.*` 保持原有 acquire/release 语义，在渲染状态计数与 GUI/HUD 读取之间发布
   无锁快照；它不扫描世界，也不自行推导纠错结果。
 - `projection/mesh/ProjectionSectionBuilder.*` 统一生成原版方块、液体代理、方块实体占位、纠错覆盖和结构边框
   的 CPU 几何；构建输入必须来自显式只读设置，Worker 使用 `UploadMode::Never`，同步回退保持 `Buffered`。
-- `projection/core/ProjectionState.h` 只声明投影运行态及资源所有权；创建、替换、清理和跨世界校验仍由
-  `Projection.cpp` 的生命周期流程统一执行，禁止在状态类型中暗藏线程启动或游戏 API 调用。
+- `projection/core/ProjectionState.h` 只声明投影运行态及资源所有权；创建、替换、清理和跨世界校验由
+  `ProjectionLifecycle`/`ProjectionRenderFrame` 统一执行，状态类型本身禁止暗藏线程启动或游戏 API 调用。
 - `projection/mesh/ProjectionMeshWorker.*` 只管理单线程 executor、任务异常边界、generation 失效和完成队列；
   Worker 任务由调度层提供，基础设施不得读取 `gState`、世界对象或渲染上下文。
 - `projection/mesh/ProjectionMeshScheduler.*` 仅在 opaque 主线程选择 dirty section、准备两格 halo 的只读世界视图并
@@ -166,11 +176,12 @@ LHolo/
 - `projection/mesh/ProjectionRenderer.*` 只提交已经上传完成的 Mesh 和投影方块实体：保持 opaque/transparent pass
   分类、透明 section 后向前排序、液体/方块实体占位、结构边框和纠错覆盖的现有材质语义；方块实体仍在
   局部虚拟世界作用域内复用原 dispatcher 参数。它不生成 CPU 几何、不消费 Worker 结果，也不改变
-  projection 生命周期；资源预检和提交异常后的清理由 `Projection.cpp` 负责。
+  projection 生命周期；资源预检和提交异常后的清理由 `runtime/ProjectionRenderFrame` 负责。
 - `projection/world/ProjectionVirtualWorld.*` 隐藏 Tessellation 使用的 thread-local 虚拟方块表；只有显式 RAII
   作用域内的 `BlockSource` Hook 查询可以命中投影邻居，作用域结束后必须恢复上一个视图。
 - `projection/runtime/ProjectionWorldEvents.*` 只监听真实世界的方块变化和子区块加载并按原顺序排队；它不读取
-  `gState`，也不决定 section 如何失效。事件限流、纠错更新和 dirty 传播仍由 `Projection.cpp` 负责。
+  `gState`，也不决定 section 如何失效；事件消费、纠错更新和 dirty 传播由
+  `ProjectionFramePipeline`/`ProjectionCorrections` 负责。
 - `overlay` 负责“外部 GUI 如何安全进入游戏图形链”，不解析结构或扫描世界方块。
 - `place` 负责轻松、手动和范围放置：调用 projection 查询接口，在完整背包中查找物品，必要时交换到快捷栏，并发送 `InventoryTransactionPacket`；不碰渲染与配置。
 - `input` 负责菜单期间的最小游戏动作保护；当前只拦截本地玩家破坏方块，不扩展为移动冻结或全交互封锁。
