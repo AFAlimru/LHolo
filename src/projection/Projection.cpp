@@ -15,11 +15,9 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "projection/Projection.h"
-#include "projection/ProjectionCorrections.h"
+#include "projection/ProjectionFramePipeline.h"
 #include "projection/ProjectionInternalTypes.h"
 #include "projection/ProjectionInvalidation.h"
-#include "projection/ProjectionMeshScheduler.h"
-#include "projection/ProjectionMeshUpload.h"
 #include "projection/ProjectionMeshWorker.h"
 #include "projection/ProjectionPlacement.h"
 #include "projection/ProjectionProgress.h"
@@ -108,7 +106,6 @@ namespace lholo::projection {
 namespace {
 
 using detail::CorrectionState;
-using detail::updateProjectionCorrections;
 using detail::attachProjectionWorldEvents;
 using detail::disableMeshWorkerForSession;
 using detail::detachProjectionWorldEvents;
@@ -362,35 +359,6 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 }
             );
         }
-        auto& blockTessellator = *gState.blockTessellator;
-        blockTessellator.setRegion(player->getDimensionBlockSource());
-
-        auto& region = player->getDimensionBlockSource();
-        auto const correctionChanges = updateProjectionCorrections(
-            gState,
-            region,
-            transformSettings,
-            mirrorMode,
-            rotationTurns,
-            offsetX,
-            offsetY,
-            offsetZ,
-            layerDisplayMode,
-            displayLayer,
-            layerAxis
-        );
-        if (correctionChanges.overall) {
-            detail::publishPlacedProgress(gState.progressCorrectCount);
-        }
-        if (correctionChanges.visible) {
-            detail::publishVisiblePlacedProgress(gState.progressVisibleCorrectCount);
-        }
-        if (correctionChanges.errors) {
-            detail::publishErrorProgress(
-                gState.progressWrongTypeCount, gState.progressWrongStateCount
-            );
-        }
-
         ProjectionSectionBuildSettings const sectionBuildSettings{
             .mirror                   = mirror,
             .rotation                 = rotation,
@@ -404,55 +372,16 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
             .correctionOutlineOpacity = correctionOutlineOpacity,
             .identityTransform        = identityTransform
         };
-
-        if (tessellator.isTessellating()) tessellator.cancel();
-
-        // Consume completed CPU data only in the opaque render pass.
-        detail::uploadCompletedProjectionMeshes(gState, tessellator);
-        // The bounds are only 24 line vertices and are intentionally generated
-        // once on the render thread; section BlockTessellator work stays async.
-        if (gState.asyncMeshBuildingEnabled && !gState.structureBoundsMesh) {
-            auto const rotated = rotationTurns == 1 || rotationTurns == 3;
-            auto const width = static_cast<float>(rotated ? gState.structure->sizeZ : gState.structure->sizeX);
-            auto const height = static_cast<float>(gState.structure->sizeY);
-            auto const depth = static_cast<float>(rotated ? gState.structure->sizeX : gState.structure->sizeZ);
-            constexpr float expansion = 0.01f;
-            float const x0 = -expansion, y0 = -expansion, z0 = -expansion;
-            float const x1 = width + expansion, y1 = height + expansion, z1 = depth + expansion;
-            tessellator.begin(
-                Tessellator::DebugContextCallback{}, mce::PrimitiveMode::LineList, 24, false
-            );
-            tessellator.colorABGR(static_cast<int>(0xFFFFD633U));
-            auto addBoundsEdge = [&](Vec3 const& first, Vec3 const& second) {
-                tessellator.vertex(first);
-                tessellator.vertex(second);
-            };
-            addBoundsEdge({x0,y0,z0},{x1,y0,z0}); addBoundsEdge({x1,y0,z0},{x1,y1,z0});
-            addBoundsEdge({x1,y1,z0},{x0,y1,z0}); addBoundsEdge({x0,y1,z0},{x0,y0,z0});
-            addBoundsEdge({x0,y0,z1},{x1,y0,z1}); addBoundsEdge({x1,y0,z1},{x1,y1,z1});
-            addBoundsEdge({x1,y1,z1},{x0,y1,z1}); addBoundsEdge({x0,y1,z1},{x0,y0,z1});
-            addBoundsEdge({x0,y0,z0},{x0,y0,z1}); addBoundsEdge({x1,y0,z0},{x1,y0,z1});
-            addBoundsEdge({x1,y1,z0},{x1,y1,z1}); addBoundsEdge({x0,y1,z0},{x0,y1,z1});
-            gState.structureBoundsMesh = std::make_unique<mce::Mesh>(tessellator.end(
-                Tessellator::UploadMode::Buffered,
-                "LHoloStructureBounds",
-                Tessellator::SupplementaryFieldAutoGenerationMode::None
-            ));
-        }
-
-        detail::scheduleProjectionMeshBuild(
+        detail::processProjectionOpaqueFrame(
             gState,
             tessellator,
-            region,
+            player->getDimensionBlockSource(),
             renderContext.getCameraPosition(),
-            sectionBuildSettings
-        );
-        detail::buildNextProjectionSectionSynchronously(
-            gState,
-            tessellator,
-            blockTessellator,
-            region,
-            sectionBuildSettings
+            transformSettings,
+            sectionBuildSettings,
+            layerDisplayMode,
+            displayLayer,
+            layerAxis
         );
     }
 

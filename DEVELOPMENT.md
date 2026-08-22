@@ -75,6 +75,7 @@ LHolo/
 │  │  ├─ Projection.h           GUI/HUD 和辅助放置使用的投影控制接口
 │  │  ├─ ProjectionTypes.h      对外查询与进度的纯数据类型
 │  │  ├─ ProjectionCorrections.* 有界世界纠错扫描、进度计数与 section 失效
+│  │  ├─ ProjectionFramePipeline.* opaque 帧纠错、上传、边框与构建调度流水线
 │  │  ├─ ProjectionInternalTypes.h 内部键、状态枚举与无资源引用类型
 │  │  ├─ ProjectionInvalidation.* 设置变化检测、section/revision 失效与缓存清理
 │  │  ├─ ProjectionMeshScheduler.* 主线程 section 选择、局部快照与同步回退调度
@@ -118,6 +119,8 @@ LHolo/
   旋转、镜像、分层可见性和状态匹配规则修改时应集中在这里回归。
 - `projection/ProjectionCorrections.*` 在固定每帧预算内比较真实世界与投影单元，维护纠错状态和进度计数；
   它可以标记受影响 section，但不创建 Mesh、不访问 Tessellator，也不发布 HUD 原子状态。
+- `projection/ProjectionFramePipeline.*` 只在 opaque pass 按固定顺序执行纠错扫描与进度发布、完成队列上传、
+  轻量结构边框准备和下一 section 调度；它不采集 GUI 设置、不判断 placement 失效，也不提交最终渲染 pass。
 - `projection/ProjectionInvalidation.*` 对比当前帧设置与缓存值，集中处理旋转/镜像、移动、切层、透明度和
   纠错样式变化引起的 section dirty、revision、旧 Mesh 清理及可见进度重算；placement 重建仍由调用方触发。
 - `projection/ProjectionProgress.*` 保持原有 acquire/release 语义，在渲染状态计数与 GUI/HUD 读取之间发布
