@@ -37,6 +37,16 @@ namespace lholo::projection::detail {
 using TextureVariant =
     std::variant<std::monostate, mce::TexturePtr, mce::ClientTexture, mce::ServerTexture>;
 
+struct SectionState {
+    Vec3    center{};
+    bool    dirty{};
+    bool    incrementalDirty{};
+    bool    buildInFlight{};
+    std::uint64_t requestedRevision{};
+    std::uint64_t uploadedRevision{};
+    std::array<std::unique_ptr<mce::Mesh>, static_cast<std::size_t>(RenderBucket::Count)> meshes;
+};
+
 struct ProjectionState {
     bool                            enabled{};
     BlockPos                        anchor{};
@@ -74,19 +84,12 @@ struct ProjectionState {
     float                           cachedCorrectionFillOpacity{-1.0f};
     float                           cachedCorrectionOutlineOpacity{-1.0f};
     std::vector<std::vector<std::size_t>> sectionBlockIndices;
-    std::array<std::vector<std::unique_ptr<mce::Mesh>>, static_cast<std::size_t>(RenderBucket::Count)>
-        sectionMeshes;
     std::vector<std::unique_ptr<mce::Mesh>> warningFillSectionMeshes;
     std::vector<std::unique_ptr<mce::Mesh>> correctionOutlineSectionMeshes;
     std::vector<std::unique_ptr<mce::Mesh>> liquidProxySectionMeshes;
     std::vector<std::unique_ptr<mce::Mesh>> blockEntityPlaceholderSectionMeshes;
     std::unique_ptr<mce::Mesh>              structureBoundsMesh;
-    std::vector<Vec3>                       sectionCenters;
-    std::vector<bool>                       sectionDirty;
-    std::vector<bool>                       sectionIncrementalDirty;
-    std::vector<bool>                       sectionBuildInFlight;
-    std::vector<std::uint64_t>              sectionRequestedRevision;
-    std::vector<std::uint64_t>              sectionUploadedRevision;
+    std::vector<SectionState>               sections;
     std::vector<std::size_t>                blockToSection;
     std::size_t                             dirtySectionCursor{};
     std::uint64_t                           meshWorkerGeneration{};

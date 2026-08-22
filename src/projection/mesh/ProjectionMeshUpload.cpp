@@ -35,11 +35,11 @@ auto& logger() {
 }
 
 void markSectionDirty(ProjectionState& state, std::size_t section, bool incremental) {
-    if (section >= state.sectionDirty.size()) return;
-    state.sectionDirty[section] = true;
-    state.sectionIncrementalDirty[section]
-        = state.sectionIncrementalDirty[section] || incremental;
-    ++state.sectionRequestedRevision[section];
+    if (section >= state.sections.size()) return;
+    auto& sectionState = state.sections[section];
+    sectionState.dirty = true;
+    sectionState.incrementalDirty = sectionState.incrementalDirty || incremental;
+    ++sectionState.requestedRevision;
 }
 
 } // namespace
@@ -54,12 +54,12 @@ void uploadCompletedProjectionMeshes(ProjectionState& state, Tessellator& tessel
             auto result = std::move(completed.front());
             if (result.workerGeneration != state.meshWorkerGeneration
                 || result.structureGeneration != state.structureGeneration
-                || result.section >= state.sectionDirty.size()) {
+                || result.section >= state.sections.size()) {
                 continue;
             }
     
             auto const section = result.section;
-            state.sectionBuildInFlight[section] = false;
+            state.sections[section].buildInFlight = false;
             if (!result.success) {
                 markSectionDirty(state, section, true);
                 logger().warn(
@@ -80,8 +80,8 @@ void uploadCompletedProjectionMeshes(ProjectionState& state, Tessellator& tessel
                 }
                 continue;
             }
-            if (result.revision != state.sectionRequestedRevision[section]) {
-                state.sectionDirty[section] = true;
+            if (result.revision != state.sections[section].requestedRevision) {
+                state.sections[section].dirty = true;
                 continue;
             }
     
@@ -111,15 +111,15 @@ void uploadCompletedProjectionMeshes(ProjectionState& state, Tessellator& tessel
                 );
     
                 for (std::size_t bucket = 0; bucket < uploadedMeshes.size(); ++bucket) {
-                    state.sectionMeshes[bucket][section] = std::move(uploadedMeshes[bucket]);
+                    state.sections[section].meshes[bucket] = std::move(uploadedMeshes[bucket]);
                 }
                 state.warningFillSectionMeshes[section] = std::move(warningFill);
                 state.correctionOutlineSectionMeshes[section] = std::move(correctionOutline);
                 state.liquidProxySectionMeshes[section] = std::move(liquidProxy);
                 state.blockEntityPlaceholderSectionMeshes[section] = std::move(blockEntityPlaceholder);
-                state.sectionUploadedRevision[section] = result.revision;
-                state.sectionIncrementalDirty[section] = false;
-                state.sectionDirty[section] = false;
+                state.sections[section].uploadedRevision = result.revision;
+                state.sections[section].incrementalDirty = false;
+                state.sections[section].dirty = false;
                 state.consecutiveMeshWorkerFailures = 0;
                 state.meshPreflightDone = false;
                 auto const uploadMicros = static_cast<std::uint64_t>(

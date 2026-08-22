@@ -87,6 +87,8 @@ LHolo/
 │  │  │  ├─ ProjectionMeshWorker.* 单线程 executor、generation 与完成队列
 │  │  │  ├─ ProjectionRenderer.* 已构建 Mesh/方块实体的 pass 分类与材质提交
 │  │  │  └─ ProjectionSectionBuilder.* Worker/同步共用的 section CPU 几何构建
+│  │  ├─ section/               section 状态结构与初始化
+│  │  │  └─ SectionStateStore.* 并行数组合并后的 SectionState 与初始化
 │  │  ├─ world/                 投影局部世界视图与对外只读查询
 │  │  │  ├─ ProjectionPlacement.* 变换/分层后的虚拟世界与方块实体放置视图
 │  │  │  ├─ ProjectionQueries.* 辅助放置使用的只读单格与范围查询
@@ -124,6 +126,7 @@ LHolo/
 投影子系统依赖方向（只允许从上往下，禁止反向）：
 
 - `core/` 不依赖 `world/`、`mesh/`、`runtime/`、`hooks/` 与门面。
+- `section/` 只依赖 `core/`，提供 `SectionState` 的初始化与状态存储。
 - `world/` 只依赖 `core/`；不依赖 mesh/runtime/hooks 与门面。
 - `mesh/` 依赖 `core/` 与 `world/`；不依赖 runtime/hooks 与门面。
 - `runtime/` 依赖 `core/`、`world/`、`mesh/`；不依赖 hooks 与门面。

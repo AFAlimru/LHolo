@@ -83,9 +83,9 @@ void submitProjectionMeshPass(
     };
     auto worldCenter = [&](std::size_t section) {
         return Vec3{
-            static_cast<float>(renderOrigin.x) + state.sectionCenters[section].x,
-            static_cast<float>(renderOrigin.y) + state.sectionCenters[section].y,
-            static_cast<float>(renderOrigin.z) + state.sectionCenters[section].z
+            static_cast<float>(renderOrigin.x) + state.sections[section].center.x,
+            static_cast<float>(renderOrigin.y) + state.sections[section].center.y,
+            static_cast<float>(renderOrigin.z) + state.sections[section].center.z
         };
     };
     auto distanceSquared = [&](Vec3 const& point) {
@@ -103,7 +103,7 @@ void submitProjectionMeshPass(
     auto renderMeshes = [&](std::vector<VisibleMesh> const& meshes, mce::MaterialPtr const& material) {
         if (!material) return;
         for (auto const& visible : meshes) {
-            auto& mesh = *state.sectionMeshes[visible.bucket][visible.section];
+            auto& mesh = *state.sections[visible.section].meshes[visible.bucket];
             mesh.renderMesh(
                 renderContext.getScreenContext(),
                 material,
@@ -117,10 +117,10 @@ void submitProjectionMeshPass(
     };
     auto collectBucket = [&](std::size_t bucket) {
         std::vector<VisibleMesh> result;
-        auto const& meshes = state.sectionMeshes[bucket];
-        result.reserve(meshes.size());
-        for (std::size_t section = 0; section < meshes.size(); ++section) {
-            if (meshes[section] && meshes[section]->isValid()) {
+        result.reserve(state.sections.size());
+        for (std::size_t section = 0; section < state.sections.size(); ++section) {
+            auto const& mesh = state.sections[section].meshes[bucket];
+            if (mesh && mesh->isValid()) {
                 result.push_back({bucket, section});
             }
         }
@@ -156,7 +156,9 @@ void submitProjectionMeshPass(
         // True projection transparency needs a blending material even for
         // normally opaque/cutout blocks. Sort every bucket together.
         std::vector<VisibleMesh> transparentMeshes;
-        for (std::size_t bucket = 0; bucket < state.sectionMeshes.size(); ++bucket) {
+        for (std::size_t bucket = 0;
+             bucket < static_cast<std::size_t>(RenderBucket::Count);
+             ++bucket) {
             auto bucketMeshes = collectBucket(bucket);
             transparentMeshes.insert(
                 transparentMeshes.end(), bucketMeshes.begin(), bucketMeshes.end()

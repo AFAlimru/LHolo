@@ -260,8 +260,10 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
             });
         };
         std::size_t normalMeshes{};
-        for (auto const& meshes : state.sectionMeshes) {
-            normalMeshes += countValid(meshes);
+        for (auto const& sectionState : state.sections) {
+            for (auto const& mesh : sectionState.meshes) {
+                if (mesh && mesh->isValid()) ++normalMeshes;
+            }
         }
         auto const warningMeshes = countValid(state.warningFillSectionMeshes);
         auto const outlineMeshes = countValid(state.correctionOutlineSectionMeshes);

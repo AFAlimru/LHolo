@@ -7,6 +7,7 @@
 #include "projection/mesh/ProjectionMeshWorker.h"
 #include "projection/runtime/ProjectionProgress.h"
 #include "projection/core/ProjectionState.h"
+#include "projection/section/SectionStateStore.h"
 #include "projection/runtime/ProjectionWorldEvents.h"
 #include "structure/StructureLoader.h"
 
@@ -66,6 +67,7 @@ bool prepareProjectionState(
     state.cachedMirror = -1;
 
     std::map<std::tuple<int, int, int>, std::size_t> sectionLookup;
+    std::vector<Vec3> centers;
     state.blockToSection.resize(state.structure->renderBlocks.size());
     for (std::size_t index = 0; index < state.structure->renderBlocks.size(); ++index) {
         auto const& entry = state.structure->renderBlocks[index];
@@ -76,7 +78,7 @@ bool prepareProjectionState(
         if (inserted) {
             state.sectionBlockIndices.emplace_back();
             auto const [sx, sy, sz] = key;
-            state.sectionCenters.emplace_back(
+            centers.emplace_back(
                 static_cast<float>(sx * 16 + 8),
                 static_cast<float>(sy * 16 + 8),
                 static_cast<float>(sz * 16 + 8)
@@ -85,16 +87,11 @@ bool prepareProjectionState(
         state.blockToSection[index] = found->second;
         state.sectionBlockIndices[found->second].push_back(index);
     }
-    for (auto& meshes : state.sectionMeshes) meshes.resize(state.sectionBlockIndices.size());
+    initializeSectionStates(state.sections, centers);
     state.warningFillSectionMeshes.resize(state.sectionBlockIndices.size());
     state.correctionOutlineSectionMeshes.resize(state.sectionBlockIndices.size());
     state.liquidProxySectionMeshes.resize(state.sectionBlockIndices.size());
     state.blockEntityPlaceholderSectionMeshes.resize(state.sectionBlockIndices.size());
-    state.sectionDirty.assign(state.sectionBlockIndices.size(), true);
-    state.sectionIncrementalDirty.assign(state.sectionBlockIndices.size(), false);
-    state.sectionBuildInFlight.assign(state.sectionBlockIndices.size(), false);
-    state.sectionRequestedRevision.assign(state.sectionBlockIndices.size(), 1);
-    state.sectionUploadedRevision.assign(state.sectionBlockIndices.size(), 0);
     return resolveTerrainTexture(client, state);
 }
 

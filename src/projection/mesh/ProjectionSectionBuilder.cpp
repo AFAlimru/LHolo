@@ -195,7 +195,9 @@ void buildProjectionSection(
         *state.expectedWorldBlocks,
         *state.expectedWorldBlockActors
     );
-    for (std::size_t bucketIndex = 0; bucketIndex < state.sectionMeshes.size(); ++bucketIndex) {
+    for (std::size_t bucketIndex = 0;
+         bucketIndex < static_cast<std::size_t>(RenderBucket::Count);
+         ++bucketIndex) {
         tessellator.cancel();
         tessellator.begin(
             Tessellator::DebugContextCallback{},
@@ -263,7 +265,7 @@ void buildProjectionSection(
             }
             bucketTessellated = true;
         }
-        auto& destination = state.sectionMeshes[bucketIndex][section];
+        auto& destination = state.sections[section].meshes[bucketIndex];
         if (!bucketTessellated) {
             tessellator.cancel();
             destination.reset();

@@ -95,8 +95,8 @@ void rebuildProjectionPlacement(
         0
     );
     state.expectedWorldBlockIndices = std::make_shared<ExpectedBlockIndexMap>();
-    std::vector<Vec3> centerSums(state.sectionCenters.size(), Vec3{});
-    std::vector<std::size_t> centerCounts(state.sectionCenters.size(), 0);
+    std::vector<Vec3> centerSums(state.sections.size(), Vec3{});
+    std::vector<std::size_t> centerCounts(state.sections.size(), 0);
 
     for (std::size_t index = 0; index < state.structure->renderBlocks.size(); ++index) {
         auto const& entry = state.structure->renderBlocks[index];
@@ -165,9 +165,9 @@ void rebuildProjectionPlacement(
     }
 
     pairProjectedChests(region, state);
-    for (std::size_t section = 0; section < state.sectionCenters.size(); ++section) {
+    for (std::size_t section = 0; section < state.sections.size(); ++section) {
         if (centerCounts[section] != 0) {
-            state.sectionCenters[section]
+            state.sections[section].center
                 = centerSums[section] / static_cast<float>(centerCounts[section]);
         }
     }

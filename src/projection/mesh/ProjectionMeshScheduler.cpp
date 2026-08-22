@@ -49,10 +49,11 @@ std::optional<std::size_t> selectNextDirtySection(
     std::optional<std::size_t> selected;
     bool                       selectedIncremental{};
     float                      selectedDistance = std::numeric_limits<float>::max();
-    for (std::size_t section = 0; section < state.sectionDirty.size(); ++section) {
-        if (!state.sectionDirty[section] || state.sectionBuildInFlight[section]) continue;
-        auto const incremental = state.sectionIncrementalDirty[section];
-        auto const center = state.sectionCenters[section] + Vec3{
+    for (std::size_t section = 0; section < state.sections.size(); ++section) {
+        auto const& sectionState = state.sections[section];
+        if (!sectionState.dirty || sectionState.buildInFlight) continue;
+        auto const incremental = sectionState.incrementalDirty;
+        auto const center = sectionState.center + Vec3{
             static_cast<float>(state.anchor.x + settings.offsetX),
             static_cast<float>(state.anchor.y + settings.offsetY),
             static_cast<float>(state.anchor.z + settings.offsetZ)
@@ -166,7 +167,7 @@ void scheduleProjectionMeshBuild(
     snapshot->expectedWorldBlocks = state.expectedWorldBlocks;
     snapshot->expectedWorldBlockActors = state.expectedWorldBlockActors;
     snapshot->expectedWorldBlockIndices = state.expectedWorldBlockIndices;
-    for (auto& meshes : snapshot->sectionMeshes) meshes.resize(1);
+    snapshot->sections.resize(1);
     snapshot->warningFillSectionMeshes.resize(1);
     snapshot->correctionOutlineSectionMeshes.resize(1);
     snapshot->liquidProxySectionMeshes.resize(1);
@@ -202,7 +203,7 @@ void scheduleProjectionMeshBuild(
 
     auto const workerGeneration = state.meshWorkerGeneration;
     auto const structureGeneration = state.structureGeneration;
-    auto const revision = state.sectionRequestedRevision[section];
+    auto const revision = state.sections[section].requestedRevision;
     auto const weakBufferService = tessellator.mBufferResourceService;
     auto* level = state.level;
     auto* dimension = state.dimension;
@@ -249,7 +250,7 @@ void scheduleProjectionMeshBuild(
                     ).count()
                 );
                 for (std::size_t bucket = 0; bucket < result.sectionMeshes.size(); ++bucket) {
-                    result.sectionMeshes[bucket] = std::move(snapshot->sectionMeshes[bucket][0]);
+                    result.sectionMeshes[bucket] = std::move(snapshot->sections[0].meshes[bucket]);
                 }
                 result.warningFillMesh = std::move(snapshot->warningFillSectionMeshes[0]);
                 result.correctionOutlineMesh = std::move(snapshot->correctionOutlineSectionMeshes[0]);
@@ -295,8 +296,8 @@ void scheduleProjectionMeshBuild(
         }
     );
     if (submitted) {
-        state.sectionBuildInFlight[section] = true;
-        state.sectionDirty[section] = false;
+        state.sections[section].buildInFlight = true;
+        state.sections[section].dirty = false;
     } else if (++state.consecutiveMeshWorkerFailures >= 3) {
         state.asyncMeshBuildingEnabled = false;
         disableMeshWorkerForSession();
@@ -318,10 +319,10 @@ void buildNextProjectionSectionSynchronously(
 
     // Compatibility path: preserve one synchronous section per frame when
     // worker creation or three consecutive worker operations fail.
-    for (std::size_t attempt = 0; attempt < state.sectionDirty.size(); ++attempt) {
-        auto const section = state.dirtySectionCursor++ % state.sectionDirty.size();
-        if (!state.sectionDirty[section]) continue;
-        state.sectionDirty[section] = false;
+    for (std::size_t attempt = 0; attempt < state.sections.size(); ++attempt) {
+        auto const section = state.dirtySectionCursor++ % state.sections.size();
+        if (!state.sections[section].dirty) continue;
+        state.sections[section].dirty = false;
         buildProjectionSection(
             state,
             tessellator,
@@ -331,8 +332,8 @@ void buildNextProjectionSectionSynchronously(
             Tessellator::UploadMode::Buffered,
             settings
         );
-        state.sectionUploadedRevision[section] = state.sectionRequestedRevision[section];
-        state.sectionIncrementalDirty[section] = false;
+        state.sections[section].uploadedRevision = state.sections[section].requestedRevision;
+        state.sections[section].incrementalDirty = false;
         state.meshPreflightDone = false;
         break;
     }

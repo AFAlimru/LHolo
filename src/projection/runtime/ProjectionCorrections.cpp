@@ -25,10 +25,11 @@ namespace lholo::projection::detail {
 namespace {
 
 void markSectionDirty(ProjectionState& state, std::size_t section) {
-    if (section >= state.sectionDirty.size()) return;
-    state.sectionDirty[section] = true;
-    state.sectionIncrementalDirty[section] = true;
-    ++state.sectionRequestedRevision[section];
+    if (section >= state.sections.size()) return;
+    auto& sectionState = state.sections[section];
+    sectionState.dirty = true;
+    sectionState.incrementalDirty = true;
+    ++sectionState.requestedRevision;
 }
 
 } // namespace

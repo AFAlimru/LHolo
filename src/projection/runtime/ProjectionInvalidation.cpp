@@ -18,15 +18,15 @@ namespace lholo::projection::detail {
 namespace {
 
 void markSectionDirty(ProjectionState& state, std::size_t section, bool incremental) {
-    if (section >= state.sectionDirty.size()) return;
-    state.sectionDirty[section] = true;
-    state.sectionIncrementalDirty[section]
-        = state.sectionIncrementalDirty[section] || incremental;
-    ++state.sectionRequestedRevision[section];
+    if (section >= state.sections.size()) return;
+    auto& sectionState = state.sections[section];
+    sectionState.dirty = true;
+    sectionState.incrementalDirty = sectionState.incrementalDirty || incremental;
+    ++sectionState.requestedRevision;
 }
 
 void markAllSectionsDirty(ProjectionState& state, bool incremental) {
-    for (std::size_t section = 0; section < state.sectionDirty.size(); ++section) {
+    for (std::size_t section = 0; section < state.sections.size(); ++section) {
         markSectionDirty(state, section, incremental);
     }
 }
@@ -66,9 +66,9 @@ ProjectionInvalidationResult reconcileProjectionInvalidation(
     if (result.placementMoved && !result.geometryTransformChanged) {
         // Local geometry survives an XYZ move, but a task already sampling the
         // previous world position must not be accepted.
-        for (std::size_t section = 0; section < state.sectionDirty.size(); ++section) {
-            ++state.sectionRequestedRevision[section];
-            if (state.sectionBuildInFlight[section]) state.sectionDirty[section] = true;
+        for (auto& sectionState : state.sections) {
+            ++sectionState.requestedRevision;
+            if (sectionState.buildInFlight) sectionState.dirty = true;
         }
     }
 
@@ -120,8 +120,8 @@ ProjectionInvalidationResult reconcileProjectionInvalidation(
             state.correctionStates.end(),
             CorrectionState::Unknown
         );
-        for (auto& meshes : state.sectionMeshes) {
-            for (auto& mesh : meshes) mesh.reset();
+        for (auto& sectionState : state.sections) {
+            for (auto& mesh : sectionState.meshes) mesh.reset();
         }
         for (auto& mesh : state.warningFillSectionMeshes) mesh.reset();
         for (auto& mesh : state.correctionOutlineSectionMeshes) mesh.reset();
