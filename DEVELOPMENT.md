@@ -94,9 +94,11 @@ LHolo/
 │  │  │  ├─ ProjectionInvalidation.* 设置变化检测、section/revision 失效与缓存清理
 │  │  │  ├─ ProjectionLifecycle.* ProjectionState 资源准备、停止清理与世界身份匹配
 │  │  │  ├─ ProjectionProgress.* 渲染线程到 HUD 的无锁进度快照发布
+│  │  │  ├─ ProjectionRenderFrame.* 渲染 Hook 的帧回调契约（实现暂由门面提供）
 │  │  │  └─ ProjectionWorldEvents.* 真实世界方块/子区块通知的监听与排队
 │  │  └─ hooks/
-│  │     └─ ProjectionGameHooks.* 无状态 BlockSource 虚拟查询与客户端命令 Hook
+│  │     ├─ ProjectionGameHooks.* 无状态 BlockSource 虚拟查询与客户端命令 Hook
+│  │     └─ ProjectionRenderHooks.* 有状态 LevelRendererPlayer 渲染 Hook 薄壳
 │  ├─ place/
 │  │  ├─ PlaceHelper.cpp        轻松/手动/范围放置：投影查表、背包取物、放置事务
 │  │  └─ PlaceHelper.h          配置开关与 Hook 生命周期接口
@@ -130,6 +132,11 @@ LHolo/
   轻量结构边框准备和下一 section 调度；它不采集 GUI 设置、不判断 placement 失效，也不提交最终渲染 pass。
 - `projection/hooks/ProjectionGameHooks.*` 隔离不依赖活动投影状态的 Minecraft 接口：Tessellation thread-local
   虚拟 BlockSource 查询和 `/lholo` 客户端命令包拦截；安装失败时必须按原逆序回滚已挂 Hook。
+- `projection/hooks/ProjectionRenderHooks.*` 只保留有状态渲染 Hook 薄壳：命中选择抑制与 `$renderBlockEntities`
+  后的投影帧入口。Hook 不读取投影状态，仅调用 `runtime/ProjectionRenderFrame` 回调；两个 Hook 的安装失败
+  回滚顺序与门面原有的 LevelRenderer 顺序保持一致。
+- `projection/runtime/ProjectionRenderFrame.*` 声明渲染 Hook 消费的帧回调契约；当前实现仍由 `Projection.cpp`
+  门面提供，直到投影状态所有权移入 runtime 后再迁移实现。
 - `projection/runtime/ProjectionInvalidation.*` 对比当前帧设置与缓存值，集中处理旋转/镜像、移动、切层、透明度和
   纠错样式变化引起的 section dirty、revision、旧 Mesh 清理及可见进度重算；placement 重建仍由调用方触发。
 - `projection/runtime/ProjectionLifecycle.*` 构造尚未激活的 `ProjectionState`、解析 terrain atlas、建立 section 索引，

@@ -17,6 +17,7 @@
 #include "projection/Projection.h"
 #include "projection/runtime/ProjectionFramePipeline.h"
 #include "projection/hooks/ProjectionGameHooks.h"
+#include "projection/hooks/ProjectionRenderHooks.h"
 #include "projection/core/ProjectionInternalTypes.h"
 #include "projection/runtime/ProjectionInvalidation.h"
 #include "projection/runtime/ProjectionLifecycle.h"
@@ -29,6 +30,7 @@
 #include "projection/mesh/ProjectionSectionBuilder.h"
 #include "projection/core/ProjectionState.h"
 #include "projection/runtime/ProjectionWorldEvents.h"
+#include "projection/runtime/ProjectionRenderFrame.h"
 
 #include "overlay/BoundsWireframe.h"
 #include "plugin/LHolo.h"
@@ -370,50 +372,32 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
 
 }
 
-LL_TYPE_INSTANCE_HOOK(
-    LevelRendererPlayerRenderHitSelectHook,
-    ll::memory::HookPriority::Normal,
-    LevelRendererPlayer,
-    &LevelRendererPlayer::renderHitSelect,
-    void,
-    BaseActorRenderContext& renderContext,
-    BlockSource&            region,
-    BlockPos const&         pos,
-    bool                    fancyGraphics
-) {
-    {
-        std::lock_guard lock(gStateMutex);
-        if (gState.enabled && gState.structure) {
-            auto const found = gState.expectedWorldBlockIndices->find(
-                std::tuple{pos.x, pos.y, pos.z}
-            );
-            if (found != gState.expectedWorldBlockIndices->end()) {
-                auto const state = gState.correctionStates[found->second];
-                if (state == CorrectionState::WrongType
-                    || state == CorrectionState::WrongState) {
-                    // LHolo already renders a complete red/yellow hull and
-                    // outline for this cell. Vanilla's coincident hit-select
-                    // overlay adds a second surface only while the crosshair
-                    // targets it, producing the observed flicker.
-                    return;
-                }
+} // namespace
+
+namespace detail {
+
+bool shouldSuppressProjectionHitSelect(BlockPos const& pos) {
+    std::lock_guard lock(gStateMutex);
+    if (gState.enabled && gState.structure) {
+        auto const found = gState.expectedWorldBlockIndices->find(
+            std::tuple{pos.x, pos.y, pos.z}
+        );
+        if (found != gState.expectedWorldBlockIndices->end()) {
+            auto const state = gState.correctionStates[found->second];
+            if (state == CorrectionState::WrongType
+                || state == CorrectionState::WrongState) {
+                // LHolo already renders a complete red/yellow hull and
+                // outline for this cell. Vanilla's coincident hit-select
+                // overlay adds a second surface only while the crosshair
+                // targets it, producing the observed flicker.
+                return true;
             }
         }
     }
-    origin(renderContext, region, pos, fancyGraphics);
+    return false;
 }
 
-LL_TYPE_INSTANCE_HOOK(
-    LevelRendererPlayerRenderBlockEntitiesHook,
-    ll::memory::HookPriority::Normal,
-    LevelRendererPlayer,
-    &LevelRendererPlayer::$renderBlockEntities,
-    void,
-    BaseActorRenderContext& renderContext,
-    bool                      renderAlphaLayer
-) {
-    origin(renderContext, renderAlphaLayer);
-
+void renderProjectionFrame(BaseActorRenderContext& renderContext, bool renderAlphaLayer) {
     std::unique_lock lock(gStateMutex);
 
     if (auto const bounds = structure::capture::getBounds()) {
@@ -446,16 +430,11 @@ LL_TYPE_INSTANCE_HOOK(
     renderProjection(renderContext, renderAlphaLayer);
 }
 
-} // namespace
+} // namespace detail
 
 bool installHook() {
     if (!detail::installProjectionGameHooks()) return false;
-    if (LevelRendererPlayerRenderHitSelectHook::hook() < 0) {
-        detail::uninstallProjectionGameHooks();
-        return false;
-    }
-    if (LevelRendererPlayerRenderBlockEntitiesHook::hook() < 0) {
-        LevelRendererPlayerRenderHitSelectHook::unhook();
+    if (!detail::installProjectionRenderHooks()) {
         detail::uninstallProjectionGameHooks();
         return false;
     }
@@ -463,8 +442,7 @@ bool installHook() {
 }
 
 void uninstallHook() {
-    LevelRendererPlayerRenderBlockEntitiesHook::unhook();
-    LevelRendererPlayerRenderHitSelectHook::unhook();
+    detail::uninstallProjectionRenderHooks();
     detail::uninstallProjectionGameHooks();
     std::lock_guard lock(gStateMutex);
     gCaptureBounds.clear();
