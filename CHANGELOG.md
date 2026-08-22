@@ -1,5 +1,16 @@
 # Changelog
 
+## [26.20.7] - 2026-08-23
+
+### Changed
+
+- 重构投影模块内部架构，游戏行为保持一致：
+  - `Projection.cpp` 收敛为对外门面，投影状态、帧编排、Hook 与各子系统按职责分层。
+  - 新增 `AppKernel` 唯一启停入口与 `ProjectionController` 生命周期收口。
+  - section 并行数组合并为 `SectionState`，调度、revision 与上传语义不变。
+  - 纠错系统收敛为 `CorrectionTracker`，HUD 计数与六邻居失效语义不变。
+- 新增纯逻辑自动化测试：镜像/旋转映射、坐标变换、分层可见性、进度快照钳制与重置。
+
 ## [26.20.6] - 2026-08-22
 
 ### Changed
