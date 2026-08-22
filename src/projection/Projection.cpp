@@ -30,7 +30,7 @@
 #include "projection/mesh/ProjectionSectionBuilder.h"
 #include "projection/core/ProjectionState.h"
 #include "projection/runtime/ProjectionWorldEvents.h"
-#include "projection/runtime/ProjectionRenderFrame.h"
+#include "projection/runtime/ProjectionSession.h"
 
 #include "overlay/BoundsWireframe.h"
 #include "plugin/LHolo.h"
@@ -124,310 +124,53 @@ std::mutex       gStateMutex;
 ProjectionState  gState;
 overlay::BoundsWireframe gCaptureBounds;
 
-void clearProjectionStateLocked() {
-    detail::resetProjectionState(gState);
-}
-
 void clearProjectionState() {
-    std::lock_guard lock(gStateMutex);
-    clearProjectionStateLocked();
-}
-
-bool enableStructureProjection(
-    BaseActorRenderContext& renderContext,
-    std::shared_ptr<structure::LoadedStructure const> loaded
-) {
-    ProjectionState next;
-    if (!detail::prepareProjectionState(next, renderContext, std::move(loaded))) return false;
-    auto& client = renderContext.getClient();
-    auto* player = client.getLocalPlayer();
-    if (gPendingStructureAnchor.exchange(false, std::memory_order_acq_rel)) {
-        next.anchor = BlockPos{
-            gPendingStructureAnchorX.load(std::memory_order_relaxed),
-            gPendingStructureAnchorY.load(std::memory_order_relaxed),
-            gPendingStructureAnchorZ.load(std::memory_order_relaxed)
-        };
-    } else {
-        auto const& position = player->getPosition();
-        // Player position is the feet/air cell. Default a newly loaded
-        // structure to the supporting ground cell directly below it.
-        next.anchor = BlockPos(
-            std::floor(position.x),
-            std::floor(position.y) - 1,
-            std::floor(position.z)
-        );
-    }
-    gState = std::move(next);
-    gState.enabled = true;
-    try {
-        if (meshWorkerIsDisabledForSession()) {
-            gState.asyncMeshBuildingEnabled = false;
-        } else {
-            gState.meshWorkerGeneration = startMeshWorker();
-        }
-    } catch (std::exception const& exception) {
-        gState.asyncMeshBuildingEnabled = false;
-        disableMeshWorkerForSession();
-        logger().warn("Projection mesh worker initialization failed; using synchronous fallback: {}", exception.what());
-    } catch (...) {
-        gState.asyncMeshBuildingEnabled = false;
-        disableMeshWorkerForSession();
-        logger().warn("Projection mesh worker initialization failed; using synchronous fallback");
-    }
-    attachProjectionWorldEvents(player->getLevel(), player->getDimensionBlockSource());
-    detail::initializePublishedBuildProgress(gState.structure->renderBlocks.size());
-    structure::recordProjectionAnchor(gState.anchor.x, gState.anchor.y, gState.anchor.z);
-    logger().info(
-        "Structure projection enabled: {} renderable blocks at ({}, {}, {})",
-        gState.structure->renderBlocks.size(), gState.anchor.x, gState.anchor.y, gState.anchor.z
-    );
-    return true;
-}
-
-bool contextIsValid(IClientInstance& client, Actor* player) {
-    return detail::projectionContextMatches(gState, client, player);
-}
-
-void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLayer) {
-    auto& client = renderContext.getClient();
-    auto* player  = client.getLocalPlayer();
-
-    auto& tessellator = renderContext.getTessellator();
-    tessellator.begin(Tessellator::DebugContextCallback{}, 128, false);
-
-    if (!gState.blockTessellator) {
-        tessellator.cancel();
-        return;
-    }
-    if (!renderAlphaLayer) {
-        auto const mirrorMode = structure::getMirrorMode();
-        auto const rotationTurns = structure::getRotationQuarterTurns();
-        auto const mirror = getProjectionMirror(mirrorMode);
-        auto const rotation = getProjectionRotation(rotationTurns);
-        LegacyStructureSettings transformSettings;
-        transformSettings.setMirror(mirror);
-        transformSettings.setRotation(rotation);
-        bool const identityTransform = mirrorMode == 0 && rotationTurns == 0;
-        auto const offsetX = structure::getOffsetX();
-        auto const offsetY = structure::getOffsetY();
-        auto const offsetZ = structure::getOffsetZ();
-        auto const layerDisplayMode = structure::getLayerDisplayMode();
-        auto const layerAxis = structure::getLayerAxis();
-        auto const maxLayer = std::max(
-            0,
-            (layerAxis == 1 ? gState.structure->sizeX : gState.structure->sizeY) - 1
-        );
-        auto const displayLayer = std::clamp(
-            structure::getDisplayLayer(), 0, maxLayer
-        );
-        auto const structureOpacity = gOpacity.load(std::memory_order_relaxed);
-        auto const correctionFillOpacity = gCorrectionFillOpacity.load(std::memory_order_relaxed);
-        auto const correctionOutlineOpacity = gCorrectionOutlineOpacity.load(std::memory_order_relaxed);
-        auto const invalidation = detail::reconcileProjectionInvalidation(
-            gState,
-            detail::ProjectionInvalidationSettings{
-                .mirrorMode               = mirrorMode,
-                .rotationTurns            = rotationTurns,
-                .offsetX                  = offsetX,
-                .offsetY                  = offsetY,
-                .offsetZ                  = offsetZ,
-                .layerDisplayMode         = layerDisplayMode,
-                .displayLayer             = displayLayer,
-                .layerAxis                = layerAxis,
-                .structureOpacity         = structureOpacity,
-                .correctionFillOpacity    = correctionFillOpacity,
-                .correctionOutlineOpacity = correctionOutlineOpacity
-            }
-        );
-        if (invalidation.placementViewChanged()) {
-            detail::rebuildProjectionPlacement(
-                gState,
-                player->getDimensionBlockSource(),
-                renderContext.mBlockEntityRenderDispatcher,
-                transformSettings,
-                detail::ProjectionPlacementSettings{
-                    .mirrorMode        = mirrorMode,
-                    .rotationTurns     = rotationTurns,
-                    .offsetX           = offsetX,
-                    .offsetY           = offsetY,
-                    .offsetZ           = offsetZ,
-                    .layerDisplayMode  = layerDisplayMode,
-                    .displayLayer      = displayLayer,
-                    .layerAxis         = layerAxis,
-                    .identityTransform = identityTransform
-                }
-            );
-        }
-        ProjectionSectionBuildSettings const sectionBuildSettings{
-            .mirror                   = mirror,
-            .rotation                 = rotation,
-            .mirrorMode               = mirrorMode,
-            .rotationTurns            = rotationTurns,
-            .offsetX                  = offsetX,
-            .offsetY                  = offsetY,
-            .offsetZ                  = offsetZ,
-            .structureOpacity         = structureOpacity,
-            .correctionFillOpacity    = correctionFillOpacity,
-            .correctionOutlineOpacity = correctionOutlineOpacity,
-            .identityTransform        = identityTransform
-        };
-        detail::processProjectionOpaqueFrame(
-            gState,
-            tessellator,
-            player->getDimensionBlockSource(),
-            renderContext.getCameraPosition(),
-            transformSettings,
-            sectionBuildSettings,
-            layerDisplayMode,
-            displayLayer,
-            layerAxis
-        );
-    }
-
-    // Keep vanilla world queries at their real BlockPos, but do not upload large
-    // absolute coordinates to the GPU. Render vertices relative to the projection
-    // origin, matching the strategy used by chunk meshes.
-    BlockPos const renderOrigin{
-        gState.anchor.x + structure::getOffsetX(),
-        gState.anchor.y + structure::getOffsetY(),
-        gState.anchor.z + structure::getOffsetZ()
-    };
-    auto const structureOpacity = gOpacity.load(std::memory_order_relaxed);
-    auto const& camera = renderContext.getCameraPosition();
-    if (renderAlphaLayer) {
-        // The transparent pass only submits meshes built during the preceding
-        // opaque pass. Do not leave the shared immediate tessellator active.
-        tessellator.cancel();
-    }
-
-    detail::submitProjectedBlockActorPass(
-        gState,
-        renderContext,
-        player->getDimensionBlockSource(),
-        camera,
-        renderAlphaLayer
-    );
-
-    auto matrix = renderContext.getWorldMatrix().push(false);
-    matrix->translate(
-        static_cast<float>(renderOrigin.x) - camera.x,
-        static_cast<float>(renderOrigin.y) - camera.y,
-        static_cast<float>(renderOrigin.z) - camera.z
-    );
-
-    auto& itemRenderer = renderContext.getItemInHandRenderer();
-    auto const& blendMaterial = itemRenderer.mMatBlendBlock.get();
-    if (!blendMaterial) {
-        tessellator.cancel();
-        return;
-    }
-
-    if (!gState.terrainTextureVariant) {
-        tessellator.cancel();
-        logger().error("Projection terrain texture is not available");
-        return;
-    }
-
-    if (!gState.meshPreflightDone) {
-        auto const countValid = [](auto const& meshes) {
-            return std::count_if(meshes.begin(), meshes.end(), [](auto const& mesh) {
-                return mesh && mesh->isValid();
-            });
-        };
-        std::size_t normalMeshes{};
-        for (auto const& meshes : gState.sectionMeshes) {
-            normalMeshes += countValid(meshes);
-        }
-        auto const warningMeshes = countValid(gState.warningFillSectionMeshes);
-        auto const outlineMeshes = countValid(gState.correctionOutlineSectionMeshes);
-        auto const liquidMeshes = countValid(gState.liquidProxySectionMeshes);
-        auto const placeholderMeshes = countValid(gState.blockEntityPlaceholderSectionMeshes);
-        if (normalMeshes + warningMeshes + outlineMeshes + liquidMeshes + placeholderMeshes != 0) {
-            gState.meshPreflightDone = true;
-        }
-    }
-
-    try {
-        detail::submitProjectionMeshPass(
-            gState,
-            renderContext,
-            client,
-            renderOrigin,
-            camera,
-            structureOpacity,
-            renderAlphaLayer,
-            gStructureBoundsEnabled.load(std::memory_order_relaxed)
-        );
-    } catch (std::exception const& exception) {
-        logger().error("Projection immediate mesh submission failed: {}", exception.what());
-        tessellator.cancel();
-        clearProjectionStateLocked();
-        return;
-    } catch (...) {
-        logger().error("Projection immediate mesh submission failed with an unknown exception");
-        tessellator.cancel();
-        clearProjectionStateLocked();
-        return;
-    }
-
+    std::lock_guard lock(detail::projectionStateMutex());
+    detail::clearProjectionStateLocked();
 }
 
 } // namespace
 
 namespace detail {
 
-bool shouldSuppressProjectionHitSelect(BlockPos const& pos) {
-    std::lock_guard lock(gStateMutex);
-    if (gState.enabled && gState.structure) {
-        auto const found = gState.expectedWorldBlockIndices->find(
-            std::tuple{pos.x, pos.y, pos.z}
-        );
-        if (found != gState.expectedWorldBlockIndices->end()) {
-            auto const state = gState.correctionStates[found->second];
-            if (state == CorrectionState::WrongType
-                || state == CorrectionState::WrongState) {
-                // LHolo already renders a complete red/yellow hull and
-                // outline for this cell. Vanilla's coincident hit-select
-                // overlay adds a second surface only while the crosshair
-                // targets it, producing the observed flicker.
-                return true;
-            }
-        }
-    }
-    return false;
+std::mutex& projectionStateMutex() {
+    return gStateMutex;
 }
 
-void renderProjectionFrame(BaseActorRenderContext& renderContext, bool renderAlphaLayer) {
-    std::unique_lock lock(gStateMutex);
+ProjectionState& projectionState() {
+    return gState;
+}
 
-    if (auto const bounds = structure::capture::getBounds()) {
-        gCaptureBounds.setBounds(
-            BlockPos{bounds->min.x, bounds->min.y, bounds->min.z},
-            BlockPos{bounds->max.x, bounds->max.y, bounds->max.z},
-            0xFF0000FF
-        );
-    } else {
-        gCaptureBounds.clear();
-    }
-    gCaptureBounds.render(renderContext, renderAlphaLayer);
+void clearProjectionStateLocked() {
+    detail::resetProjectionState(gState);
+}
 
-    if (auto loaded = structure::getLoaded(); loaded && loaded->generation != gState.structureGeneration) {
-        clearProjectionStateLocked();
-        if (!enableStructureProjection(renderContext, std::move(loaded))) {
-            clearProjectionStateLocked();
-            logger().error("Could not enable loaded structure projection");
-        }
-    }
+overlay::BoundsWireframe& projectionCaptureBounds() {
+    return gCaptureBounds;
+}
 
-    if (!gState.enabled) return;
-    auto& client = renderContext.getClient();
-    if (!contextIsValid(client, client.getLocalPlayer())) {
-        clearProjectionStateLocked();
-        lock.unlock();
-        structure::clear();
-        return;
-    }
-    renderProjection(renderContext, renderAlphaLayer);
+float projectionOpacity() {
+    return gOpacity.load(std::memory_order_relaxed);
+}
+
+float projectionCorrectionFillOpacity() {
+    return gCorrectionFillOpacity.load(std::memory_order_relaxed);
+}
+
+float projectionCorrectionOutlineOpacity() {
+    return gCorrectionOutlineOpacity.load(std::memory_order_relaxed);
+}
+
+bool projectionStructureBoundsEnabled() {
+    return gStructureBoundsEnabled.load(std::memory_order_relaxed);
+}
+
+bool consumeProjectionAnchor(int& x, int& y, int& z) {
+    if (!gPendingStructureAnchor.exchange(false, std::memory_order_acq_rel)) return false;
+    x = gPendingStructureAnchorX.load(std::memory_order_relaxed);
+    y = gPendingStructureAnchorY.load(std::memory_order_relaxed);
+    z = gPendingStructureAnchorZ.load(std::memory_order_relaxed);
+    return true;
 }
 
 } // namespace detail
@@ -444,8 +187,8 @@ bool installHook() {
 void uninstallHook() {
     detail::uninstallProjectionRenderHooks();
     detail::uninstallProjectionGameHooks();
-    std::lock_guard lock(gStateMutex);
-    gCaptureBounds.clear();
+    std::lock_guard lock(detail::projectionStateMutex());
+    detail::projectionCaptureBounds().clear();
 }
 
 void disable() {
@@ -499,7 +242,7 @@ ProjectionQuery queryProjection(LocalPlayer& player, BlockPos const& worldPos) {
     std::unique_lock lock(gStateMutex);
     if (!gState.enabled || !gState.structure) return {nullptr, false};
     if (gState.level != &player.getLevel() || gState.dimension != &player.getDimension()) {
-        clearProjectionStateLocked();
+        detail::clearProjectionStateLocked();
         lock.unlock();
         structure::clear();
         return {nullptr, false};
@@ -511,7 +254,7 @@ std::vector<RangeCandidate> queryMissingCellsInRange(LocalPlayer& player, Vec3 c
     std::unique_lock lock(gStateMutex);
     if (!gState.enabled || !gState.structure) return {};
     if (gState.level != &player.getLevel() || gState.dimension != &player.getDimension()) {
-        clearProjectionStateLocked();
+        detail::clearProjectionStateLocked();
         lock.unlock();
         structure::clear();
         return {};

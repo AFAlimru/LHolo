@@ -1,0 +1,357 @@
+// LHolo - Client-side projection renderer for Minecraft Bedrock Windows
+// Copyright (C) 2026  MarmieQi
+//
+// Projection frame orchestration: structure activation, world-context check,
+// opaque/transparent mesh submission, hit-select suppression and the
+// post-block-entity frame entry. Session state is accessed through the
+// ProjectionSession contract.
+
+#include "projection/runtime/ProjectionRenderFrame.h"
+#include "projection/runtime/ProjectionSession.h"
+
+#include "projection/core/ProjectionInternalTypes.h"
+#include "projection/core/ProjectionRules.h"
+#include "projection/core/ProjectionState.h"
+#include "projection/mesh/ProjectionMeshWorker.h"
+#include "projection/mesh/ProjectionRenderer.h"
+#include "projection/mesh/ProjectionSectionBuilder.h"
+#include "projection/runtime/ProjectionFramePipeline.h"
+#include "projection/runtime/ProjectionInvalidation.h"
+#include "projection/runtime/ProjectionLifecycle.h"
+#include "projection/runtime/ProjectionProgress.h"
+#include "projection/runtime/ProjectionWorldEvents.h"
+#include "projection/world/ProjectionPlacement.h"
+
+#include "overlay/BoundsWireframe.h"
+#include "plugin/LHolo.h"
+#include "structure/capture/StructureCapture.h"
+#include "structure/StructureLoader.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <exception>
+#include <memory>
+#include <tuple>
+#include <utility>
+
+#include "mc/client/game/IClientInstance.h"
+#include "mc/client/player/LocalPlayer.h"
+#include "mc/client/renderer/BaseActorRenderContext.h"
+#include "mc/client/renderer/Tessellator.h"
+#include "mc/client/renderer/game/ItemInHandRenderer.h"
+#include "mc/world/actor/Actor.h"
+#include "mc/world/level/BlockPos.h"
+#include "mc/world/level/BlockSource.h"
+#include "mc/world/level/Level.h"
+#include "mc/world/level/levelgen/structure/LegacyStructureSettings.h"
+
+#include "ll/api/mod/NativeMod.h"
+
+namespace lholo::projection::detail {
+namespace {
+
+auto& logger() {
+    return LHolo::getInstance().getSelf().getLogger();
+}
+
+bool enableStructureProjection(
+    BaseActorRenderContext& renderContext,
+    std::shared_ptr<structure::LoadedStructure const> loaded
+) {
+    ProjectionState next;
+    if (!prepareProjectionState(next, renderContext, std::move(loaded))) return false;
+    auto& client = renderContext.getClient();
+    auto* player = client.getLocalPlayer();
+    int anchorX = 0;
+    int anchorY = 0;
+    int anchorZ = 0;
+    if (consumeProjectionAnchor(anchorX, anchorY, anchorZ)) {
+        next.anchor = BlockPos{anchorX, anchorY, anchorZ};
+    } else {
+        auto const& position = player->getPosition();
+        // Player position is the feet/air cell. Default a newly loaded
+        // structure to the supporting ground cell directly below it.
+        next.anchor = BlockPos(
+            std::floor(position.x),
+            std::floor(position.y) - 1,
+            std::floor(position.z)
+        );
+    }
+    projectionState() = std::move(next);
+    projectionState().enabled = true;
+    try {
+        if (meshWorkerIsDisabledForSession()) {
+            projectionState().asyncMeshBuildingEnabled = false;
+        } else {
+            projectionState().meshWorkerGeneration = startMeshWorker();
+        }
+    } catch (std::exception const& exception) {
+        projectionState().asyncMeshBuildingEnabled = false;
+        disableMeshWorkerForSession();
+        logger().warn("Projection mesh worker initialization failed; using synchronous fallback: {}", exception.what());
+    } catch (...) {
+        projectionState().asyncMeshBuildingEnabled = false;
+        disableMeshWorkerForSession();
+        logger().warn("Projection mesh worker initialization failed; using synchronous fallback");
+    }
+    attachProjectionWorldEvents(player->getLevel(), player->getDimensionBlockSource());
+    initializePublishedBuildProgress(projectionState().structure->renderBlocks.size());
+    structure::recordProjectionAnchor(projectionState().anchor.x, projectionState().anchor.y, projectionState().anchor.z);
+    logger().info(
+        "Structure projection enabled: {} renderable blocks at ({}, {}, {})",
+        projectionState().structure->renderBlocks.size(),
+        projectionState().anchor.x,
+        projectionState().anchor.y,
+        projectionState().anchor.z
+    );
+    return true;
+}
+
+bool contextIsValid(IClientInstance& client, Actor* player) {
+    return projectionContextMatches(projectionState(), client, player);
+}
+
+void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLayer) {
+    auto& client = renderContext.getClient();
+    auto* player  = client.getLocalPlayer();
+    auto& state   = projectionState();
+
+    auto& tessellator = renderContext.getTessellator();
+    tessellator.begin(Tessellator::DebugContextCallback{}, 128, false);
+
+    if (!state.blockTessellator) {
+        tessellator.cancel();
+        return;
+    }
+    if (!renderAlphaLayer) {
+        auto const mirrorMode = structure::getMirrorMode();
+        auto const rotationTurns = structure::getRotationQuarterTurns();
+        auto const mirror = getProjectionMirror(mirrorMode);
+        auto const rotation = getProjectionRotation(rotationTurns);
+        LegacyStructureSettings transformSettings;
+        transformSettings.setMirror(mirror);
+        transformSettings.setRotation(rotation);
+        bool const identityTransform = mirrorMode == 0 && rotationTurns == 0;
+        auto const offsetX = structure::getOffsetX();
+        auto const offsetY = structure::getOffsetY();
+        auto const offsetZ = structure::getOffsetZ();
+        auto const layerDisplayMode = structure::getLayerDisplayMode();
+        auto const layerAxis = structure::getLayerAxis();
+        auto const maxLayer = std::max(
+            0,
+            (layerAxis == 1 ? state.structure->sizeX : state.structure->sizeY) - 1
+        );
+        auto const displayLayer = std::clamp(
+            structure::getDisplayLayer(), 0, maxLayer
+        );
+        auto const structureOpacity = projectionOpacity();
+        auto const correctionFillOpacity = projectionCorrectionFillOpacity();
+        auto const correctionOutlineOpacity = projectionCorrectionOutlineOpacity();
+        auto const invalidation = reconcileProjectionInvalidation(
+            state,
+            ProjectionInvalidationSettings{
+                .mirrorMode               = mirrorMode,
+                .rotationTurns            = rotationTurns,
+                .offsetX                  = offsetX,
+                .offsetY                  = offsetY,
+                .offsetZ                  = offsetZ,
+                .layerDisplayMode         = layerDisplayMode,
+                .displayLayer             = displayLayer,
+                .layerAxis                = layerAxis,
+                .structureOpacity         = structureOpacity,
+                .correctionFillOpacity    = correctionFillOpacity,
+                .correctionOutlineOpacity = correctionOutlineOpacity
+            }
+        );
+        if (invalidation.placementViewChanged()) {
+            rebuildProjectionPlacement(
+                state,
+                player->getDimensionBlockSource(),
+                renderContext.mBlockEntityRenderDispatcher,
+                transformSettings,
+                ProjectionPlacementSettings{
+                    .mirrorMode        = mirrorMode,
+                    .rotationTurns     = rotationTurns,
+                    .offsetX           = offsetX,
+                    .offsetY           = offsetY,
+                    .offsetZ           = offsetZ,
+                    .layerDisplayMode  = layerDisplayMode,
+                    .displayLayer      = displayLayer,
+                    .layerAxis         = layerAxis,
+                    .identityTransform = identityTransform
+                }
+            );
+        }
+        ProjectionSectionBuildSettings const sectionBuildSettings{
+            .mirror                   = mirror,
+            .rotation                 = rotation,
+            .mirrorMode               = mirrorMode,
+            .rotationTurns            = rotationTurns,
+            .offsetX                  = offsetX,
+            .offsetY                  = offsetY,
+            .offsetZ                  = offsetZ,
+            .structureOpacity         = structureOpacity,
+            .correctionFillOpacity    = correctionFillOpacity,
+            .correctionOutlineOpacity = correctionOutlineOpacity,
+            .identityTransform        = identityTransform
+        };
+        processProjectionOpaqueFrame(
+            state,
+            tessellator,
+            player->getDimensionBlockSource(),
+            renderContext.getCameraPosition(),
+            transformSettings,
+            sectionBuildSettings,
+            layerDisplayMode,
+            displayLayer,
+            layerAxis
+        );
+    }
+
+    // Keep vanilla world queries at their real BlockPos, but do not upload large
+    // absolute coordinates to the GPU. Render vertices relative to the projection
+    // origin, matching the strategy used by chunk meshes.
+    BlockPos const renderOrigin{
+        state.anchor.x + structure::getOffsetX(),
+        state.anchor.y + structure::getOffsetY(),
+        state.anchor.z + structure::getOffsetZ()
+    };
+    auto const structureOpacity = projectionOpacity();
+    auto const& camera = renderContext.getCameraPosition();
+    if (renderAlphaLayer) {
+        // The transparent pass only submits meshes built during the preceding
+        // opaque pass. Do not leave the shared immediate tessellator active.
+        tessellator.cancel();
+    }
+
+    submitProjectedBlockActorPass(
+        state,
+        renderContext,
+        player->getDimensionBlockSource(),
+        camera,
+        renderAlphaLayer
+    );
+
+    auto matrix = renderContext.getWorldMatrix().push(false);
+    matrix->translate(
+        static_cast<float>(renderOrigin.x) - camera.x,
+        static_cast<float>(renderOrigin.y) - camera.y,
+        static_cast<float>(renderOrigin.z) - camera.z
+    );
+
+    auto& itemRenderer = renderContext.getItemInHandRenderer();
+    auto const& blendMaterial = itemRenderer.mMatBlendBlock.get();
+    if (!blendMaterial) {
+        tessellator.cancel();
+        return;
+    }
+
+    if (!state.terrainTextureVariant) {
+        tessellator.cancel();
+        logger().error("Projection terrain texture is not available");
+        return;
+    }
+
+    if (!state.meshPreflightDone) {
+        auto const countValid = [](auto const& meshes) {
+            return std::count_if(meshes.begin(), meshes.end(), [](auto const& mesh) {
+                return mesh && mesh->isValid();
+            });
+        };
+        std::size_t normalMeshes{};
+        for (auto const& meshes : state.sectionMeshes) {
+            normalMeshes += countValid(meshes);
+        }
+        auto const warningMeshes = countValid(state.warningFillSectionMeshes);
+        auto const outlineMeshes = countValid(state.correctionOutlineSectionMeshes);
+        auto const liquidMeshes = countValid(state.liquidProxySectionMeshes);
+        auto const placeholderMeshes = countValid(state.blockEntityPlaceholderSectionMeshes);
+        if (normalMeshes + warningMeshes + outlineMeshes + liquidMeshes + placeholderMeshes != 0) {
+            state.meshPreflightDone = true;
+        }
+    }
+
+    try {
+        submitProjectionMeshPass(
+            state,
+            renderContext,
+            client,
+            renderOrigin,
+            camera,
+            structureOpacity,
+            renderAlphaLayer,
+            projectionStructureBoundsEnabled()
+        );
+    } catch (std::exception const& exception) {
+        logger().error("Projection immediate mesh submission failed: {}", exception.what());
+        tessellator.cancel();
+        clearProjectionStateLocked();
+        return;
+    } catch (...) {
+        logger().error("Projection immediate mesh submission failed with an unknown exception");
+        tessellator.cancel();
+        clearProjectionStateLocked();
+        return;
+    }
+}
+
+} // namespace
+
+bool shouldSuppressProjectionHitSelect(BlockPos const& pos) {
+    std::lock_guard lock(projectionStateMutex());
+    auto& state = projectionState();
+    if (state.enabled && state.structure) {
+        auto const found = state.expectedWorldBlockIndices->find(
+            std::tuple{pos.x, pos.y, pos.z}
+        );
+        if (found != state.expectedWorldBlockIndices->end()) {
+            auto const correctionState = state.correctionStates[found->second];
+            if (correctionState == CorrectionState::WrongType
+                || correctionState == CorrectionState::WrongState) {
+                // LHolo already renders a complete red/yellow hull and
+                // outline for this cell. Vanilla's coincident hit-select
+                // overlay adds a second surface only while the crosshair
+                // targets it, producing the observed flicker.
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void renderProjectionFrame(BaseActorRenderContext& renderContext, bool renderAlphaLayer) {
+    std::unique_lock lock(projectionStateMutex());
+    auto& state = projectionState();
+
+    if (auto const bounds = structure::capture::getBounds()) {
+        projectionCaptureBounds().setBounds(
+            BlockPos{bounds->min.x, bounds->min.y, bounds->min.z},
+            BlockPos{bounds->max.x, bounds->max.y, bounds->max.z},
+            0xFF0000FF
+        );
+    } else {
+        projectionCaptureBounds().clear();
+    }
+    projectionCaptureBounds().render(renderContext, renderAlphaLayer);
+
+    if (auto loaded = structure::getLoaded(); loaded && loaded->generation != state.structureGeneration) {
+        clearProjectionStateLocked();
+        if (!enableStructureProjection(renderContext, std::move(loaded))) {
+            clearProjectionStateLocked();
+            logger().error("Could not enable loaded structure projection");
+        }
+    }
+
+    if (!state.enabled) return;
+    auto& client = renderContext.getClient();
+    if (!contextIsValid(client, client.getLocalPlayer())) {
+        clearProjectionStateLocked();
+        lock.unlock();
+        structure::clear();
+        return;
+    }
+    renderProjection(renderContext, renderAlphaLayer);
+}
+
+} // namespace lholo::projection::detail
