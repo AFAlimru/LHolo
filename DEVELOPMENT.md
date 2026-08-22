@@ -985,3 +985,21 @@ D:\games\LeviLauncher\MC\versions\1.26.20.04\logs\crash\minidump_*.dmp
 6. 崩溃使用 trace/minidump/IDA 定位，不根据画面表现猜函数偏移。
 
 维护原则：先证明根因，再改动；能通过稳定公开/生成 API 完成时不依赖固定偏移；必须逆向时记录版本、符号、签名、调用点和验证依据。
+
+---
+
+## 19. 自动化测试
+
+纯逻辑单元使用独立的控制台测试目标，不加载游戏运行时：
+
+```bash
+xmake -b LHoloLogicTests
+xmake r LHoloLogicTests
+```
+
+当前覆盖：
+
+- `core/ProjectionLayoutRules`：镜像/旋转枚举映射、结构坐标变换、分层可见性、渲染桶分类。
+- `runtime/ProjectionProgress`：进度快照初始化、发布、越界钳制与重置语义。
+
+新增可独立链接的纯逻辑时必须同步补充对应断言；涉及 Minecraft 运行时对象（Block、BlockSource、Tessellator）的代码不进入该测试目标。
