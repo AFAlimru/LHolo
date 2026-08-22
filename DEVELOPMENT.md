@@ -78,6 +78,7 @@ LHolo/
 │  ├─ ui/
 │  │  ├─ FileDialog.*           通用结构打开与 `.mcstructure` 保存对话框
 │  │  ├─ HotkeyFormat.*         纯按键名/修饰键格式化（不读会话状态）
+│  │  ├─ MenuController.*       菜单模型构建/应用与热键绑定
 │  │  └─ LHoloMenu.*            纯菜单模型、页面和动作回调
 │  ├─ projection/
 │  │  ├─ Projection.cpp         对外门面：Hook 生命周期、设置与查询转发
@@ -158,6 +159,8 @@ LHolo/
   公开 getter/setter 语义（含钳制）保持在 `StructureLoader`，内部读写经访问器完成。
 - `ui/HotkeyFormat` 只根据显式参数生成按键名与和弦字符串，不读取会话状态；快捷键交互仍由
   `StructureLoader` 的会话状态驱动。
+- `ui/MenuController` 负责菜单模型构建/应用和热键绑定，只通过 `StructureSession`/`StructureUiState`
+  访问状态；`StructureLoader` 保留动作回调与 GUI 渲染入口。
 - `projection` 负责“结构如何出现在世界中”，不弹文件选择框、不直接操作 ImGui。
 - `projection/ProjectionTypes.h` 不包含运行状态、Hook 或 Minecraft 资源所有权；内部纯数据定义集中在
   `projection/core/ProjectionInternalTypes.h`，投影状态与 Worker/Mesh 生命周期仍由实现层负责。

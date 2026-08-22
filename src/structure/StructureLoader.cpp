@@ -21,6 +21,7 @@
 #include "structure/StructureSession.h"
 #include "structure/StructureUiState.h"
 #include "ui/HotkeyFormat.h"
+#include "ui/MenuController.h"
 #include "structure/capture/StructureCapture.h"
 #include "structure/java_to_bedrock/JavaToBedrock.h"
 #include "ui/FileDialog.h"
@@ -79,11 +80,6 @@ constexpr unsigned int   kHotkeyModifierAlt        = 2u;
 constexpr unsigned int   kHotkeyModifierShift      = 4u;
 constexpr char           kMaterialPopupName[]       = "材料清单###LHoloMaterialList";
 
-lholo::ui::MenuPage             gActivePage{lholo::ui::MenuPage::Projection};
-
-int maxLayerFor(LoadedStructure const& structure, int axis) {
-    return std::max(0, (axis == 1 ? structure.sizeX : structure.sizeY) - 1);
-}
 
 std::string localizedBlockName(Block const& block, std::string_view localeCode) {
     auto const& typeName = block.getTypeName();
@@ -472,7 +468,7 @@ void processPendingHotkeyActions() {
         auto const layerAxis = detail::sessionLayerAxis().load(std::memory_order_relaxed);
         {
             std::lock_guard lock(detail::sessionLoadedMutex());
-            if (detail::sessionLoaded()) maxLayer = maxLayerFor(*detail::sessionLoaded(), layerAxis);
+            if (detail::sessionLoaded()) maxLayer = detail::maxLayerFor(*detail::sessionLoaded(), layerAxis);
         }
         auto const current = static_cast<long long>(detail::sessionDisplayLayer().load(std::memory_order_relaxed));
         auto const next = std::clamp(current + static_cast<long long>(layerDelta), 0LL, static_cast<long long>(maxLayer));
@@ -516,7 +512,7 @@ void renderHud() {
         std::lock_guard lock(detail::sessionLoadedMutex());
         if (!detail::sessionLoaded()) return;
         fileName = pathToUtf8(detail::sessionLoaded()->sourcePath.filename());
-        maxLayer = maxLayerFor(*detail::sessionLoaded(), layerAxis);
+        maxLayer = detail::maxLayerFor(*detail::sessionLoaded(), layerAxis);
     }
 
     auto const displaySize = ImGui::GetIO().DisplaySize;
@@ -631,26 +627,6 @@ void renderHud() {
 
 namespace {
 
-struct UiHotkeyBinding {
-    std::atomic_uint* key{};
-    std::atomic_uint* modifiers{};
-    std::atomic_bool* capturing{};
-};
-
-UiHotkeyBinding hotkeyBinding(lholo::ui::HotkeyId id) {
-    switch (id) {
-    case lholo::ui::HotkeyId::Gui: return {&detail::uiGuiHotkey(), &detail::uiGuiHotkeyModifiers(), &detail::uiCapturingGuiHotkey()};
-    case lholo::ui::HotkeyId::MoveXMinus: return {&detail::uiMoveHotkeys()[0], &detail::uiMoveHotkeyModifiers()[0], &detail::uiCapturingMoveHotkey()[0]};
-    case lholo::ui::HotkeyId::MoveXPlus: return {&detail::uiMoveHotkeys()[1], &detail::uiMoveHotkeyModifiers()[1], &detail::uiCapturingMoveHotkey()[1]};
-    case lholo::ui::HotkeyId::MoveZMinus: return {&detail::uiMoveHotkeys()[2], &detail::uiMoveHotkeyModifiers()[2], &detail::uiCapturingMoveHotkey()[2]};
-    case lholo::ui::HotkeyId::MoveZPlus: return {&detail::uiMoveHotkeys()[3], &detail::uiMoveHotkeyModifiers()[3], &detail::uiCapturingMoveHotkey()[3]};
-    case lholo::ui::HotkeyId::MoveYPlus: return {&detail::uiMoveHotkeys()[4], &detail::uiMoveHotkeyModifiers()[4], &detail::uiCapturingMoveHotkey()[4]};
-    case lholo::ui::HotkeyId::MoveYMinus: return {&detail::uiMoveHotkeys()[5], &detail::uiMoveHotkeyModifiers()[5], &detail::uiCapturingMoveHotkey()[5]};
-    case lholo::ui::HotkeyId::LayerIncrease: return {&detail::uiLayerIncreaseHotkey(), &detail::uiLayerIncreaseHotkeyModifiers(), &detail::uiCapturingLayerIncreaseHotkey()};
-    case lholo::ui::HotkeyId::LayerDecrease: return {&detail::uiLayerDecreaseHotkey(), &detail::uiLayerDecreaseHotkeyModifiers(), &detail::uiCapturingLayerDecreaseHotkey()};
-    }
-    return {};
-}
 
 void stopHotkeyCapture() {
     detail::uiCapturingGuiHotkey().store(false, std::memory_order_release);
@@ -659,174 +635,7 @@ void stopHotkeyCapture() {
     for (auto& capturing : detail::uiCapturingMoveHotkey()) capturing.store(false, std::memory_order_release);
 }
 
-struct HotkeyDefinition { lholo::ui::HotkeyId id; char const* label; };
-constexpr std::array<HotkeyDefinition, 9> kHotkeyDefinitions{{
-    {lholo::ui::HotkeyId::Gui, "打开投影菜单"},
-    {lholo::ui::HotkeyId::MoveXMinus, "结构偏移 X -1"},
-    {lholo::ui::HotkeyId::MoveXPlus, "结构偏移 X +1"},
-    {lholo::ui::HotkeyId::MoveZMinus, "结构偏移 Z -1"},
-    {lholo::ui::HotkeyId::MoveZPlus, "结构偏移 Z +1"},
-    {lholo::ui::HotkeyId::MoveYPlus, "结构偏移 Y +1"},
-    {lholo::ui::HotkeyId::MoveYMinus, "结构偏移 Y -1"},
-    {lholo::ui::HotkeyId::LayerIncrease, "上一层"},
-    {lholo::ui::HotkeyId::LayerDecrease, "下一层"}
-}};
 
-lholo::ui::MenuModel makeMenuModel(float effectiveUiScale) {
-    lholo::ui::MenuModel model;
-    model.page = gActivePage;
-    model.pathBuffer = detail::uiPathBuffer().data();
-    model.pathBufferSize = detail::uiPathBuffer().size();
-    model.blockOpeningInput = detail::uiOpeningInputBlockFrames().load(std::memory_order_acquire) > 0;
-    model.uiScale = effectiveUiScale;
-    auto const captureSnapshot = capture::getSnapshot();
-    model.capture.mode = static_cast<int>(captureSnapshot.draft.mode);
-    model.captureRevision = captureSnapshot.revision;
-    model.capture.includeEntities = captureSnapshot.draft.includeEntities;
-    model.captureWorldAvailable = captureSnapshot.worldAvailable;
-    model.captureStatus = captureSnapshot.status;
-    if (captureSnapshot.draft.first) {
-        auto const& point = *captureSnapshot.draft.first;
-        model.capture.first = {true, point.x, point.y, point.z};
-    }
-    if (captureSnapshot.draft.second) {
-        auto const& point = *captureSnapshot.draft.second;
-        model.capture.second = {true, point.x, point.y, point.z};
-    }
-    model.layerAxis = std::clamp(detail::sessionLayerAxis().load(std::memory_order_relaxed), 0, 1);
-
-    {
-        std::lock_guard lock(detail::sessionLoadedMutex());
-        model.status = detail::sessionStatus();
-        model.hasLoadedStructure = static_cast<bool>(detail::sessionLoaded());
-        model.hasSavedProjection = detail::sessionHasSavedProjection().load(std::memory_order_relaxed);
-        model.savedAnchorX = detail::sessionSavedAnchorX().load(std::memory_order_relaxed);
-        model.savedAnchorY = detail::sessionSavedAnchorY().load(std::memory_order_relaxed);
-        model.savedAnchorZ = detail::sessionSavedAnchorZ().load(std::memory_order_relaxed);
-        if (detail::sessionLoaded()) {
-            model.maxLayerY = maxLayerFor(*detail::sessionLoaded(), 0);
-            model.maxLayerX = maxLayerFor(*detail::sessionLoaded(), 1);
-        }
-    }
-    model.structureBoundsEnabled = projection::getStructureBoundsEnabled();
-    model.easyPlaceEnabled = place::isEnabled();
-    model.manualPlace = place::isManualMode();
-    model.rangeEnabled = place::isRangeEnabled();
-    model.placementRadius = place::getPlacementRadius();
-    model.offsetX = detail::sessionOffsetX().load(std::memory_order_relaxed);
-    model.offsetY = detail::sessionOffsetY().load(std::memory_order_relaxed);
-    model.offsetZ = detail::sessionOffsetZ().load(std::memory_order_relaxed);
-    model.rotation = std::clamp(detail::sessionRotationQuarterTurns().load(std::memory_order_relaxed), 0, 3);
-    model.mirror = std::clamp(detail::sessionMirror().load(std::memory_order_relaxed), 0, 2);
-    model.opacity = projection::getOpacity();
-    model.correctionFillOpacity = projection::getCorrectionFillOpacity();
-    model.correctionOutlineOpacity = projection::getCorrectionOutlineOpacity();
-    model.layerDisplayMode = std::clamp(detail::sessionLayerDisplayMode().load(std::memory_order_relaxed), 0, 3);
-    model.displayLayer = std::clamp(
-        detail::sessionDisplayLayer().load(std::memory_order_relaxed), 0,
-        model.layerAxis == 1 ? model.maxLayerX : model.maxLayerY
-    );
-    model.hudEnabled = detail::uiHudEnabled().load(std::memory_order_relaxed);
-    model.hudPosition = std::clamp(detail::uiHudPosition().load(std::memory_order_relaxed), 0, 3);
-    model.hudShowFileName = detail::uiHudShowFileName().load(std::memory_order_relaxed);
-    model.hudShowLayer = detail::uiHudShowLayer().load(std::memory_order_relaxed);
-    model.hudShowOverallProgress = detail::uiHudShowOverallProgress().load(std::memory_order_relaxed);
-    model.hudShowProgress = detail::uiHudShowProgress().load(std::memory_order_relaxed);
-    model.hudShowWrongState = detail::uiHudShowWrongState().load(std::memory_order_relaxed);
-    model.hudShowWrongType = detail::uiHudShowWrongType().load(std::memory_order_relaxed);
-    model.hudShowBlockEntity = detail::uiHudShowBlockEntity().load(std::memory_order_relaxed);
-    for (auto const& definition : kHotkeyDefinitions) {
-        auto const binding = hotkeyBinding(definition.id);
-        auto& row = model.hotkeys[static_cast<std::size_t>(definition.id)];
-        row.id = definition.id;
-        row.label = definition.label;
-        row.display = ui::hotkeyChordName(
-            binding.modifiers->load(std::memory_order_relaxed),
-            binding.key->load(std::memory_order_relaxed)
-        );
-        row.capturing = binding.capturing->load(std::memory_order_acquire);
-    }
-    {
-        std::lock_guard lock(detail::uiMaterialMutex());
-        model.materials.reserve(detail::uiMaterialRequirements().size());
-        for (auto const& material : detail::uiMaterialRequirements()) {
-            model.materials.push_back({material.displayName, material.typeName, material.count});
-        }
-    }
-    return model;
-}
-
-void applyMenuModel(lholo::ui::MenuModel const& model, float effectiveUiScale) {
-    bool changed = false;
-    auto update = [&changed](auto& target, auto value) {
-        if (target.load(std::memory_order_relaxed) == value) return;
-        target.store(value, std::memory_order_relaxed);
-        changed = true;
-    };
-    if (std::abs(model.uiScale - effectiveUiScale) > 0.001f) {
-        auto const scale = std::clamp(model.uiScale, 1.0f, 5.0f);
-        if (std::abs(detail::uiUiScale().load(std::memory_order_relaxed) - scale) > 0.001f) {
-            detail::uiUiScale().store(scale, std::memory_order_relaxed);
-            changed = true;
-        }
-    }
-    if (projection::getStructureBoundsEnabled() != model.structureBoundsEnabled) {
-        projection::setStructureBoundsEnabled(model.structureBoundsEnabled);
-        changed = true;
-    }
-    // Assisted-placement modes are session-only safety controls. Applying a
-    // mode must not dirty or rewrite the persistent settings file.
-    if (place::isEnabled() != model.easyPlaceEnabled) place::setEnabled(model.easyPlaceEnabled);
-    if (place::isManualMode() != model.manualPlace) place::setManualMode(model.manualPlace);
-    if (place::isRangeEnabled() != model.rangeEnabled) place::setRangeEnabled(model.rangeEnabled);
-    auto const radius = std::clamp(model.placementRadius, 1, 4);
-    if (place::getPlacementRadius() != radius) { place::setPlacementRadius(radius); changed = true; }
-    update(detail::sessionOffsetX(), model.offsetX);
-    update(detail::sessionOffsetY(), model.offsetY);
-    update(detail::sessionOffsetZ(), model.offsetZ);
-    update(detail::sessionRotationQuarterTurns(), std::clamp(model.rotation, 0, 3));
-    update(detail::sessionMirror(), std::clamp(model.mirror, 0, 2));
-
-    auto const opacity = std::clamp(model.opacity, 0.0f, 1.0f);
-    if (std::abs(projection::getOpacity() - opacity) > 0.0001f) { projection::setOpacity(opacity); changed = true; }
-    auto const fill = std::clamp(model.correctionFillOpacity, 0.0f, 1.0f);
-    if (std::abs(projection::getCorrectionFillOpacity() - fill) > 0.0001f) { projection::setCorrectionFillOpacity(fill); changed = true; }
-    auto const outline = std::clamp(model.correctionOutlineOpacity, 0.0f, 1.0f);
-    if (std::abs(projection::getCorrectionOutlineOpacity() - outline) > 0.0001f) { projection::setCorrectionOutlineOpacity(outline); changed = true; }
-    auto const layerAxis = std::clamp(model.layerAxis, 0, 1);
-    update(detail::sessionLayerAxis(), layerAxis);
-    update(detail::sessionLayerDisplayMode(), std::clamp(model.layerDisplayMode, 0, 3));
-    auto displayMax = 0;
-    {
-        std::lock_guard lock(detail::sessionLoadedMutex());
-        if (detail::sessionLoaded()) displayMax = maxLayerFor(*detail::sessionLoaded(), layerAxis);
-    }
-    update(detail::sessionDisplayLayer(), std::clamp(model.displayLayer, 0, displayMax));
-    update(detail::uiHudEnabled(), model.hudEnabled);
-    update(detail::uiHudPosition(), std::clamp(model.hudPosition, 0, 3));
-    update(detail::uiHudShowFileName(), model.hudShowFileName);
-    update(detail::uiHudShowLayer(), model.hudShowLayer);
-    update(detail::uiHudShowOverallProgress(), model.hudShowOverallProgress);
-    update(detail::uiHudShowProgress(), model.hudShowProgress);
-    update(detail::uiHudShowWrongState(), model.hudShowWrongState);
-    update(detail::uiHudShowWrongType(), model.hudShowWrongType);
-    update(detail::uiHudShowBlockEntity(), model.hudShowBlockEntity);
-    capture::Draft captureDraft;
-    captureDraft.mode = static_cast<capture::CaptureMode>(std::clamp(model.capture.mode, 0, 1));
-    captureDraft.includeEntities = model.capture.includeEntities;
-    if (model.capture.first.set) {
-        captureDraft.first = capture::Point{
-            model.capture.first.x, model.capture.first.y, model.capture.first.z
-        };
-    }
-    if (model.capture.second.set) {
-        captureDraft.second = capture::Point{
-            model.capture.second.x, model.capture.second.y, model.capture.second.z
-        };
-    }
-    capture::updateDraft(captureDraft);
-    if (changed) saveSettings();
-}
 
 lholo::ui::MenuActions makeMenuActions(bool& refreshModel) {
     lholo::ui::MenuActions actions;
@@ -907,10 +716,10 @@ lholo::ui::MenuActions makeMenuActions(bool& refreshModel) {
     actions.requestMaterials = [] { requestMaterialList(); };
     actions.beginHotkeyCapture = [](lholo::ui::HotkeyId id) {
         stopHotkeyCapture();
-        if (auto const binding = hotkeyBinding(id); binding.capturing) binding.capturing->store(true, std::memory_order_release);
+        if (auto const binding = lholo::ui::hotkeyBinding(id); binding.capturing) binding.capturing->store(true, std::memory_order_release);
     };
     actions.clearHotkey = [](lholo::ui::HotkeyId id) {
-        if (auto const binding = hotkeyBinding(id); binding.key && binding.modifiers) {
+        if (auto const binding = lholo::ui::hotkeyBinding(id); binding.key && binding.modifiers) {
             binding.key->store(0, std::memory_order_release);
             binding.modifiers->store(0, std::memory_order_release);
             if (binding.capturing) binding.capturing->store(false, std::memory_order_release);
@@ -981,12 +790,12 @@ void renderGui() {
     }
     auto const metrics = lholo::ui::calculateMetrics(displaySize, effectiveScale);
     lholo::ui::applyFluentTheme(metrics);
-    auto model = makeMenuModel(effectiveScale);
+    auto model = lholo::ui::buildStructureMenuModel(effectiveScale);
     bool refreshModel = false;
     auto const actions = makeMenuActions(refreshModel);
     lholo::ui::renderMenu(model, actions, metrics);
-    gActivePage = model.page;
-    if (!refreshModel) applyMenuModel(model, effectiveScale);
+    detail::uiActivePage() = model.page;
+    if (!refreshModel) lholo::ui::applyStructureMenuModel(model, effectiveScale);
     if (detail::uiOpeningInputBlockFrames().load(std::memory_order_acquire) > 0) {
         detail::uiOpeningInputBlockFrames().fetch_sub(1, std::memory_order_acq_rel);
     }

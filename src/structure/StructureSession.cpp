@@ -3,6 +3,7 @@
 
 #include "structure/StructureSession.h"
 
+#include <algorithm>
 #include <atomic>
 
 namespace lholo::structure::detail {
@@ -64,5 +65,9 @@ std::string& sessionSavedStructurePath() { return gSavedStructurePath; }
 
 std::string& sessionLastPath() { return gLastPath; }
 std::string& sessionStatus() { return gStatus; }
+
+int maxLayerFor(LoadedStructure const& structure, int axis) {
+    return std::max(0, (axis == 1 ? structure.sizeX : structure.sizeY) - 1);
+}
 
 } // namespace lholo::structure::detail

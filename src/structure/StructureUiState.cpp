@@ -61,6 +61,7 @@ std::atomic_bool                 gMaterialListRequested{false};
 std::vector<MaterialRequirement> gMaterialRequirements;
 std::array<char, 2048>           gPathBuffer{};
 bool                             gPathInitialized{};
+lholo::ui::MenuPage              gActivePage{lholo::ui::MenuPage::Projection};
 
 } // namespace
 
@@ -116,5 +117,6 @@ std::vector<MaterialRequirement>& uiMaterialRequirements() { return gMaterialReq
 
 std::array<char, 2048>& uiPathBuffer() { return gPathBuffer; }
 bool& uiPathInitialized() { return gPathInitialized; }
+lholo::ui::MenuPage& uiActivePage() { return gActivePage; }
 
 } // namespace lholo::structure::detail

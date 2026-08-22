@@ -46,4 +46,6 @@ std::string&      sessionSavedStructurePath();
 std::string& sessionLastPath();
 std::string& sessionStatus();
 
+int maxLayerFor(LoadedStructure const& structure, int axis);
+
 } // namespace lholo::structure::detail

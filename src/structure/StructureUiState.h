@@ -14,6 +14,8 @@
 #include <string>
 #include <vector>
 
+#include "ui/LHoloMenu.h"
+
 namespace lholo::structure::detail {
 
 struct MaterialRequirement {
@@ -72,5 +74,7 @@ std::vector<MaterialRequirement>&  uiMaterialRequirements();
 
 std::array<char, 2048>& uiPathBuffer();
 bool&                   uiPathInitialized();
+
+lholo::ui::MenuPage&    uiActivePage();
 
 } // namespace lholo::structure::detail
