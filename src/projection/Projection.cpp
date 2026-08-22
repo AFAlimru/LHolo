@@ -25,10 +25,12 @@
 #include <atomic>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <deque>
 #include <exception>
 #include <functional>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <memory>
@@ -90,6 +92,8 @@
 #include "mc/world/level/block/actor/ChestBlockActor.h"
 #include "mc/world/level/biome/biome_color_sampling/BiomeColorSampling.h"
 #include "mc/world/level/chunk/LevelChunk.h"
+#include "mc/world/level/chunk/ChunkViewSource.h"
+#include "mc/world/level/chunk/ChunkSourceViewGenerateMode.h"
 #include "mc/world/level/levelgen/structure/LegacyStructureSettings.h"
 #include "mc/world/level/levelgen/structure/LegacyStructureTemplate.h"
 #include "mc/world/level/material/Material.h"
@@ -98,6 +102,7 @@
 
 #include "ll/api/memory/Hook.h"
 #include "ll/api/mod/NativeMod.h"
+#include "ll/api/thread/ThreadPoolExecutor.h"
 
 namespace lholo::projection {
 namespace {
@@ -135,6 +140,11 @@ std::uint32_t modulateAbgr(std::uint32_t color, std::uint32_t tint) {
 
 using TextureVariant =
     std::variant<std::monostate, mce::TexturePtr, mce::ClientTexture, mce::ServerTexture>;
+
+using ExpectedBlockMap = std::map<std::tuple<int, int, int>, Block const*>;
+using ExpectedBlockActorMap =
+    std::map<std::tuple<int, int, int>, std::shared_ptr<BlockActor>>;
+using ExpectedBlockIndexMap = std::map<std::tuple<int, int, int>, std::size_t>;
 
 auto& logger() {
     return LHolo::getInstance().getSelf().getLogger();
@@ -194,24 +204,66 @@ struct ProjectionState {
     std::unique_ptr<mce::Mesh>              structureBoundsMesh;
     std::vector<Vec3>              sectionCenters;
     std::vector<bool>              sectionDirty;
+    std::vector<bool>              sectionIncrementalDirty;
+    std::vector<bool>              sectionBuildInFlight;
+    std::vector<std::uint64_t>     sectionRequestedRevision;
+    std::vector<std::uint64_t>     sectionUploadedRevision;
     std::vector<std::size_t>       blockToSection;
     std::size_t                    dirtySectionCursor{};
-    std::map<std::tuple<int, int, int>, Block const*> expectedWorldBlocks;
-    std::map<std::tuple<int, int, int>, std::shared_ptr<BlockActor>> expectedWorldBlockActors;
+    std::uint64_t                  meshWorkerGeneration{};
+    int                            consecutiveMeshWorkerFailures{};
+    bool                           asyncMeshBuildingEnabled{true};
+    std::uint64_t                  meshWorkerUploadedSections{};
+    std::uint64_t                  meshWorkerSnapshotMicros{};
+    std::uint64_t                  meshWorkerSnapshotDataMicros{};
+    std::uint64_t                  meshWorkerChunkViewMicros{};
+    std::uint64_t                  meshWorkerBuildMicros{};
+    std::uint64_t                  meshWorkerUploadMicros{};
+    std::uint64_t                  meshWorkerPeakSnapshotMicros{};
+    std::uint64_t                  meshWorkerPeakSnapshotDataMicros{};
+    std::uint64_t                  meshWorkerPeakChunkViewMicros{};
+    std::uint64_t                  meshWorkerPeakBuildMicros{};
+    std::uint64_t                  meshWorkerPeakUploadMicros{};
+    std::shared_ptr<ExpectedBlockMap>      expectedWorldBlocks{std::make_shared<ExpectedBlockMap>()};
+    std::shared_ptr<ExpectedBlockActorMap> expectedWorldBlockActors{
+        std::make_shared<ExpectedBlockActorMap>()
+    };
     std::vector<ProjectedBlockActor> projectedBlockActors;
-    std::map<std::tuple<int, int, int>, std::size_t>  expectedWorldBlockIndices;
+    std::shared_ptr<ExpectedBlockIndexMap> expectedWorldBlockIndices{
+        std::make_shared<ExpectedBlockIndexMap>()
+    };
     bool meshPreflightDone{};
 };
 
-thread_local std::map<std::tuple<int, int, int>, Block const*> const* gTessellationBlocks{};
-thread_local std::map<std::tuple<int, int, int>, std::shared_ptr<BlockActor>> const*
-    gTessellationBlockActors{};
+struct AsyncSectionBuildResult {
+    std::uint64_t workerGeneration{};
+    std::uint64_t structureGeneration{};
+    std::uint64_t revision{};
+    std::uint64_t snapshotPrepareMicros{};
+    std::uint64_t snapshotDataMicros{};
+    std::uint64_t chunkViewMicros{};
+    std::uint64_t workerBuildMicros{};
+    std::size_t   section{};
+    bool          success{};
+    std::string   failureReason;
+    std::uint64_t expectedVertexCount{};
+    std::uint64_t actualVertexCount{};
+    std::array<std::unique_ptr<mce::Mesh>, static_cast<std::size_t>(ProjectionState::RenderBucket::Count)>
+        sectionMeshes;
+    std::unique_ptr<mce::Mesh> warningFillMesh;
+    std::unique_ptr<mce::Mesh> correctionOutlineMesh;
+    std::unique_ptr<mce::Mesh> liquidProxyMesh;
+    std::unique_ptr<mce::Mesh> blockEntityPlaceholderMesh;
+};
+
+thread_local ExpectedBlockMap const*      gTessellationBlocks{};
+thread_local ExpectedBlockActorMap const* gTessellationBlockActors{};
 
 class ScopedTessellationBlocks {
 public:
     explicit ScopedTessellationBlocks(
-        std::map<std::tuple<int, int, int>, Block const*> const& blocks,
-        std::map<std::tuple<int, int, int>, std::shared_ptr<BlockActor>> const& blockActors
+        ExpectedBlockMap const& blocks,
+        ExpectedBlockActorMap const& blockActors
     )
     : mPreviousBlocks(std::exchange(gTessellationBlocks, &blocks)),
       mPreviousBlockActors(std::exchange(gTessellationBlockActors, &blockActors)) {}
@@ -225,8 +277,8 @@ public:
     ScopedTessellationBlocks& operator=(ScopedTessellationBlocks const&) = delete;
 
 private:
-    std::map<std::tuple<int, int, int>, Block const*> const* mPreviousBlocks{};
-    std::map<std::tuple<int, int, int>, std::shared_ptr<BlockActor>> const* mPreviousBlockActors{};
+    ExpectedBlockMap const*      mPreviousBlocks{};
+    ExpectedBlockActorMap const* mPreviousBlockActors{};
 };
 
 void pairProjectedChests(BlockSource& region, ProjectionState& state) {
@@ -237,8 +289,8 @@ void pairProjectedChests(BlockSource& region, ProjectionState& state) {
         {0, 1},
     }};
 
-    ScopedTessellationBlocks projectedWorld{state.expectedWorldBlocks, state.expectedWorldBlockActors};
-    for (auto const& [key, actor] : state.expectedWorldBlockActors) {
+    ScopedTessellationBlocks projectedWorld{*state.expectedWorldBlocks, *state.expectedWorldBlockActors};
+    for (auto const& [key, actor] : *state.expectedWorldBlockActors) {
         if (!actor->isType(BlockActorType::Chest)) continue;
         auto* chest = static_cast<ChestBlockActor*>(actor.get());
         if (chest->isLargeChest()) continue;
@@ -246,10 +298,10 @@ void pairProjectedChests(BlockSource& region, ProjectionState& state) {
         auto const [x, y, z] = key;
         for (auto const [dx, dz] : horizontalNeighbors) {
             BlockPos const neighbor{x + dx, y, z + dz};
-            auto const found = state.expectedWorldBlockActors.find(
+            auto const found = state.expectedWorldBlockActors->find(
                 std::tuple{neighbor.x, neighbor.y, neighbor.z}
             );
-            if (found == state.expectedWorldBlockActors.end()
+            if (found == state.expectedWorldBlockActors->end()
                 || !found->second->isType(BlockActorType::Chest)) {
                 continue;
             }
@@ -304,6 +356,106 @@ std::deque<SubChunkKey>    gIncomingLoadedSubChunks;
 std::atomic<BlockSource*>  gAttachedBlockSource{};
 std::atomic<ChunkSource*>  gAttachedChunkSource{};
 std::atomic<Level*>        gAttachedLevel{};
+
+std::mutex                                      gMeshWorkerMutex;
+std::deque<AsyncSectionBuildResult>             gCompletedSectionBuilds;
+std::unique_ptr<ll::thread::ThreadPoolExecutor> gMeshWorkerExecutor;
+std::atomic_bool                                gMeshWorkerBusy{};
+std::atomic_uint64_t                            gMeshWorkerGeneration{1};
+std::atomic_bool                                gMeshWorkerDisabledForSession{};
+
+std::uint64_t startMeshWorker() {
+    if (!gMeshWorkerExecutor) {
+        gMeshWorkerExecutor = std::make_unique<ll::thread::ThreadPoolExecutor>(
+            "LHoloProjectionMesh", 1
+        );
+    }
+    gMeshWorkerBusy.store(false, std::memory_order_release);
+    return gMeshWorkerGeneration.load(std::memory_order_acquire);
+}
+
+void stopMeshWorker() {
+    auto const nextGeneration = gMeshWorkerGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
+    (void)nextGeneration;
+    if (gMeshWorkerExecutor) {
+        // destroy() drains the executor and joins its sole worker. Tasks never
+        // acquire gStateMutex, so this is safe while projection state is being
+        // detached from the active world.
+        gMeshWorkerExecutor->destroy();
+        gMeshWorkerExecutor.reset();
+    }
+    gMeshWorkerBusy.store(false, std::memory_order_release);
+    std::lock_guard lock(gMeshWorkerMutex);
+    gCompletedSectionBuilds.clear();
+}
+
+bool submitMeshWorkerTask(
+    std::uint64_t workerGeneration,
+    std::function<AsyncSectionBuildResult()> task
+) {
+    if (!gMeshWorkerExecutor
+        || workerGeneration != gMeshWorkerGeneration.load(std::memory_order_acquire)) {
+        return false;
+    }
+    bool expected = false;
+    if (!gMeshWorkerBusy.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        return false;
+    }
+    try {
+        gMeshWorkerExecutor->execute([
+            workerGeneration,
+            task = std::move(task)
+        ]() mutable {
+            AsyncSectionBuildResult result;
+            try {
+                result = task();
+            } catch (std::exception const& exception) {
+                result.workerGeneration = workerGeneration;
+                result.success = false;
+                result.failureReason = std::string{"uncaught task exception: "} + exception.what();
+            } catch (...) {
+                result.workerGeneration = workerGeneration;
+                result.success = false;
+                result.failureReason = "uncaught non-standard task exception";
+            }
+            if (workerGeneration == gMeshWorkerGeneration.load(std::memory_order_acquire)) {
+                std::lock_guard lock(gMeshWorkerMutex);
+                gCompletedSectionBuilds.emplace_back(std::move(result));
+            }
+            gMeshWorkerBusy.store(false, std::memory_order_release);
+        });
+    } catch (...) {
+        gMeshWorkerBusy.store(false, std::memory_order_release);
+        return false;
+    }
+    return true;
+}
+
+std::vector<AsyncSectionBuildResult> takeCompletedSectionBuilds(std::size_t limit) {
+    std::vector<AsyncSectionBuildResult> results;
+    std::lock_guard lock(gMeshWorkerMutex);
+    auto const count = std::min(limit, gCompletedSectionBuilds.size());
+    results.reserve(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        results.emplace_back(std::move(gCompletedSectionBuilds.front()));
+        gCompletedSectionBuilds.pop_front();
+    }
+    return results;
+}
+
+void markSectionDirty(ProjectionState& state, std::size_t section, bool incremental) {
+    if (section >= state.sectionDirty.size()) return;
+    state.sectionDirty[section] = true;
+    state.sectionIncrementalDirty[section]
+        = state.sectionIncrementalDirty[section] || incremental;
+    ++state.sectionRequestedRevision[section];
+}
+
+void markAllSectionsDirty(ProjectionState& state, bool incremental) {
+    for (std::size_t section = 0; section < state.sectionDirty.size(); ++section) {
+        markSectionDirty(state, section, incremental);
+    }
+}
 
 class ProjectionBlockSourceListener final : public BlockSourceListener {
 public:
@@ -400,6 +552,9 @@ std::vector<SubChunkKey> takePendingLoadedSubChunks(std::size_t limit) {
 }
 
 void clearProjectionStateLocked() {
+    // Finish CPU mesh work before detaching any world-owned objects captured by
+    // the task's private ChunkViewSource/BlockSource snapshot.
+    stopMeshWorker();
     if (auto* level = gAttachedLevel.exchange(nullptr, std::memory_order_acq_rel)) {
         level->removeListener(gProjectionLevelListener);
     }
@@ -508,6 +663,10 @@ bool enableStructureProjection(
     next.liquidProxySectionMeshes.resize(next.sectionBlockIndices.size());
     next.blockEntityPlaceholderSectionMeshes.resize(next.sectionBlockIndices.size());
     next.sectionDirty.assign(next.sectionBlockIndices.size(), true);
+    next.sectionIncrementalDirty.assign(next.sectionBlockIndices.size(), false);
+    next.sectionBuildInFlight.assign(next.sectionBlockIndices.size(), false);
+    next.sectionRequestedRevision.assign(next.sectionBlockIndices.size(), 1);
+    next.sectionUploadedRevision.assign(next.sectionBlockIndices.size(), 0);
     if (!resolveTerrainTexture(client, next)) return false;
     if (gPendingStructureAnchor.exchange(false, std::memory_order_acq_rel)) {
         next.anchor = BlockPos{
@@ -527,6 +686,21 @@ bool enableStructureProjection(
     }
     gState = std::move(next);
     gState.enabled = true;
+    try {
+        if (gMeshWorkerDisabledForSession.load(std::memory_order_acquire)) {
+            gState.asyncMeshBuildingEnabled = false;
+        } else {
+            gState.meshWorkerGeneration = startMeshWorker();
+        }
+    } catch (std::exception const& exception) {
+        gState.asyncMeshBuildingEnabled = false;
+        gMeshWorkerDisabledForSession.store(true, std::memory_order_release);
+        logger().warn("Projection mesh worker initialization failed; using synchronous fallback: {}", exception.what());
+    } catch (...) {
+        gState.asyncMeshBuildingEnabled = false;
+        gMeshWorkerDisabledForSession.store(true, std::memory_order_release);
+        logger().warn("Projection mesh worker initialization failed; using synchronous fallback");
+    }
     auto* activeBlockSource = &player->getDimensionBlockSource();
     if (auto* attached = gAttachedBlockSource.load(std::memory_order_acquire);
         attached != activeBlockSource) {
@@ -745,9 +919,16 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 gState.meshPreflightDone = false;
             }
             if (geometryTransformChanged || opacityChanged || correctionStyleChanged) {
-                std::fill(gState.sectionDirty.begin(), gState.sectionDirty.end(), true);
+                markAllSectionsDirty(gState, false);
             }
-
+            if (placementMoved && !geometryTransformChanged) {
+                // Local geometry survives an XYZ move, but a task already
+                // sampling the previous world position must not be accepted.
+                for (std::size_t section = 0; section < gState.sectionDirty.size(); ++section) {
+                    ++gState.sectionRequestedRevision[section];
+                    if (gState.sectionBuildInFlight[section]) gState.sectionDirty[section] = true;
+                }
+            }
             // LayerRange changes only invalidate sections containing blocks
             // whose visibility crossed the old/new boundary. This mirrors
             // Litematica's section/range intersection instead of rebuilding
@@ -767,7 +948,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     auto const& entry = gState.structure->renderBlocks[index];
                     auto const visible = layerIsVisible(layerAxis == 1 ? entry.x : entry.y);
                     if (oldLayerVisible(entry) == visible) continue;
-                    gState.sectionDirty[gState.blockToSection[index]] = true;
+                    markSectionDirty(gState, gState.blockToSection[index], false);
                     gState.correctionStates[index] = visible
                         ? ProjectionState::CorrectionState::Unknown
                         : ProjectionState::CorrectionState::Correct;
@@ -800,6 +981,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 for (auto& mesh : gState.warningFillSectionMeshes) mesh.reset();
                 for (auto& mesh : gState.correctionOutlineSectionMeshes) mesh.reset();
                 for (auto& mesh : gState.liquidProxySectionMeshes) mesh.reset();
+                for (auto& mesh : gState.blockEntityPlaceholderSectionMeshes) mesh.reset();
                 gState.structureBoundsMesh.reset();
                 std::fill(gState.progressCorrect.begin(), gState.progressCorrect.end(), 0);
                 std::fill(gState.progressErrorKind.begin(), gState.progressErrorKind.end(), 0);
@@ -839,15 +1021,18 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 gState.blockTessellator = std::make_unique<BlockTessellator>(
                     &player->getDimensionBlockSource()
                 );
-                gState.expectedWorldBlocks.clear();
-                gState.expectedWorldBlockActors.clear();
+                // Publish a new immutable virtual-world version. In-flight
+                // workers keep the previous maps alive without observing a
+                // partially rebuilt placement.
+                gState.expectedWorldBlocks = std::make_shared<ExpectedBlockMap>();
+                gState.expectedWorldBlockActors = std::make_shared<ExpectedBlockActorMap>();
                 gState.projectedBlockActors.clear();
                 std::fill(
                     gState.blockActorRendererAvailable.begin(),
                     gState.blockActorRendererAvailable.end(),
                     0
                 );
-                gState.expectedWorldBlockIndices.clear();
+                gState.expectedWorldBlockIndices = std::make_shared<ExpectedBlockIndexMap>();
                 std::vector<Vec3> centerSums(gState.sectionCenters.size(), Vec3{});
                 std::vector<std::size_t> centerCounts(gState.sectionCenters.size(), 0);
                 for (std::size_t index = 0; index < gState.structure->renderBlocks.size(); ++index) {
@@ -869,7 +1054,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 };
                 auto const worldKey = std::tuple{worldPosition.x, worldPosition.y, worldPosition.z};
                 if (transformedBlock) {
-                    gState.expectedWorldBlocks.emplace(worldKey, transformedBlock);
+                    gState.expectedWorldBlocks->emplace(worldKey, transformedBlock);
                     if (transformedBlock->getBlockEntityType() != BlockActorType::Undefined) {
                         auto blockActor = transformedBlock->getBlockType().newBlockEntity(
                             worldPosition, *transformedBlock
@@ -881,7 +1066,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                                 blockActor->moveTo(worldPosition);
                             }
                             auto* actor = blockActor.get();
-                            gState.expectedWorldBlockActors.emplace(worldKey, std::move(blockActor));
+                            gState.expectedWorldBlockActors->emplace(worldKey, std::move(blockActor));
                             auto& dispatcher = renderContext.mBlockEntityRenderDispatcher;
                             if (dispatcher.getRenderer(*actor)) {
                                 gState.projectedBlockActors.push_back({
@@ -895,9 +1080,9 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     // Liquids join the virtual world so vanilla liquid-height
                     // queries see stacked virtual water (full-cell columns).
                     auto const* transformedLiquid = transformExpectedBlock(entry.liquid, transformSettings, identityTransform);
-                    if (transformedLiquid) gState.expectedWorldBlocks.emplace(worldKey, transformedLiquid);
+                    if (transformedLiquid) gState.expectedWorldBlocks->emplace(worldKey, transformedLiquid);
                 }
-                gState.expectedWorldBlockIndices.emplace(worldKey, index);
+                gState.expectedWorldBlockIndices->emplace(worldKey, index);
                 auto const section = gState.blockToSection[index];
                 centerSums[section] += Vec3{
                     static_cast<float>(transformed.x) + 0.5f,
@@ -914,10 +1099,10 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
             }
             auto* region = &player->getDimensionBlockSource();
             gState.blockTessellator->mCachedGetBlock.get() = [region](BlockPos const& position) -> Block const& {
-                auto const found = gState.expectedWorldBlocks.find(
+                auto const found = gState.expectedWorldBlocks->find(
                     std::tuple{position.x, position.y, position.z}
                 );
-                return found == gState.expectedWorldBlocks.end() ? region->getBlock(position) : *found->second;
+                return found == gState.expectedWorldBlocks->end() ? region->getBlock(position) : *found->second;
             };
             gState.correctionScanCursor = 0;
             }
@@ -999,7 +1184,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
             if (!visible) return;
             if (gState.correctionStates[index] != nextState) {
                 gState.correctionStates[index] = nextState;
-                gState.sectionDirty[gState.blockToSection[index]] = true;
+                markSectionDirty(gState, gState.blockToSection[index], true);
                 // A missing-cell shell omits faces shared with adjacent missing
                 // cells. If either side changes, both section meshes may need an
                 // exposed face added or removed (including across 16^3 borders).
@@ -1008,11 +1193,11 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     {0, 1, 0}, {0, 0, -1}, {0, 0, 1}
                 };
                 for (auto const& delta : neighbors) {
-                    auto const neighbor = gState.expectedWorldBlockIndices.find(std::tuple{
+                    auto const neighbor = gState.expectedWorldBlockIndices->find(std::tuple{
                         position.x + delta[0], position.y + delta[1], position.z + delta[2]
                     });
-                    if (neighbor != gState.expectedWorldBlockIndices.end()) {
-                        gState.sectionDirty[gState.blockToSection[neighbor->second]] = true;
+                    if (neighbor != gState.expectedWorldBlockIndices->end()) {
+                        markSectionDirty(gState, gState.blockToSection[neighbor->second], true);
                     }
                 }
             }
@@ -1024,10 +1209,10 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
         auto const changedPositions = takePendingBlockChanges(kCorrectionChecksPerFrame);
         std::size_t correctionChecks{};
         for (auto const& changedPosition : changedPositions) {
-            auto const found = gState.expectedWorldBlockIndices.find(std::tuple{
+            auto const found = gState.expectedWorldBlockIndices->find(std::tuple{
                 changedPosition.x, changedPosition.y, changedPosition.z
             });
-            if (found != gState.expectedWorldBlockIndices.end()) {
+            if (found != gState.expectedWorldBlockIndices->end()) {
                 updateCorrection(found->second);
                 ++correctionChecks;
             }
@@ -1056,10 +1241,10 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
             auto const minZ = subChunkZ * 16;
             for (int x = minX; x < minX + 16; ++x) {
                 for (int y = minY; y < minY + 16; ++y) {
-                    auto found = gState.expectedWorldBlockIndices.lower_bound(
+                    auto found = gState.expectedWorldBlockIndices->lower_bound(
                         std::tuple{x, y, minZ}
                     );
-                    while (found != gState.expectedWorldBlockIndices.end()) {
+                    while (found != gState.expectedWorldBlockIndices->end()) {
                         auto const& [foundX, foundY, foundZ] = found->first;
                         if (foundX != x || foundY != y || foundZ >= minZ + 16) break;
                         updateCorrection(found->second);
@@ -1081,12 +1266,20 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
             gBuildProgressWrongState.store(gState.progressWrongStateCount, std::memory_order_release);
         }
 
-        // Rebuild at most one dirty 16x16x16 section per frame. Stable frames do
-        // no block tessellation and only submit persistent GPU meshes.
-        for (std::size_t attempt = 0; attempt < gState.sectionDirty.size(); ++attempt) {
-            auto const section = gState.dirtySectionCursor++ % gState.sectionDirty.size();
-            if (!gState.sectionDirty[section]) continue;
-            gState.sectionDirty[section] = false;
+        // This is the single geometry implementation used by both the worker
+        // (UploadMode::Never) and the compatibility fallback (Buffered).
+        auto const buildSectionCpu = [=](
+            ProjectionState& projectionState,
+            Tessellator& tessellator,
+            BlockTessellator& blockTessellator,
+            BlockSource& region,
+            std::size_t section,
+            Tessellator::UploadMode uploadMode
+        ) {
+#define gState projectionState
+            LegacyStructureSettings sectionTransformSettings;
+            sectionTransformSettings.setMirror(mirror);
+            sectionTransformSettings.setRotation(rotation);
             struct LayeredBlock {
                 Block const*                  block{};
                 BlockPos                      position{};
@@ -1118,7 +1311,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     gState.anchor.z + offsetZ + transformed.z
                 };
                 auto const appendBlock = [&](Block const* source) {
-                    auto const* transformedBlock = transformExpectedBlock(source, transformSettings, identityTransform);
+                    auto const* transformedBlock = transformExpectedBlock(source, sectionTransformSettings, identityTransform);
                     if (!transformedBlock) return;
                     auto const& typeName = transformedBlock->getTypeName();
                     if (typeName == VanillaBlockTypeIds::PistonArmCollision().getString()
@@ -1148,8 +1341,8 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     "LHoloBlend"
                 };
             ScopedTessellationBlocks tessellationBlocksScope(
-                gState.expectedWorldBlocks,
-                gState.expectedWorldBlockActors
+                *gState.expectedWorldBlocks,
+                *gState.expectedWorldBlockActors
             );
             for (std::size_t bucketIndex = 0; bucketIndex < gState.sectionMeshes.size(); ++bucketIndex) {
                 tessellator.cancel();
@@ -1164,12 +1357,20 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     if (layered.bucket != bucket) continue;
                     blockTessellator.setRenderLayer(static_cast<int>(layered.layer));
                     auto const tintMethod = layered.block->getTintMethod();
+                    auto const usesBiomeTint = tintMethod == TintMethod::Grass
+                        || tintMethod == TintMethod::DefaultFoliage
+                        || tintMethod == TintMethod::BirchFoliage
+                        || tintMethod == TintMethod::EvergreenFoliage
+                        || tintMethod == TintMethod::DryFoliage;
+                    // A task owns a fresh BlockTessellator. Populate its biome
+                    // weights for every biome-tinted block so grass never reads
+                    // an empty or previous-position tint cache on the first build.
+                    if (usesBiomeTint) blockTessellator.buildBiomeWeights(layered.position);
                     std::optional<std::uint32_t> foliageTint;
                     if (tintMethod == TintMethod::DefaultFoliage
                         || tintMethod == TintMethod::BirchFoliage
                         || tintMethod == TintMethod::EvergreenFoliage
                         || tintMethod == TintMethod::DryFoliage) {
-                        blockTessellator.buildBiomeWeights(layered.position);
                         foliageTint = static_cast<std::uint32_t>(
                             BiomeColorSampling::getTessellationPolicy(tintMethod)
                                 .get(
@@ -1223,7 +1424,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     vertex.z -= static_cast<float>(origin.z);
                 }
                 destination = std::make_unique<mce::Mesh>(tessellator.end(
-                    Tessellator::UploadMode::Buffered,
+                    uploadMode,
                     meshNames[bucketIndex],
                     Tessellator::SupplementaryFieldAutoGenerationMode::NormalsAndTangents
                 ));
@@ -1252,7 +1453,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 ));
                 for (auto const index : liquidProxyIndices) {
                     auto const& entry = gState.structure->renderBlocks[index];
-                    auto const* expectedLiquid = transformExpectedBlock(entry.liquid, transformSettings, identityTransform);
+                    auto const* expectedLiquid = transformExpectedBlock(entry.liquid, sectionTransformSettings, identityTransform);
                     if (!expectedLiquid) continue;
                     auto const* graphics = BlockGraphics::getForBlock(*expectedLiquid);
                     auto const* uvSet = graphics ? &graphics->getTexture(0, 0) : nullptr;
@@ -1264,16 +1465,16 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     };
                     auto const neighborEntry = [&](int dx, int dy, int dz)
                         -> structure::LoadedStructure::RenderBlock const* {
-                        auto const found = gState.expectedWorldBlockIndices.find(std::tuple{
+                        auto const found = gState.expectedWorldBlockIndices->find(std::tuple{
                             worldPosition.x + dx, worldPosition.y + dy, worldPosition.z + dz
                         });
-                        return found == gState.expectedWorldBlockIndices.end()
+                        return found == gState.expectedWorldBlockIndices->end()
                             ? nullptr : &gState.structure->renderBlocks[found->second];
                     };
                     auto const neighborIsSameLiquid = [&](int dx, int dy, int dz) {
                         auto const* neighbor = neighborEntry(dx, dy, dz);
                         if (!neighbor || !neighbor->liquid) return false;
-                        auto const* transformed = transformExpectedBlock(neighbor->liquid, transformSettings, identityTransform);
+                        auto const* transformed = transformExpectedBlock(neighbor->liquid, sectionTransformSettings, identityTransform);
                         return transformed && transformed->getTypeName() == expectedLiquid->getTypeName();
                     };
                     // Flow-aware surface. Source and submerged cells stay full;
@@ -1303,7 +1504,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                         auto const* n = (dx == 0 && dz == 0) ? &entry : neighborEntry(dx, 0, dz);
                         if (!n) return 0.0f;
                         if (!n->liquid) return -1.0f;
-                        auto const* t = transformExpectedBlock(n->liquid, transformSettings, identityTransform);
+                        auto const* t = transformExpectedBlock(n->liquid, sectionTransformSettings, identityTransform);
                         if (!t || t->getTypeName() != expectedLiquid->getTypeName()) return -1.0f;
                         if (neighborIsSameLiquid(dx, 1, dz)) return 1.0f;  // submerged
                         return fluidHeight(liquidDepth(*t));
@@ -1364,7 +1565,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                         addLiquidFace({x1,y0,z0}, {x1,yc10,z0}, {x1,yc11,z1}, {x1,y0,z1});
                 }
                 gState.liquidProxySectionMeshes[section] = std::make_unique<mce::Mesh>(tessellator.end(
-                    Tessellator::UploadMode::Buffered,
+                    uploadMode,
                     "LHoloLiquidProxy",
                     Tessellator::SupplementaryFieldAutoGenerationMode::None
                 ));
@@ -1395,7 +1596,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 auto const tint = 0x00FFFFFFU | (alpha << 24U);
                 for (auto const index : blockEntityIndices) {
                     auto const& entry = gState.structure->renderBlocks[index];
-                    auto const* expectedBlock = transformExpectedBlock(entry.block, transformSettings, identityTransform);
+                    auto const* expectedBlock = transformExpectedBlock(entry.block, sectionTransformSettings, identityTransform);
                     if (!expectedBlock) continue;
                     auto const* graphics = BlockGraphics::getForBlock(*expectedBlock);
                     auto const* uvSet = graphics ? &graphics->getTexture(0, 0) : nullptr;
@@ -1452,7 +1653,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     addFace({x1,y0,z0}, {x1,y1,z0}, {x1,y1,z1}, {x1,y0,z1}, eastFront); // east
                 }
                 gState.blockEntityPlaceholderSectionMeshes[section] = std::make_unique<mce::Mesh>(tessellator.end(
-                    Tessellator::UploadMode::Buffered,
+                    uploadMode,
                     "LHoloBlockEntityPlaceholder",
                     Tessellator::SupplementaryFieldAutoGenerationMode::None
                 ));
@@ -1519,7 +1720,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     addOutlineEdge({x1,y1,z0},{x1,y1,z1}); addOutlineEdge({x0,y1,z0},{x0,y1,z1});
                 }
                 gState.correctionOutlineSectionMeshes[section] = std::make_unique<mce::Mesh>(tessellator.end(
-                    Tessellator::UploadMode::Buffered,
+                    uploadMode,
                     "LHoloCorrectionOutline",
                     Tessellator::SupplementaryFieldAutoGenerationMode::None
                 ));
@@ -1555,10 +1756,10 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                         gState.anchor.z + offsetZ + p.z
                     };
                     auto const neighborPriority = [&](int dx, int dy, int dz) {
-                        auto const found = gState.expectedWorldBlockIndices.find(std::tuple{
+                        auto const found = gState.expectedWorldBlockIndices->find(std::tuple{
                             worldPosition.x + dx, worldPosition.y + dy, worldPosition.z + dz
                         });
-                        return found == gState.expectedWorldBlockIndices.end()
+                        return found == gState.expectedWorldBlockIndices->end()
                             ? 0 : correctionPriority(gState.correctionStates[found->second]);
                     };
                     float const x0 = static_cast<float>(p.x);
@@ -1581,7 +1782,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     if (priority > neighborPriority(0, 1, 0))  addFillFace({x0,y1,z0}, {x0,y1,z1}, {x1,y1,z1}, {x1,y1,z0});
                 }
                 gState.warningFillSectionMeshes[section] = std::make_unique<mce::Mesh>(tessellator.end(
-                    Tessellator::UploadMode::Buffered,
+                    uploadMode,
                     "LHoloWarningFill",
                     Tessellator::SupplementaryFieldAutoGenerationMode::None
                 ));
@@ -1591,7 +1792,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 gState.correctionOutlineSectionMeshes[section].reset();
             }
 
-            if (!gState.structureBoundsMesh) {
+            if (uploadMode != Tessellator::UploadMode::Never && !gState.structureBoundsMesh) {
                 auto const rotated = rotationTurns == 1 || rotationTurns == 3;
                 auto const width = static_cast<float>(
                     rotated ? gState.structure->sizeZ : gState.structure->sizeX
@@ -1623,14 +1824,457 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                 addBoundsEdge({x0,y0,z0},{x0,y0,z1}); addBoundsEdge({x1,y0,z0},{x1,y0,z1});
                 addBoundsEdge({x1,y1,z0},{x1,y1,z1}); addBoundsEdge({x0,y1,z0},{x0,y1,z1});
                 gState.structureBoundsMesh = std::make_unique<mce::Mesh>(tessellator.end(
-                    Tessellator::UploadMode::Buffered,
+                    uploadMode,
                     "LHoloStructureBounds",
                     Tessellator::SupplementaryFieldAutoGenerationMode::None
                 ));
             }
-            break;
-        }
+            if (tessellator.isTessellating()) tessellator.cancel();
+#undef gState
+        };
+
         if (tessellator.isTessellating()) tessellator.cancel();
+
+        // Upload completed CPU meshes on the render thread. A result is valid
+        // only for the exact worker lifetime, structure, section, and revision.
+        if (auto bufferService = tessellator.mBufferResourceService.lock()) {
+            auto const uploadStarted = std::chrono::steady_clock::now();
+            for (std::size_t uploaded = 0; uploaded < 2; ++uploaded) {
+                if (std::chrono::steady_clock::now() - uploadStarted >= std::chrono::milliseconds(1)) break;
+                auto completed = takeCompletedSectionBuilds(1);
+                if (completed.empty()) break;
+                auto result = std::move(completed.front());
+                if (result.workerGeneration != gState.meshWorkerGeneration
+                    || result.structureGeneration != gState.structureGeneration
+                    || result.section >= gState.sectionDirty.size()) {
+                    continue;
+                }
+
+                auto const section = result.section;
+                gState.sectionBuildInFlight[section] = false;
+                if (!result.success) {
+                    markSectionDirty(gState, section, true);
+                    logger().warn(
+                        "Projection mesh worker section {} revision {} failed: {} (expected {}, actual {}; snapshot {} us, build {} us)",
+                        section,
+                        result.revision,
+                        result.failureReason.empty() ? "unknown failure" : result.failureReason,
+                        result.expectedVertexCount,
+                        result.actualVertexCount,
+                        result.snapshotPrepareMicros,
+                        result.workerBuildMicros
+                    );
+                    if (++gState.consecutiveMeshWorkerFailures >= 3) {
+                        gState.asyncMeshBuildingEnabled = false;
+                        gMeshWorkerDisabledForSession.store(true, std::memory_order_release);
+                        stopMeshWorker();
+                        logger().warn("Projection mesh worker failed three times; using synchronous fallback for this session");
+                    }
+                    continue;
+                }
+                if (result.revision != gState.sectionRequestedRevision[section]) {
+                    gState.sectionDirty[section] = true;
+                    continue;
+                }
+
+                auto const sectionUploadStarted = std::chrono::steady_clock::now();
+                auto uploadCpuMesh = [&](std::unique_ptr<mce::Mesh> cpuMesh, std::string_view name) {
+                    if (!cpuMesh || cpuMesh->mMeshData.get().size() == 0) {
+                        return std::unique_ptr<mce::Mesh>{};
+                    }
+                    auto data = std::move(cpuMesh->mMeshData.get());
+                    return std::make_unique<mce::Mesh>(bufferService, std::move(data), false, name);
+                };
+                try {
+                    constexpr std::array<std::string_view, static_cast<std::size_t>(ProjectionState::RenderBucket::Count)>
+                        bucketNames{"LHoloOpaque", "LHoloAlphaTest", "LHoloBlend", "LHoloBlendToOpaque"};
+                    std::array<std::unique_ptr<mce::Mesh>, static_cast<std::size_t>(ProjectionState::RenderBucket::Count)>
+                        uploadedMeshes;
+                    for (std::size_t bucket = 0; bucket < uploadedMeshes.size(); ++bucket) {
+                        uploadedMeshes[bucket] = uploadCpuMesh(std::move(result.sectionMeshes[bucket]), bucketNames[bucket]);
+                    }
+                    auto warningFill = uploadCpuMesh(std::move(result.warningFillMesh), "LHoloWarningFill");
+                    auto correctionOutline = uploadCpuMesh(
+                        std::move(result.correctionOutlineMesh), "LHoloCorrectionOutline"
+                    );
+                    auto liquidProxy = uploadCpuMesh(std::move(result.liquidProxyMesh), "LHoloLiquidProxy");
+                    auto blockEntityPlaceholder = uploadCpuMesh(
+                        std::move(result.blockEntityPlaceholderMesh), "LHoloBlockEntityPlaceholder"
+                    );
+
+                    for (std::size_t bucket = 0; bucket < uploadedMeshes.size(); ++bucket) {
+                        gState.sectionMeshes[bucket][section] = std::move(uploadedMeshes[bucket]);
+                    }
+                    gState.warningFillSectionMeshes[section] = std::move(warningFill);
+                    gState.correctionOutlineSectionMeshes[section] = std::move(correctionOutline);
+                    gState.liquidProxySectionMeshes[section] = std::move(liquidProxy);
+                    gState.blockEntityPlaceholderSectionMeshes[section] = std::move(blockEntityPlaceholder);
+                    gState.sectionUploadedRevision[section] = result.revision;
+                    gState.sectionIncrementalDirty[section] = false;
+                    gState.sectionDirty[section] = false;
+                    gState.consecutiveMeshWorkerFailures = 0;
+                    gState.meshPreflightDone = false;
+                    auto const uploadMicros = static_cast<std::uint64_t>(
+                        std::chrono::duration_cast<std::chrono::microseconds>(
+                            std::chrono::steady_clock::now() - sectionUploadStarted
+                        ).count()
+                    );
+                    ++gState.meshWorkerUploadedSections;
+                    gState.meshWorkerSnapshotMicros += result.snapshotPrepareMicros;
+                    gState.meshWorkerSnapshotDataMicros += result.snapshotDataMicros;
+                    gState.meshWorkerChunkViewMicros += result.chunkViewMicros;
+                    gState.meshWorkerBuildMicros += result.workerBuildMicros;
+                    gState.meshWorkerUploadMicros += uploadMicros;
+                    gState.meshWorkerPeakSnapshotMicros = std::max(
+                        gState.meshWorkerPeakSnapshotMicros, result.snapshotPrepareMicros
+                    );
+                    gState.meshWorkerPeakSnapshotDataMicros = std::max(
+                        gState.meshWorkerPeakSnapshotDataMicros, result.snapshotDataMicros
+                    );
+                    gState.meshWorkerPeakChunkViewMicros = std::max(
+                        gState.meshWorkerPeakChunkViewMicros, result.chunkViewMicros
+                    );
+                    gState.meshWorkerPeakBuildMicros = std::max(
+                        gState.meshWorkerPeakBuildMicros, result.workerBuildMicros
+                    );
+                    gState.meshWorkerPeakUploadMicros = std::max(
+                        gState.meshWorkerPeakUploadMicros, uploadMicros
+                    );
+                    if (gState.meshWorkerUploadedSections % 64 == 0) {
+                        auto const count = gState.meshWorkerUploadedSections;
+                        logger().info(
+                            "Projection mesh worker: {} sections; snapshot {}/{} us (data {}/{}, chunkView {}/{}), build {}/{} us, upload {}/{} us",
+                            count,
+                            gState.meshWorkerSnapshotMicros / count,
+                            gState.meshWorkerPeakSnapshotMicros,
+                            gState.meshWorkerSnapshotDataMicros / count,
+                            gState.meshWorkerPeakSnapshotDataMicros,
+                            gState.meshWorkerChunkViewMicros / count,
+                            gState.meshWorkerPeakChunkViewMicros,
+                            gState.meshWorkerBuildMicros / count,
+                            gState.meshWorkerPeakBuildMicros,
+                            gState.meshWorkerUploadMicros / count,
+                            gState.meshWorkerPeakUploadMicros
+                        );
+                    }
+                } catch (std::exception const& exception) {
+                    logger().warn(
+                        "Projection mesh upload for section {} revision {} failed: {}",
+                        section, result.revision, exception.what()
+                    );
+                    markSectionDirty(gState, section, true);
+                    if (++gState.consecutiveMeshWorkerFailures >= 3) {
+                        gState.asyncMeshBuildingEnabled = false;
+                        gMeshWorkerDisabledForSession.store(true, std::memory_order_release);
+                        stopMeshWorker();
+                        logger().warn("Projection mesh upload failed three times; using synchronous fallback for this session");
+                    }
+                } catch (...) {
+                    logger().warn(
+                        "Projection mesh upload for section {} revision {} failed with a non-standard exception",
+                        section, result.revision
+                    );
+                    markSectionDirty(gState, section, true);
+                    if (++gState.consecutiveMeshWorkerFailures >= 3) {
+                        gState.asyncMeshBuildingEnabled = false;
+                        gMeshWorkerDisabledForSession.store(true, std::memory_order_release);
+                        stopMeshWorker();
+                        logger().warn("Projection mesh upload failed three times; using synchronous fallback for this session");
+                    }
+                }
+            }
+        }
+
+        // The bounds are only 24 line vertices and are intentionally generated
+        // once on the render thread; section BlockTessellator work stays async.
+        if (gState.asyncMeshBuildingEnabled && !gState.structureBoundsMesh) {
+            auto const rotated = rotationTurns == 1 || rotationTurns == 3;
+            auto const width = static_cast<float>(rotated ? gState.structure->sizeZ : gState.structure->sizeX);
+            auto const height = static_cast<float>(gState.structure->sizeY);
+            auto const depth = static_cast<float>(rotated ? gState.structure->sizeX : gState.structure->sizeZ);
+            constexpr float expansion = 0.01f;
+            float const x0 = -expansion, y0 = -expansion, z0 = -expansion;
+            float const x1 = width + expansion, y1 = height + expansion, z1 = depth + expansion;
+            tessellator.begin(
+                Tessellator::DebugContextCallback{}, mce::PrimitiveMode::LineList, 24, false
+            );
+            tessellator.colorABGR(static_cast<int>(0xFFFFD633U));
+            auto addBoundsEdge = [&](Vec3 const& first, Vec3 const& second) {
+                tessellator.vertex(first);
+                tessellator.vertex(second);
+            };
+            addBoundsEdge({x0,y0,z0},{x1,y0,z0}); addBoundsEdge({x1,y0,z0},{x1,y1,z0});
+            addBoundsEdge({x1,y1,z0},{x0,y1,z0}); addBoundsEdge({x0,y1,z0},{x0,y0,z0});
+            addBoundsEdge({x0,y0,z1},{x1,y0,z1}); addBoundsEdge({x1,y0,z1},{x1,y1,z1});
+            addBoundsEdge({x1,y1,z1},{x0,y1,z1}); addBoundsEdge({x0,y1,z1},{x0,y0,z1});
+            addBoundsEdge({x0,y0,z0},{x0,y0,z1}); addBoundsEdge({x1,y0,z0},{x1,y0,z1});
+            addBoundsEdge({x1,y1,z0},{x1,y1,z1}); addBoundsEdge({x0,y1,z0},{x0,y1,z1});
+            gState.structureBoundsMesh = std::make_unique<mce::Mesh>(tessellator.end(
+                Tessellator::UploadMode::Buffered,
+                "LHoloStructureBounds",
+                Tessellator::SupplementaryFieldAutoGenerationMode::None
+            ));
+        }
+
+        // A single in-flight task gives each BlockTessellator exclusive access
+        // and naturally coalesces repeated changes into the latest revision.
+        if (gState.asyncMeshBuildingEnabled && !gMeshWorkerBusy.load(std::memory_order_acquire)) {
+            auto const& cameraPosition = renderContext.getCameraPosition();
+            std::optional<std::size_t> selected;
+            bool selectedIncremental{};
+            float selectedDistance = std::numeric_limits<float>::max();
+            for (std::size_t section = 0; section < gState.sectionDirty.size(); ++section) {
+                if (!gState.sectionDirty[section] || gState.sectionBuildInFlight[section]) continue;
+                auto const incremental = gState.sectionIncrementalDirty[section];
+                auto const center = gState.sectionCenters[section] + Vec3{
+                    static_cast<float>(gState.anchor.x + offsetX),
+                    static_cast<float>(gState.anchor.y + offsetY),
+                    static_cast<float>(gState.anchor.z + offsetZ)
+                };
+                auto const delta = center - cameraPosition;
+                auto const distance = delta.x * delta.x + delta.y * delta.y + delta.z * delta.z;
+                if (!selected || (incremental && !selectedIncremental)
+                    || (incremental == selectedIncremental && distance < selectedDistance)) {
+                    selected = section;
+                    selectedIncremental = incremental;
+                    selectedDistance = distance;
+                }
+            }
+
+            if (selected) {
+                auto const snapshotStarted = std::chrono::steady_clock::now();
+                auto const section = *selected;
+                BlockPos minimum{INT_MAX, INT_MAX, INT_MAX};
+                BlockPos maximum{INT_MIN, INT_MIN, INT_MIN};
+                for (auto const index : gState.sectionBlockIndices[section]) {
+                    auto const local = transformStructurePosition(
+                        gState.structure->renderBlocks[index], *gState.structure, mirrorMode, rotationTurns
+                    );
+                    BlockPos const world{
+                        gState.anchor.x + offsetX + local.x,
+                        gState.anchor.y + offsetY + local.y,
+                        gState.anchor.z + offsetZ + local.z
+                    };
+                    minimum.x = std::min(minimum.x, world.x);
+                    minimum.y = std::min(minimum.y, world.y);
+                    minimum.z = std::min(minimum.z, world.z);
+                    maximum.x = std::max(maximum.x, world.x);
+                    maximum.y = std::max(maximum.y, world.y);
+                    maximum.z = std::max(maximum.z, world.z);
+                }
+                minimum = BlockPos{minimum.x - 2, minimum.y - 2, minimum.z - 2};
+                maximum = BlockPos{maximum.x + 2, maximum.y + 2, maximum.z + 2};
+
+                auto snapshot = std::make_shared<ProjectionState>();
+                snapshot->level = gState.level;
+                snapshot->dimension = gState.dimension;
+                snapshot->structureGeneration = gState.structureGeneration;
+                snapshot->anchor = gState.anchor;
+                // Structure data and the virtual projected world are immutable
+                // for one placement generation. Share them with the worker
+                // instead of rebuilding allocation-heavy section/halo maps for
+                // every task. Only correction bytes can change incrementally,
+                // so those receive a task-local copy.
+                snapshot->structure = gState.structure;
+                snapshot->correctionStates = gState.correctionStates;
+                snapshot->blockActorRendererAvailable = gState.blockActorRendererAvailable;
+                snapshot->sectionBlockIndices = {gState.sectionBlockIndices[section]};
+                snapshot->expectedWorldBlocks = gState.expectedWorldBlocks;
+                snapshot->expectedWorldBlockActors = gState.expectedWorldBlockActors;
+                snapshot->expectedWorldBlockIndices = gState.expectedWorldBlockIndices;
+                for (auto& meshes : snapshot->sectionMeshes) meshes.resize(1);
+                snapshot->warningFillSectionMeshes.resize(1);
+                snapshot->correctionOutlineSectionMeshes.resize(1);
+                snapshot->liquidProxySectionMeshes.resize(1);
+                snapshot->blockEntityPlaceholderSectionMeshes.resize(1);
+
+                auto const snapshotDataFinished = std::chrono::steady_clock::now();
+                auto const snapshotDataMicros = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        snapshotDataFinished - snapshotStarted
+                    ).count()
+                );
+                auto chunkView = std::make_shared<ChunkViewSource>(
+                    region.getChunkSource(), ChunkSource::LoadMode::Deferred
+                );
+                chunkView->move(
+                    minimum,
+                    maximum,
+                    false,
+                    ChunkSourceViewGenerateMode::DontGenerateOnlyGet,
+                    [](gsl::span<std::shared_ptr<LevelChunk>>) {},
+                    nullptr
+                );
+                auto const chunkViewMicros = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - snapshotDataFinished
+                    ).count()
+                );
+                auto const snapshotPrepareMicros = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - snapshotStarted
+                    ).count()
+                );
+
+                auto const workerGeneration = gState.meshWorkerGeneration;
+                auto const structureGeneration = gState.structureGeneration;
+                auto const revision = gState.sectionRequestedRevision[section];
+                auto const weakBufferService = tessellator.mBufferResourceService;
+                auto* level = gState.level;
+                auto* dimension = gState.dimension;
+                auto submitted = submitMeshWorkerTask(
+                    workerGeneration,
+                    [buildSectionCpu, snapshot, chunkView, level, dimension, weakBufferService,
+                     workerGeneration, structureGeneration, revision, section,
+                     snapshotPrepareMicros, snapshotDataMicros, chunkViewMicros]() mutable {
+                        AsyncSectionBuildResult result;
+                        result.workerGeneration = workerGeneration;
+                        result.structureGeneration = structureGeneration;
+                        result.revision = revision;
+                        result.section = section;
+                        result.snapshotPrepareMicros = snapshotPrepareMicros;
+                        result.snapshotDataMicros = snapshotDataMicros;
+                        result.chunkViewMicros = chunkViewMicros;
+                        auto const workerStarted = std::chrono::steady_clock::now();
+                        try {
+                            auto localRegion = std::make_unique<BlockSource>(
+                                *level, *dimension, *chunkView, false, true, false
+                            );
+                            BlockTessellator localBlockTessellator(localRegion.get());
+                            localBlockTessellator.mCachedGetBlock.get()
+                                = [snapshot, region = localRegion.get()](BlockPos const& position) -> Block const& {
+                                    auto const found = snapshot->expectedWorldBlocks->find(
+                                        std::tuple{position.x, position.y, position.z}
+                                    );
+                                    return found == snapshot->expectedWorldBlocks->end()
+                                        ? region->getBlock(position) : *found->second;
+                                };
+                            Tessellator localTessellator(weakBufferService);
+                            buildSectionCpu(
+                                *snapshot, localTessellator, localBlockTessellator, *localRegion,
+                                0, Tessellator::UploadMode::Never
+                            );
+                            result.workerBuildMicros = static_cast<std::uint64_t>(
+                                std::chrono::duration_cast<std::chrono::microseconds>(
+                                    std::chrono::steady_clock::now() - workerStarted
+                                ).count()
+                            );
+                            for (std::size_t bucket = 0; bucket < result.sectionMeshes.size(); ++bucket) {
+                                result.sectionMeshes[bucket] = std::move(snapshot->sectionMeshes[bucket][0]);
+                            }
+                            result.warningFillMesh = std::move(snapshot->warningFillSectionMeshes[0]);
+                            result.correctionOutlineMesh = std::move(snapshot->correctionOutlineSectionMeshes[0]);
+                            result.liquidProxyMesh = std::move(snapshot->liquidProxySectionMeshes[0]);
+                            result.blockEntityPlaceholderMesh
+                                = std::move(snapshot->blockEntityPlaceholderSectionMeshes[0]);
+                            auto failMeshValidation = [&](std::string_view meshName, std::string_view reason,
+                                                          std::uint64_t expected, std::uint64_t actual) {
+                                result.failureReason.assign(meshName);
+                                result.failureReason.append(": ");
+                                result.failureReason.append(reason);
+                                result.expectedVertexCount = expected;
+                                result.actualVertexCount = actual;
+                                return false;
+                            };
+                            auto meshDataIsConsistent = [&](std::unique_ptr<mce::Mesh> const& mesh,
+                                                            std::string_view meshName) {
+                                if (!mesh) return true;
+                                auto const& data = mesh->mMeshData.get();
+                                auto const vertexCount = data.mPositions.get().size();
+                                if (vertexCount == 0) {
+                                    return failMeshValidation(meshName, "empty position field", 1, 0);
+                                }
+                                if (data.size() == 0) {
+                                    return failMeshValidation(meshName, "MeshData::size is zero", 1, 0);
+                                }
+                                // UploadMode::Never intentionally leaves the
+                                // upload-side Mesh vertex count unset. At this
+                                // stage mPositions is authoritative; validate
+                                // every enabled CPU attribute against it.
+                                auto fieldIsConsistent = [&](auto const& field, std::string_view fieldName) {
+                                    if (field.empty() || field.size() == vertexCount) return true;
+                                    std::string reason{"attribute count mismatch: "};
+                                    reason.append(fieldName);
+                                    return failMeshValidation(meshName, reason, vertexCount, field.size());
+                                };
+                                if (!fieldIsConsistent(data.mNormals.get(), "normals")
+                                    || !fieldIsConsistent(data.mTangents.get(), "tangents")
+                                    || !fieldIsConsistent(data.mColors.get(), "colors")
+                                    || !fieldIsConsistent(data.mBoneId0s.get(), "boneId0")
+                                    || !fieldIsConsistent(data.mPBRTextureIndices.get(), "pbrTextureIndices")
+                                    || !fieldIsConsistent(data.mMERS.get(), "mers")
+                                    || !fieldIsConsistent(data.mGeoType.get(), "geoType")) return false;
+                                for (std::size_t uv = 0; uv < std::size(data.mTextureUVs); ++uv) {
+                                    std::string fieldName{"textureUV"};
+                                    fieldName += static_cast<char>('0' + uv);
+                                    if (!fieldIsConsistent(data.mTextureUVs[uv].get(), fieldName)) return false;
+                                }
+                                return true;
+                            };
+                            constexpr std::array<std::string_view, 4> meshNames{
+                                "opaque", "alpha", "alphaOneSided", "blend"
+                            };
+                            result.success = true;
+                            for (std::size_t bucket = 0; bucket < result.sectionMeshes.size(); ++bucket) {
+                                if (!meshDataIsConsistent(result.sectionMeshes[bucket], meshNames[bucket])) {
+                                    result.success = false;
+                                    break;
+                                }
+                            }
+                            result.success = result.success
+                                && meshDataIsConsistent(result.warningFillMesh, "warningFill")
+                                && meshDataIsConsistent(result.correctionOutlineMesh, "correctionOutline")
+                                && meshDataIsConsistent(result.liquidProxyMesh, "liquidProxy")
+                                && meshDataIsConsistent(result.blockEntityPlaceholderMesh, "blockEntityPlaceholder");
+                        } catch (std::exception const& exception) {
+                            result.workerBuildMicros = static_cast<std::uint64_t>(
+                                std::chrono::duration_cast<std::chrono::microseconds>(
+                                    std::chrono::steady_clock::now() - workerStarted
+                                ).count()
+                            );
+                            result.success = false;
+                            result.failureReason = std::string{"worker exception: "} + exception.what();
+                        } catch (...) {
+                            result.workerBuildMicros = static_cast<std::uint64_t>(
+                                std::chrono::duration_cast<std::chrono::microseconds>(
+                                    std::chrono::steady_clock::now() - workerStarted
+                                ).count()
+                            );
+                            result.success = false;
+                            result.failureReason = "worker non-standard exception";
+                        }
+                        return result;
+                    }
+                );
+                if (submitted) {
+                    gState.sectionBuildInFlight[section] = true;
+                    gState.sectionDirty[section] = false;
+                } else if (++gState.consecutiveMeshWorkerFailures >= 3) {
+                    gState.asyncMeshBuildingEnabled = false;
+                    gMeshWorkerDisabledForSession.store(true, std::memory_order_release);
+                    stopMeshWorker();
+                    logger().warn("Projection mesh task submission failed three times; using synchronous fallback for this session");
+                }
+            }
+        }
+
+        // Compatibility path: preserve one synchronous section per frame when
+        // worker creation or three consecutive worker operations fail.
+        if (!gState.asyncMeshBuildingEnabled) {
+            for (std::size_t attempt = 0; attempt < gState.sectionDirty.size(); ++attempt) {
+                auto const section = gState.dirtySectionCursor++ % gState.sectionDirty.size();
+                if (!gState.sectionDirty[section]) continue;
+                gState.sectionDirty[section] = false;
+                buildSectionCpu(
+                    gState, tessellator, blockTessellator, region, section,
+                    Tessellator::UploadMode::Buffered
+                );
+                gState.sectionUploadedRevision[section] = gState.sectionRequestedRevision[section];
+                gState.sectionIncrementalDirty[section] = false;
+                gState.meshPreflightDone = false;
+                break;
+            }
+        }
     }
 
     // Keep vanilla world queries at their real BlockPos, but do not upload large
@@ -1655,8 +2299,8 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
         auto& dispatcher = renderContext.mBlockEntityRenderDispatcher;
         auto& region = player->getDimensionBlockSource();
         ScopedTessellationBlocks blockActorWorldScope(
-            gState.expectedWorldBlocks,
-            gState.expectedWorldBlockActors
+            *gState.expectedWorldBlocks,
+            *gState.expectedWorldBlockActors
         );
         for (auto const& projected : gState.projectedBlockActors) {
             auto const state = gState.correctionStates[projected.structureIndex];
@@ -2064,10 +2708,10 @@ LL_TYPE_INSTANCE_HOOK(
     {
         std::lock_guard lock(gStateMutex);
         if (gState.enabled && gState.structure) {
-            auto const found = gState.expectedWorldBlockIndices.find(
+            auto const found = gState.expectedWorldBlockIndices->find(
                 std::tuple{pos.x, pos.y, pos.z}
             );
-            if (found != gState.expectedWorldBlockIndices.end()) {
+            if (found != gState.expectedWorldBlockIndices->end()) {
                 auto const state = gState.correctionStates[found->second];
                 if (state == ProjectionState::CorrectionState::WrongType
                     || state == ProjectionState::CorrectionState::WrongState) {
@@ -2244,10 +2888,10 @@ ProjectionQuery queryProjection(LocalPlayer& player, BlockPos const& worldPos) {
         return {nullptr, false};
     }
     auto const key = std::tuple{worldPos.x, worldPos.y, worldPos.z};
-    auto const foundIndex = gState.expectedWorldBlockIndices.find(key);
-    if (foundIndex == gState.expectedWorldBlockIndices.end()) return {nullptr, false};
-    auto const foundBlock = gState.expectedWorldBlocks.find(key);
-    Block const* block = foundBlock == gState.expectedWorldBlocks.end() ? nullptr : foundBlock->second;
+    auto const foundIndex = gState.expectedWorldBlockIndices->find(key);
+    if (foundIndex == gState.expectedWorldBlockIndices->end()) return {nullptr, false};
+    auto const foundBlock = gState.expectedWorldBlocks->find(key);
+    Block const* block = foundBlock == gState.expectedWorldBlocks->end() ? nullptr : foundBlock->second;
     // Liquids have no normal block item, so they are never a valid place target.
     if (block && block->getMaterial().isLiquid()) block = nullptr;
     bool const missing = gState.correctionStates[foundIndex->second]
@@ -2278,15 +2922,15 @@ std::vector<RangeCandidate> queryMissingCellsInRange(LocalPlayer& player, Vec3 c
         for (int z = minZ; z <= maxZ; ++z) {
             for (int x = minX; x <= maxX; ++x) {
                 auto const key = std::tuple{x, y, z};
-                auto const foundIndex = gState.expectedWorldBlockIndices.find(key);
-                if (foundIndex == gState.expectedWorldBlockIndices.end()) continue;
+                auto const foundIndex = gState.expectedWorldBlockIndices->find(key);
+                if (foundIndex == gState.expectedWorldBlockIndices->end()) continue;
                 if (gState.correctionStates[foundIndex->second] != ProjectionState::CorrectionState::Missing) continue;
                 float const dx = static_cast<float>(x) + 0.5f - center.x;
                 float const dy = static_cast<float>(y) + 0.5f - center.y;
                 float const dz = static_cast<float>(z) + 0.5f - center.z;
                 if (dx * dx + dy * dy + dz * dz > r2) continue;
-                auto const foundBlock = gState.expectedWorldBlocks.find(key);
-                Block const* block = foundBlock == gState.expectedWorldBlocks.end() ? nullptr : foundBlock->second;
+                auto const foundBlock = gState.expectedWorldBlocks->find(key);
+                Block const* block = foundBlock == gState.expectedWorldBlocks->end() ? nullptr : foundBlock->second;
                 // Liquids have no normal block item, so they are never a place target.
                 if (block && block->getMaterial().isLiquid()) block = nullptr;
                 if (!block) continue;

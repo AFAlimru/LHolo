@@ -121,14 +121,14 @@ LHolo/
 - 本地玩家存在。
 - `LoadedStructure` 非空且至少有一个可渲染方块。
 - Minecraft level atlas 已可用。
-- 创建基于当前 `DimensionBlockSource` 的 `BlockTessellator`。
+- 创建同步回退使用的 `BlockTessellator`，并启动单线程 `LHoloProjectionMesh` Worker。Worker 启动失败时投影仍可启用，但本次游戏会话固定使用同步回退。
 
 ### 3.2 模组关闭
 
 当前关闭顺序：
 
 1. 保存配置。
-2. 清理投影状态和 GPU 网格。
+2. 投影停止接收网格任务，提升 Worker generation，清空待处理结果并等待 in-flight Worker 退出；随后清理投影状态和 GPU 网格。
 3. 卸载菜单破坏保护 Hook。
 4. 卸载辅助放置的 tick/build Hook。
 5. 关闭 ImGui 图形后端、恢复原 WndProc、移除 MinHook。
@@ -277,7 +277,7 @@ world = anchor + userOffset + transform(local, mirror, rotation)
 LHolo 不自制草方块、楼梯等材质模型。它使用：
 
 - `BlockTessellator::tessellateInWorld()` 生成原版方块几何。
-- 独立投影 Tessellator 不经过原版区块管线的树叶着色步骤。对 `Block::getTintMethod()` 返回的四种 foliage tint，使用 `BiomeColorSampling::getTessellationPolicy()` 计算原版群系颜色并与网格顶点色相乘；树叶类型和颜色不由 LHolo 维护。
+- Worker 中每个 biome-tinted 方块（草和四种 foliage tint）在 Tessellate 前都调用 `BlockTessellator::buildBiomeWeights()`，禁止复用空缓存或上一方块位置的群系权重。独立投影 Tessellator 不经过原版区块管线的树叶着色步骤，因此四种 foliage tint 还使用 `BiomeColorSampling::getTessellationPolicy()` 计算原版群系颜色并与网格顶点色相乘；草方块仍由原版 Tessellator 按面着色，不能把整块顶点统一乘绿色，否则泥土面也会变色。树叶类型和颜色不由 LHolo 维护。
 - Minecraft level atlas 提供纹理。
 - `BlockGraphics::getRenderLayer()` 取得实际渲染层。
 - `LegacyStructureTemplate::_mapToData()` 取得旋转/镜像后的方块状态。
@@ -367,11 +367,30 @@ Minecraft 会对准心选中的真实方块额外绘制 hit-select overlay。若
 - 纠错面网格。
 - 纠错描边网格。
 - 分区中心，用于透明排序。
-- dirty 标记。
+- `requestedRevision` / `uploadedRevision`、dirty、增量优先级和 in-flight 标记。
 
 稳定帧不重新 Tessellate 方块，只提交已有 GPU 网格。
 
-### 8.2 有界纠错扫描
+### 8.2 Worker 构建与主线程上传
+
+dirty 分区的 `BlockTessellator` 和全部 CPU 几何生成不在 `$renderBlockEntities` 渲染线程执行。`ProjectionMeshWorker` 固定为单 Worker，并遵守：
+
+- 一个分区最多一个 in-flight Task；连续变化只递增 revision，旧结果不会覆盖新状态。
+- 增量方块变化优先于初次加载，二者内部都按分区中心到相机距离由近到远选择。
+- 主线程用 `ChunkViewSource::move(..., DontGenerateOnlyGet, ...)` 固定分区加两格 halo 的局部视图。投影虚拟方块/方块实体/世界坐标索引表按 placement generation 发布为共享不可变版本：移动、旋转、镜像或切层时新建一组 Map，in-flight Task 通过 `shared_ptr` 保活旧版本，禁止原地清空或修改已发布版本。Task 只复制会增量变化的纠错字节、方块实体渲染可用性与本 section 索引，不再扫描/拷贝 halo Map，也不再为每个 Task 构造紧凑 `LoadedStructure`。
+- Worker 独占 `BlockSource`、`BlockTessellator` 和 `Tessellator`，不读取 `gState`、`renderContext` 或渲染线程的活动 Tessellator。
+- Worker 必须用 `Tessellator::end(UploadMode::Never, ...)` 生成 CPU `mce::MeshData`；禁止在 Worker 使用 `Buffered` 或触碰 GPU。
+- `UploadMode::Never` 返回的 CPU-only `mce::Mesh` 尚未设置上传态 vertex count，因此 Worker 不能用 `Mesh::getMeshVertexCount()` 校验结果（该值在 1.26.20.04 实测为 0）。CPU 阶段以 `MeshData::mPositions.size()` 为权威顶点数，并检查所有非空顶点属性数组与它一致。
+- opaque pass 每帧最多接收两个完成结果，并以 1 ms 为提交预算。提交前同时检查 Worker generation、结构 generation 和 section revision，再用当前 `BufferResourceService` 的官方 `mce::Mesh(service, MeshData&&, false, name)` 构造 GPU Mesh。
+- transparent pass 只提交已完成 Mesh，不调度任务、不消费完成队列、不上传资源。
+- 普通 dirty 更新保留旧 Mesh 直到替换完成；旋转/镜像会立即清除旧方向的几何。
+- 每成功上传 64 个 section，以 INFO 日志聚合输出主线程快照准备（进一步拆分为动态字节/索引复制和 `ChunkViewSource`）、Worker 构建和主线程上传的平均/峰值微秒数；不得为性能统计逐方块写日志。
+
+Worker 初始化失败，或构建/上传连续失败三次后，本次游戏会话禁用异步路径，恢复每帧同步重建一个 dirty 分区。该回退继续复用同一份几何生成函数，避免两条路径产生视觉差异。
+
+关闭投影、换世界、切维度和模组卸载时，必须先停止接收任务、提升 generation 并 join Worker，之后才能释放 `Level`、`Dimension`、`ChunkViewSource`、Block/BlockActor 和 Mesh。Worker 不得获取 `gStateMutex`；完成队列使用独立 mutex，避免清理时 join 死锁。
+
+### 8.3 有界纠错扫描
 
 `kCorrectionChecksPerFrame = 4096`，按 round-robin cursor 扫描。无论结构多大，每个渲染帧查询上限固定，避免全结构每帧扫描。
 
@@ -381,16 +400,18 @@ Minecraft 会对准心选中的真实方块额外绘制 hit-select overlay。若
 - 放置/拆除方块后提示更新延迟。
 - 普通渲染和灵动视效的 CPU/GPU 占用。
 
-### 8.3 增量失效
+初次扫描完成后，稳定世界依靠 `BlockSourceListener` 的方块变化通知更新相关坐标；新加载 subchunk 只刷新其中投影坐标。每帧读取预算仍受上限约束，不允许恢复全结构稳定帧扫描。
+
+### 8.4 增量失效
 
 - 方块状态实际变化：只标记所属分区和六个邻居所在分区 dirty。
-- 每帧最多重建一个 dirty 分区。
+- 异步路径每次只构建一个 Task；同步回退每帧最多重建一个 dirty 分区。
 - 旋转/镜像：局部模型改变，全部分区失效。
 - 投影透明度或纠错样式改变：顶点 alpha 改变，全部分区一次性失效，之后继续缓存。
 - X/Y/Z 整体移动：GPU 局部网格不重建，只更新 world lookup、纠错扫描位置和矩阵平移。
 - 显示层变化：只失效可见性跨越边界的分区。
 
-### 8.4 HUD 零额外扫描
+### 8.5 HUD 零额外扫描
 
 纠错扫描同时维护：
 
@@ -401,7 +422,7 @@ Minecraft 会对准心选中的真实方块额外绘制 hit-select overlay。若
 
 HUD 每帧只读取原子计数，不查询世界、不遍历结构。
 
-### 8.5 透明排序
+### 8.6 透明排序
 
 透明网格按分区中心到相机距离从远到近排序。整体移动只改变矩阵/世界中心，不需要重建网格。若新版本出现特定角度黑块或闪烁，检查：
 
@@ -410,7 +431,7 @@ HUD 每帧只读取原子计数，不查询世界、不遍历结构。
 3. 同一表面是否由投影模型、纠错面和 hit-select 重复绘制。
 4. 材质是否写深度、混合状态是否被其他 Hook 污染。
 
-### 8.6 菜单破坏保护开销
+### 8.7 菜单破坏保护开销
 
 `input/MenuInputGuard.cpp` 只 Hook 开始破坏和持续破坏两个动作。菜单关闭时仅检查 GUI 原子状态和关闭过渡时间戳后立即进入原函数；不扫描方块、不分配内存、不加锁、不写逐次日志，也不注册每帧事件。菜单打开后，仅在玩家实际尝试破坏方块时查询当前 `ClientInstance`/`LocalPlayer` 并比较 `GameMode::mPlayer`，因此长按破坏的每 tick 调用也不会形成可测量的持续负载。
 
