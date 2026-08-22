@@ -15,6 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "projection/Projection.h"
+#include "projection/ProjectionCorrections.h"
 #include "projection/ProjectionInternalTypes.h"
 #include "projection/ProjectionMeshWorker.h"
 #include "projection/ProjectionRules.h"
@@ -114,6 +115,7 @@ namespace lholo::projection {
 namespace {
 
 using detail::CorrectionState;
+using detail::updateProjectionCorrections;
 using detail::AsyncSectionBuildResult;
 using detail::attachProjectionWorldEvents;
 using detail::disableMeshWorkerForSession;
@@ -140,8 +142,6 @@ using detail::SubChunkKey;
 using detail::ScopedTessellationBlocks;
 using detail::submitMeshWorkerTask;
 using detail::takeCompletedSectionBuilds;
-using detail::takePendingBlockChanges;
-using detail::takePendingLoadedSubChunks;
 using detail::transformExpectedBlock;
 using detail::transformStructurePosition;
 
@@ -645,157 +645,29 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
         auto& blockTessellator = *gState.blockTessellator;
         blockTessellator.setRegion(player->getDimensionBlockSource());
 
-        auto const totalBlocks = gState.structure->renderBlocks.size();
-        // Share one fixed world-read budget between initial cache population and
-        // incremental block notifications.
-        constexpr std::size_t kCorrectionChecksPerFrame = 4096;
-        constexpr std::size_t kSubChunkEventsPerFrame    = 64;
         auto& region = player->getDimensionBlockSource();
-        bool overallProgressChanged{};
-        bool visibleProgressChanged{};
-        bool errorProgressChanged{};
-
-        auto const updateCorrection = [&](std::size_t index) {
-            auto const& entry = gState.structure->renderBlocks[index];
-            auto const visible = layerIsVisible(layerAxis == 1 ? entry.x : entry.y);
-            auto const transformed = transformStructurePosition(
-                entry, *gState.structure, mirrorMode, rotationTurns
-            );
-            BlockPos const position{
-                gState.anchor.x + offsetX + transformed.x,
-                gState.anchor.y + offsetY + transformed.y,
-                gState.anchor.z + offsetZ + transformed.z
-            };
-            auto const* expected = transformExpectedBlock(entry.block, transformSettings, identityTransform);
-            auto const* expectedLiquid = transformExpectedBlock(entry.liquid, transformSettings, identityTransform);
-            auto const& actual = region.getBlock(position);
-            auto const& actualLiquid = region.getLiquidBlock(position);
-            auto const bodyMissing = expected && actual.isAir();
-            auto const liquidMissing = expectedLiquid && actualLiquid.isAir();
-            auto const bodyTypeWrong = expected
-                && !actual.isAir() && actual.getTypeName() != expected->getTypeName();
-            auto const liquidTypeWrong = expectedLiquid
-                && !actualLiquid.isAir() && actualLiquid.getTypeName() != expectedLiquid->getTypeName();
-            auto const liquidCellOccupiedBySolid = !expected && expectedLiquid && !actual.isAir()
-                && actual.getTypeName() != expectedLiquid->getTypeName();
-            auto nextState = CorrectionState::Correct;
-            if (bodyMissing || liquidMissing) {
-                nextState = CorrectionState::Missing;
-            } else if (bodyTypeWrong || liquidTypeWrong || liquidCellOccupiedBySolid) {
-                nextState = CorrectionState::WrongType;
-            } else if ((expected && !projectionStatesMatch(*expected, actual))
-                || (expectedLiquid && actualLiquid != *expectedLiquid)) {
-                nextState = CorrectionState::WrongState;
-            }
-            auto const nowCorrect = nextState == CorrectionState::Correct;
-            auto const wasCorrect = gState.progressCorrect[index] != 0;
-            if (nowCorrect != wasCorrect) {
-                gState.progressCorrect[index] = nowCorrect ? 1 : 0;
-                if (nowCorrect) ++gState.progressCorrectCount;
-                else --gState.progressCorrectCount;
-                overallProgressChanged = true;
-                if (visible) {
-                    if (nowCorrect) ++gState.progressVisibleCorrectCount;
-                    else --gState.progressVisibleCorrectCount;
-                    visibleProgressChanged = true;
-                }
-            }
-            auto const nextErrorKind = nextState == CorrectionState::WrongType ? uchar{1}
-                : nextState == CorrectionState::WrongState ? uchar{2}
-                : uchar{0};
-            auto const previousErrorKind = gState.progressErrorKind[index];
-            if (nextErrorKind != previousErrorKind) {
-                if (previousErrorKind == 1) --gState.progressWrongTypeCount;
-                else if (previousErrorKind == 2) --gState.progressWrongStateCount;
-                if (nextErrorKind == 1) ++gState.progressWrongTypeCount;
-                else if (nextErrorKind == 2) ++gState.progressWrongStateCount;
-                gState.progressErrorKind[index] = nextErrorKind;
-                errorProgressChanged = true;
-            }
-            // Progress always describes the whole structure. Hidden layers are
-            // still checked above, but their correction/model meshes remain
-            // suppressed by the layer renderer.
-            if (!visible) return;
-            if (gState.correctionStates[index] != nextState) {
-                gState.correctionStates[index] = nextState;
-                markSectionDirty(gState, gState.blockToSection[index], true);
-                // A missing-cell shell omits faces shared with adjacent missing
-                // cells. If either side changes, both section meshes may need an
-                // exposed face added or removed (including across 16^3 borders).
-                constexpr int neighbors[6][3] = {
-                    {-1, 0, 0}, {1, 0, 0}, {0, -1, 0},
-                    {0, 1, 0}, {0, 0, -1}, {0, 0, 1}
-                };
-                for (auto const& delta : neighbors) {
-                    auto const neighbor = gState.expectedWorldBlockIndices->find(std::tuple{
-                        position.x + delta[0], position.y + delta[1], position.z + delta[2]
-                    });
-                    if (neighbor != gState.expectedWorldBlockIndices->end()) {
-                        markSectionDirty(gState, gState.blockToSection[neighbor->second], true);
-                    }
-                }
-            }
-        };
-
-        // The cache is populated once after a structure/transform change. Once
-        // that pass completes, a stable world performs no correction reads.
-        // Official BlockSource notifications below update only changed cells.
-        auto const changedPositions = takePendingBlockChanges(kCorrectionChecksPerFrame);
-        std::size_t correctionChecks{};
-        for (auto const& changedPosition : changedPositions) {
-            auto const found = gState.expectedWorldBlockIndices->find(std::tuple{
-                changedPosition.x, changedPosition.y, changedPosition.z
-            });
-            if (found != gState.expectedWorldBlockIndices->end()) {
-                updateCorrection(found->second);
-                ++correctionChecks;
-            }
-        }
-
-        auto const loadedSubChunks = takePendingLoadedSubChunks(kSubChunkEventsPerFrame);
-        gState.pendingLoadedSubChunks.insert(loadedSubChunks.begin(), loadedSubChunks.end());
-
-        auto const scanRemaining = totalBlocks - gState.correctionScanCursor;
-        auto const checks = std::min(scanRemaining, kCorrectionChecksPerFrame - correctionChecks);
-        for (std::size_t checked = 0; checked < checks; ++checked) {
-            updateCorrection(gState.correctionScanCursor++);
-        }
-        correctionChecks += checks;
-
-        // A newly received client subchunk may not emit one block notification
-        // per cell. Refresh only its projected cells, and cap this work to one
-        // 16^3 region per frame so walking cannot create an unbounded spike.
-        if (gState.correctionScanCursor == totalBlocks && correctionChecks == 0
-            && !gState.pendingLoadedSubChunks.empty()) {
-            auto loaded = gState.pendingLoadedSubChunks.begin();
-            auto const [subChunkX, subChunkY, subChunkZ] = *loaded;
-            gState.pendingLoadedSubChunks.erase(loaded);
-            auto const minX = subChunkX * 16;
-            auto const minY = subChunkY * 16;
-            auto const minZ = subChunkZ * 16;
-            for (int x = minX; x < minX + 16; ++x) {
-                for (int y = minY; y < minY + 16; ++y) {
-                    auto found = gState.expectedWorldBlockIndices->lower_bound(
-                        std::tuple{x, y, minZ}
-                    );
-                    while (found != gState.expectedWorldBlockIndices->end()) {
-                        auto const& [foundX, foundY, foundZ] = found->first;
-                        if (foundX != x || foundY != y || foundZ >= minZ + 16) break;
-                        updateCorrection(found->second);
-                        ++found;
-                    }
-                }
-            }
-        }
-        if (overallProgressChanged) {
+        auto const correctionChanges = updateProjectionCorrections(
+            gState,
+            region,
+            transformSettings,
+            mirrorMode,
+            rotationTurns,
+            offsetX,
+            offsetY,
+            offsetZ,
+            layerDisplayMode,
+            displayLayer,
+            layerAxis
+        );
+        if (correctionChanges.overall) {
             gBuildProgressPlaced.store(gState.progressCorrectCount, std::memory_order_release);
         }
-        if (visibleProgressChanged) {
+        if (correctionChanges.visible) {
             gBuildProgressVisiblePlaced.store(
                 gState.progressVisibleCorrectCount, std::memory_order_release
             );
         }
-        if (errorProgressChanged) {
+        if (correctionChanges.errors) {
             gBuildProgressWrongType.store(gState.progressWrongTypeCount, std::memory_order_release);
             gBuildProgressWrongState.store(gState.progressWrongStateCount, std::memory_order_release);
         }

@@ -74,6 +74,7 @@ LHolo/
 │  │  ├─ Projection.cpp         投影网格、纠错、分区缓存、渲染 Hook
 │  │  ├─ Projection.h           GUI/HUD 和辅助放置使用的投影控制接口
 │  │  ├─ ProjectionTypes.h      对外查询与进度的纯数据类型
+│  │  ├─ ProjectionCorrections.* 有界世界纠错扫描、进度计数与 section 失效
 │  │  ├─ ProjectionInternalTypes.h 内部键、状态枚举与无资源引用类型
 │  │  ├─ ProjectionMeshWorker.* 单线程 executor、generation 与完成队列
 │  │  ├─ ProjectionRules.*      坐标、分层、状态匹配和渲染分类纯规则
@@ -107,6 +108,8 @@ LHolo/
   `ProjectionInternalTypes.h`，投影状态与 Worker/Mesh 生命周期仍由实现层负责。
 - `projection/ProjectionRules.*` 只根据显式参数计算结果，不读取全局投影状态，也不持有游戏对象；
   旋转、镜像、分层可见性和状态匹配规则修改时应集中在这里回归。
+- `projection/ProjectionCorrections.*` 在固定每帧预算内比较真实世界与投影单元，维护纠错状态和进度计数；
+  它可以标记受影响 section，但不创建 Mesh、不访问 Tessellator，也不发布 HUD 原子状态。
 - `projection/ProjectionState.h` 只声明投影运行态及资源所有权；创建、替换、清理和跨世界校验仍由
   `Projection.cpp` 的生命周期流程统一执行，禁止在状态类型中暗藏线程启动或游戏 API 调用。
 - `projection/ProjectionMeshWorker.*` 只管理单线程 executor、任务异常边界、generation 失效和完成队列；
