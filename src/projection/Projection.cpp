@@ -16,6 +16,7 @@
 
 #include "projection/Projection.h"
 #include "projection/ProjectionInternalTypes.h"
+#include "projection/ProjectionMeshWorker.h"
 #include "projection/ProjectionRules.h"
 #include "projection/ProjectionState.h"
 
@@ -111,6 +112,8 @@ namespace lholo::projection {
 namespace {
 
 using detail::CorrectionState;
+using detail::AsyncSectionBuildResult;
+using detail::disableMeshWorkerForSession;
 using detail::ExpectedBlockActorMap;
 using detail::ExpectedBlockIndexMap;
 using detail::ExpectedBlockMap;
@@ -118,12 +121,18 @@ using detail::blockFrontFace;
 using detail::getProjectionMirror;
 using detail::getProjectionRotation;
 using detail::isLayerVisible;
+using detail::meshWorkerIsBusy;
+using detail::meshWorkerIsDisabledForSession;
 using detail::projectionStatesMatch;
 using detail::ProjectedBlockActor;
 using detail::ProjectionState;
 using detail::RenderBucket;
 using detail::renderBucketFor;
+using detail::startMeshWorker;
+using detail::stopMeshWorker;
 using detail::SubChunkKey;
+using detail::submitMeshWorkerTask;
+using detail::takeCompletedSectionBuilds;
 using detail::transformExpectedBlock;
 using detail::transformStructurePosition;
 
@@ -159,27 +168,6 @@ std::uint32_t modulateAbgr(std::uint32_t color, std::uint32_t tint) {
 auto& logger() {
     return LHolo::getInstance().getSelf().getLogger();
 }
-
-struct AsyncSectionBuildResult {
-    std::uint64_t workerGeneration{};
-    std::uint64_t structureGeneration{};
-    std::uint64_t revision{};
-    std::uint64_t snapshotPrepareMicros{};
-    std::uint64_t snapshotDataMicros{};
-    std::uint64_t chunkViewMicros{};
-    std::uint64_t workerBuildMicros{};
-    std::size_t   section{};
-    bool          success{};
-    std::string   failureReason;
-    std::uint64_t expectedVertexCount{};
-    std::uint64_t actualVertexCount{};
-    std::array<std::unique_ptr<mce::Mesh>, static_cast<std::size_t>(RenderBucket::Count)>
-        sectionMeshes;
-    std::unique_ptr<mce::Mesh> warningFillMesh;
-    std::unique_ptr<mce::Mesh> correctionOutlineMesh;
-    std::unique_ptr<mce::Mesh> liquidProxyMesh;
-    std::unique_ptr<mce::Mesh> blockEntityPlaceholderMesh;
-};
 
 thread_local ExpectedBlockMap const*      gTessellationBlocks{};
 thread_local ExpectedBlockActorMap const* gTessellationBlockActors{};
@@ -261,92 +249,6 @@ std::deque<SubChunkKey>    gIncomingLoadedSubChunks;
 std::atomic<BlockSource*>  gAttachedBlockSource{};
 std::atomic<ChunkSource*>  gAttachedChunkSource{};
 std::atomic<Level*>        gAttachedLevel{};
-
-std::mutex                                      gMeshWorkerMutex;
-std::deque<AsyncSectionBuildResult>             gCompletedSectionBuilds;
-std::unique_ptr<ll::thread::ThreadPoolExecutor> gMeshWorkerExecutor;
-std::atomic_bool                                gMeshWorkerBusy{};
-std::atomic_uint64_t                            gMeshWorkerGeneration{1};
-std::atomic_bool                                gMeshWorkerDisabledForSession{};
-
-std::uint64_t startMeshWorker() {
-    if (!gMeshWorkerExecutor) {
-        gMeshWorkerExecutor = std::make_unique<ll::thread::ThreadPoolExecutor>(
-            "LHoloProjectionMesh", 1
-        );
-    }
-    gMeshWorkerBusy.store(false, std::memory_order_release);
-    return gMeshWorkerGeneration.load(std::memory_order_acquire);
-}
-
-void stopMeshWorker() {
-    auto const nextGeneration = gMeshWorkerGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
-    (void)nextGeneration;
-    if (gMeshWorkerExecutor) {
-        // destroy() drains the executor and joins its sole worker. Tasks never
-        // acquire gStateMutex, so this is safe while projection state is being
-        // detached from the active world.
-        gMeshWorkerExecutor->destroy();
-        gMeshWorkerExecutor.reset();
-    }
-    gMeshWorkerBusy.store(false, std::memory_order_release);
-    std::lock_guard lock(gMeshWorkerMutex);
-    gCompletedSectionBuilds.clear();
-}
-
-bool submitMeshWorkerTask(
-    std::uint64_t workerGeneration,
-    std::function<AsyncSectionBuildResult()> task
-) {
-    if (!gMeshWorkerExecutor
-        || workerGeneration != gMeshWorkerGeneration.load(std::memory_order_acquire)) {
-        return false;
-    }
-    bool expected = false;
-    if (!gMeshWorkerBusy.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
-        return false;
-    }
-    try {
-        gMeshWorkerExecutor->execute([
-            workerGeneration,
-            task = std::move(task)
-        ]() mutable {
-            AsyncSectionBuildResult result;
-            try {
-                result = task();
-            } catch (std::exception const& exception) {
-                result.workerGeneration = workerGeneration;
-                result.success = false;
-                result.failureReason = std::string{"uncaught task exception: "} + exception.what();
-            } catch (...) {
-                result.workerGeneration = workerGeneration;
-                result.success = false;
-                result.failureReason = "uncaught non-standard task exception";
-            }
-            if (workerGeneration == gMeshWorkerGeneration.load(std::memory_order_acquire)) {
-                std::lock_guard lock(gMeshWorkerMutex);
-                gCompletedSectionBuilds.emplace_back(std::move(result));
-            }
-            gMeshWorkerBusy.store(false, std::memory_order_release);
-        });
-    } catch (...) {
-        gMeshWorkerBusy.store(false, std::memory_order_release);
-        return false;
-    }
-    return true;
-}
-
-std::vector<AsyncSectionBuildResult> takeCompletedSectionBuilds(std::size_t limit) {
-    std::vector<AsyncSectionBuildResult> results;
-    std::lock_guard lock(gMeshWorkerMutex);
-    auto const count = std::min(limit, gCompletedSectionBuilds.size());
-    results.reserve(count);
-    for (std::size_t index = 0; index < count; ++index) {
-        results.emplace_back(std::move(gCompletedSectionBuilds.front()));
-        gCompletedSectionBuilds.pop_front();
-    }
-    return results;
-}
 
 void markSectionDirty(ProjectionState& state, std::size_t section, bool incremental) {
     if (section >= state.sectionDirty.size()) return;
@@ -592,18 +494,18 @@ bool enableStructureProjection(
     gState = std::move(next);
     gState.enabled = true;
     try {
-        if (gMeshWorkerDisabledForSession.load(std::memory_order_acquire)) {
+        if (meshWorkerIsDisabledForSession()) {
             gState.asyncMeshBuildingEnabled = false;
         } else {
             gState.meshWorkerGeneration = startMeshWorker();
         }
     } catch (std::exception const& exception) {
         gState.asyncMeshBuildingEnabled = false;
-        gMeshWorkerDisabledForSession.store(true, std::memory_order_release);
+        disableMeshWorkerForSession();
         logger().warn("Projection mesh worker initialization failed; using synchronous fallback: {}", exception.what());
     } catch (...) {
         gState.asyncMeshBuildingEnabled = false;
-        gMeshWorkerDisabledForSession.store(true, std::memory_order_release);
+        disableMeshWorkerForSession();
         logger().warn("Projection mesh worker initialization failed; using synchronous fallback");
     }
     auto* activeBlockSource = &player->getDimensionBlockSource();
@@ -1643,7 +1545,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     );
                     if (++gState.consecutiveMeshWorkerFailures >= 3) {
                         gState.asyncMeshBuildingEnabled = false;
-                        gMeshWorkerDisabledForSession.store(true, std::memory_order_release);
+                        disableMeshWorkerForSession();
                         stopMeshWorker();
                         logger().warn("Projection mesh worker failed three times; using synchronous fallback for this session");
                     }
@@ -1742,7 +1644,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     markSectionDirty(gState, section, true);
                     if (++gState.consecutiveMeshWorkerFailures >= 3) {
                         gState.asyncMeshBuildingEnabled = false;
-                        gMeshWorkerDisabledForSession.store(true, std::memory_order_release);
+                        disableMeshWorkerForSession();
                         stopMeshWorker();
                         logger().warn("Projection mesh upload failed three times; using synchronous fallback for this session");
                     }
@@ -1754,7 +1656,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     markSectionDirty(gState, section, true);
                     if (++gState.consecutiveMeshWorkerFailures >= 3) {
                         gState.asyncMeshBuildingEnabled = false;
-                        gMeshWorkerDisabledForSession.store(true, std::memory_order_release);
+                        disableMeshWorkerForSession();
                         stopMeshWorker();
                         logger().warn("Projection mesh upload failed three times; using synchronous fallback for this session");
                     }
@@ -1795,7 +1697,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
 
         // A single in-flight task gives each BlockTessellator exclusive access
         // and naturally coalesces repeated changes into the latest revision.
-        if (gState.asyncMeshBuildingEnabled && !gMeshWorkerBusy.load(std::memory_order_acquire)) {
+        if (gState.asyncMeshBuildingEnabled && !meshWorkerIsBusy()) {
             auto const& cameraPosition = renderContext.getCameraPosition();
             std::optional<std::size_t> selected;
             bool selectedIncremental{};
@@ -2028,7 +1930,7 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
                     gState.sectionDirty[section] = false;
                 } else if (++gState.consecutiveMeshWorkerFailures >= 3) {
                     gState.asyncMeshBuildingEnabled = false;
-                    gMeshWorkerDisabledForSession.store(true, std::memory_order_release);
+                    disableMeshWorkerForSession();
                     stopMeshWorker();
                     logger().warn("Projection mesh task submission failed three times; using synchronous fallback for this session");
                 }

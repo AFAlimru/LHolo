@@ -75,6 +75,7 @@ LHolo/
 │  │  ├─ Projection.h           GUI/HUD 和辅助放置使用的投影控制接口
 │  │  ├─ ProjectionTypes.h      对外查询与进度的纯数据类型
 │  │  ├─ ProjectionInternalTypes.h 内部键、状态枚举与无资源引用类型
+│  │  ├─ ProjectionMeshWorker.* 单线程 executor、generation 与完成队列
 │  │  ├─ ProjectionRules.*      坐标、分层、状态匹配和渲染分类纯规则
 │  │  └─ ProjectionState.h      世界身份、CPU 状态、Worker 状态与 Mesh 所有权
 │  ├─ place/
@@ -106,6 +107,8 @@ LHolo/
   旋转、镜像、分层可见性和状态匹配规则修改时应集中在这里回归。
 - `projection/ProjectionState.h` 只声明投影运行态及资源所有权；创建、替换、清理和跨世界校验仍由
   `Projection.cpp` 的生命周期流程统一执行，禁止在状态类型中暗藏线程启动或游戏 API 调用。
+- `projection/ProjectionMeshWorker.*` 只管理单线程 executor、任务异常边界、generation 失效和完成队列；
+  Worker 任务由实现层提供，基础设施不得读取 `gState`、世界对象或渲染上下文。
 - `overlay` 负责“外部 GUI 如何安全进入游戏图形链”，不解析结构或扫描世界方块。
 - `place` 负责轻松、手动和范围放置：调用 projection 查询接口，在完整背包中查找物品，必要时交换到快捷栏，并发送 `InventoryTransactionPacket`；不碰渲染与配置。
 - `input` 负责菜单期间的最小游戏动作保护；当前只拦截本地玩家破坏方块，不扩展为移动冻结或全交互封锁。
