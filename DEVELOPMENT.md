@@ -76,10 +76,12 @@ LHolo/
 │  │  ├─ ProjectionTypes.h      对外查询与进度的纯数据类型
 │  │  ├─ ProjectionCorrections.* 有界世界纠错扫描、进度计数与 section 失效
 │  │  ├─ ProjectionInternalTypes.h 内部键、状态枚举与无资源引用类型
+│  │  ├─ ProjectionInvalidation.* 设置变化检测、section/revision 失效与缓存清理
 │  │  ├─ ProjectionMeshScheduler.* 主线程 section 选择、局部快照与同步回退调度
 │  │  ├─ ProjectionMeshUpload.* 主线程完成队列校验、MeshData 上传与失败回退
 │  │  ├─ ProjectionMeshWorker.* 单线程 executor、generation 与完成队列
 │  │  ├─ ProjectionPlacement.*  变换/分层后的虚拟世界与方块实体放置视图
+│  │  ├─ ProjectionProgress.*   渲染线程到 HUD 的无锁进度快照发布
 │  │  ├─ ProjectionQueries.*    辅助放置使用的只读单格与范围查询
 │  │  ├─ ProjectionRenderer.*   已构建 Mesh 的 pass 分类、透明排序与材质提交
 │  │  ├─ ProjectionRules.*      坐标、分层、状态匹配和渲染分类纯规则
@@ -116,6 +118,10 @@ LHolo/
   旋转、镜像、分层可见性和状态匹配规则修改时应集中在这里回归。
 - `projection/ProjectionCorrections.*` 在固定每帧预算内比较真实世界与投影单元，维护纠错状态和进度计数；
   它可以标记受影响 section，但不创建 Mesh、不访问 Tessellator，也不发布 HUD 原子状态。
+- `projection/ProjectionInvalidation.*` 对比当前帧设置与缓存值，集中处理旋转/镜像、移动、切层、透明度和
+  纠错样式变化引起的 section dirty、revision、旧 Mesh 清理及可见进度重算；placement 重建仍由调用方触发。
+- `projection/ProjectionProgress.*` 保持原有 acquire/release 语义，在渲染状态计数与 GUI/HUD 读取之间发布
+  无锁快照；它不扫描世界，也不自行推导纠错结果。
 - `projection/ProjectionSectionBuilder.*` 统一生成原版方块、液体代理、方块实体占位、纠错覆盖和结构边框
   的 CPU 几何；构建输入必须来自显式只读设置，Worker 使用 `UploadMode::Never`，同步回退保持 `Buffered`。
 - `projection/ProjectionState.h` 只声明投影运行态及资源所有权；创建、替换、清理和跨世界校验仍由

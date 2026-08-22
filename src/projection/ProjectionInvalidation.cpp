@@ -1,0 +1,157 @@
+// LHolo - Client-side projection renderer for Minecraft Bedrock Windows
+// Copyright (C) 2026  MarmieQi
+
+#include "projection/ProjectionInvalidation.h"
+
+#include "projection/ProjectionInternalTypes.h"
+#include "projection/ProjectionProgress.h"
+#include "projection/ProjectionRules.h"
+#include "projection/ProjectionState.h"
+#include "structure/StructureLoader.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+
+namespace lholo::projection::detail {
+namespace {
+
+void markSectionDirty(ProjectionState& state, std::size_t section, bool incremental) {
+    if (section >= state.sectionDirty.size()) return;
+    state.sectionDirty[section] = true;
+    state.sectionIncrementalDirty[section]
+        = state.sectionIncrementalDirty[section] || incremental;
+    ++state.sectionRequestedRevision[section];
+}
+
+void markAllSectionsDirty(ProjectionState& state, bool incremental) {
+    for (std::size_t section = 0; section < state.sectionDirty.size(); ++section) {
+        markSectionDirty(state, section, incremental);
+    }
+}
+
+} // namespace
+
+ProjectionInvalidationResult reconcileProjectionInvalidation(
+    ProjectionState&                      state,
+    ProjectionInvalidationSettings const& settings
+) {
+    ProjectionInvalidationResult result;
+    result.geometryTransformChanged = state.cachedRotation != settings.rotationTurns
+        || state.cachedMirror != settings.mirrorMode;
+    result.placementMoved = state.cachedOffsetX != settings.offsetX
+        || state.cachedOffsetY != settings.offsetY
+        || state.cachedOffsetZ != settings.offsetZ;
+    result.layerChanged = state.cachedLayerDisplayMode != settings.layerDisplayMode
+        || state.cachedDisplayLayer != settings.displayLayer
+        || state.cachedLayerAxis != settings.layerAxis;
+    bool const opacityChanged
+        = std::abs(state.cachedOpacity - settings.structureOpacity) > 0.0001f;
+    bool const correctionStyleChanged
+        = std::abs(state.cachedCorrectionFillOpacity - settings.correctionFillOpacity) > 0.0001f
+        || std::abs(state.cachedCorrectionOutlineOpacity - settings.correctionOutlineOpacity) > 0.0001f;
+    if (!result.geometryTransformChanged && !result.placementMoved && !result.layerChanged
+        && !opacityChanged && !correctionStyleChanged) {
+        return result;
+    }
+
+    if (result.geometryTransformChanged || result.layerChanged
+        || opacityChanged || correctionStyleChanged) {
+        state.meshPreflightDone = false;
+    }
+    if (result.geometryTransformChanged || opacityChanged || correctionStyleChanged) {
+        markAllSectionsDirty(state, false);
+    }
+    if (result.placementMoved && !result.geometryTransformChanged) {
+        // Local geometry survives an XYZ move, but a task already sampling the
+        // previous world position must not be accepted.
+        for (std::size_t section = 0; section < state.sectionDirty.size(); ++section) {
+            ++state.sectionRequestedRevision[section];
+            if (state.sectionBuildInFlight[section]) state.sectionDirty[section] = true;
+        }
+    }
+
+    auto const layerIsVisible = [&](int layer) {
+        return isLayerVisible(
+            layer, settings.layerDisplayMode, settings.displayLayer
+        );
+    };
+    // LayerRange changes only invalidate sections containing blocks whose
+    // visibility crossed the old/new boundary.
+    if (result.layerChanged && !result.geometryTransformChanged) {
+        auto const oldLayerVisible = [&](structure::LoadedStructure::RenderBlock const& entry) {
+            if (state.cachedLayerDisplayMode < 0 || state.cachedLayerAxis < 0) return false;
+            auto const layer = state.cachedLayerAxis == 1 ? entry.x : entry.y;
+            return isLayerVisible(
+                layer, state.cachedLayerDisplayMode, state.cachedDisplayLayer
+            );
+        };
+        for (std::size_t index = 0; index < state.structure->renderBlocks.size(); ++index) {
+            auto const& entry = state.structure->renderBlocks[index];
+            auto const visible = layerIsVisible(
+                settings.layerAxis == 1 ? entry.x : entry.y
+            );
+            if (oldLayerVisible(entry) == visible) continue;
+            markSectionDirty(state, state.blockToSection[index], false);
+            state.correctionStates[index] = visible
+                ? CorrectionState::Unknown
+                : CorrectionState::Correct;
+        }
+    }
+
+    state.cachedRotation = settings.rotationTurns;
+    state.cachedMirror = settings.mirrorMode;
+    state.cachedOffsetX = settings.offsetX;
+    state.cachedOffsetY = settings.offsetY;
+    state.cachedOffsetZ = settings.offsetZ;
+    state.cachedLayerDisplayMode = settings.layerDisplayMode;
+    state.cachedDisplayLayer = settings.displayLayer;
+    state.cachedLayerAxis = settings.layerAxis;
+    state.cachedOpacity = settings.structureOpacity;
+    state.cachedCorrectionFillOpacity = settings.correctionFillOpacity;
+    state.cachedCorrectionOutlineOpacity = settings.correctionOutlineOpacity;
+
+    // Rotation/mirror alter local block models, so only those require throwing
+    // away every GPU mesh. XYZ movement stays represented by the world matrix.
+    if (result.geometryTransformChanged) {
+        std::fill(
+            state.correctionStates.begin(),
+            state.correctionStates.end(),
+            CorrectionState::Unknown
+        );
+        for (auto& meshes : state.sectionMeshes) {
+            for (auto& mesh : meshes) mesh.reset();
+        }
+        for (auto& mesh : state.warningFillSectionMeshes) mesh.reset();
+        for (auto& mesh : state.correctionOutlineSectionMeshes) mesh.reset();
+        for (auto& mesh : state.liquidProxySectionMeshes) mesh.reset();
+        for (auto& mesh : state.blockEntityPlaceholderSectionMeshes) mesh.reset();
+        state.structureBoundsMesh.reset();
+        std::fill(state.progressCorrect.begin(), state.progressCorrect.end(), 0);
+        std::fill(state.progressErrorKind.begin(), state.progressErrorKind.end(), 0);
+        state.progressCorrectCount = 0;
+        state.progressVisibleCorrectCount = 0;
+        state.progressWrongTypeCount = 0;
+        state.progressWrongStateCount = 0;
+        resetPublishedBuildProgressCounts();
+    }
+
+    if (result.geometryTransformChanged || result.layerChanged) {
+        state.progressVisibleCorrectCount = 0;
+        std::uint64_t visibleTotal{};
+        for (std::size_t index = 0; index < state.structure->renderBlocks.size(); ++index) {
+            auto const& entry = state.structure->renderBlocks[index];
+            if (!layerIsVisible(settings.layerAxis == 1 ? entry.x : entry.y)) continue;
+            ++visibleTotal;
+            if (state.progressCorrect[index] != 0) {
+                ++state.progressVisibleCorrectCount;
+            }
+        }
+        publishVisibleProgress(state.progressVisibleCorrectCount, visibleTotal);
+    }
+
+    return result;
+}
+
+} // namespace lholo::projection::detail

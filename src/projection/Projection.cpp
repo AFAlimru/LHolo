@@ -17,10 +17,12 @@
 #include "projection/Projection.h"
 #include "projection/ProjectionCorrections.h"
 #include "projection/ProjectionInternalTypes.h"
+#include "projection/ProjectionInvalidation.h"
 #include "projection/ProjectionMeshScheduler.h"
 #include "projection/ProjectionMeshUpload.h"
 #include "projection/ProjectionMeshWorker.h"
 #include "projection/ProjectionPlacement.h"
+#include "projection/ProjectionProgress.h"
 #include "projection/ProjectionQueries.h"
 #include "projection/ProjectionRenderer.h"
 #include "projection/ProjectionRules.h"
@@ -114,7 +116,6 @@ using detail::findTessellationBlock;
 using detail::findTessellationBlockActor;
 using detail::getProjectionMirror;
 using detail::getProjectionRotation;
-using detail::isLayerVisible;
 using detail::meshWorkerIsDisabledForSession;
 using detail::projectionStatesMatch;
 using detail::ProjectionState;
@@ -137,41 +138,16 @@ std::atomic_bool   gPendingStructureAnchor{false};
 std::atomic_int    gPendingStructureAnchorX{0};
 std::atomic_int    gPendingStructureAnchorY{0};
 std::atomic_int    gPendingStructureAnchorZ{0};
-std::atomic_uint64_t gBuildProgressPlaced{0};
-std::atomic_uint64_t gBuildProgressTotal{0};
-std::atomic_uint64_t gBuildProgressVisiblePlaced{0};
-std::atomic_uint64_t gBuildProgressVisibleTotal{0};
-std::atomic_uint64_t gBuildProgressWrongType{0};
-std::atomic_uint64_t gBuildProgressWrongState{0};
 std::mutex       gStateMutex;
 ProjectionState  gState;
 overlay::BoundsWireframe gCaptureBounds;
-
-void markSectionDirty(ProjectionState& state, std::size_t section, bool incremental) {
-    if (section >= state.sectionDirty.size()) return;
-    state.sectionDirty[section] = true;
-    state.sectionIncrementalDirty[section]
-        = state.sectionIncrementalDirty[section] || incremental;
-    ++state.sectionRequestedRevision[section];
-}
-
-void markAllSectionsDirty(ProjectionState& state, bool incremental) {
-    for (std::size_t section = 0; section < state.sectionDirty.size(); ++section) {
-        markSectionDirty(state, section, incremental);
-    }
-}
 
 void clearProjectionStateLocked() {
     // Finish CPU mesh work before detaching any world-owned objects captured by
     // the task's private ChunkViewSource/BlockSource snapshot.
     stopMeshWorker();
     detachProjectionWorldEvents();
-    gBuildProgressPlaced.store(0, std::memory_order_relaxed);
-    gBuildProgressVisiblePlaced.store(0, std::memory_order_relaxed);
-    gBuildProgressVisibleTotal.store(0, std::memory_order_relaxed);
-    gBuildProgressWrongType.store(0, std::memory_order_relaxed);
-    gBuildProgressWrongState.store(0, std::memory_order_relaxed);
-    gBuildProgressTotal.store(0, std::memory_order_release);
+    detail::resetPublishedBuildProgress();
     gState = ProjectionState{};
 }
 
@@ -301,14 +277,7 @@ bool enableStructureProjection(
         logger().warn("Projection mesh worker initialization failed; using synchronous fallback");
     }
     attachProjectionWorldEvents(player->getLevel(), player->getDimensionBlockSource());
-    gBuildProgressPlaced.store(0, std::memory_order_relaxed);
-    gBuildProgressVisiblePlaced.store(0, std::memory_order_relaxed);
-    gBuildProgressVisibleTotal.store(
-        gState.structure->renderBlocks.size(), std::memory_order_relaxed
-    );
-    gBuildProgressWrongType.store(0, std::memory_order_relaxed);
-    gBuildProgressWrongState.store(0, std::memory_order_relaxed);
-    gBuildProgressTotal.store(gState.structure->renderBlocks.size(), std::memory_order_release);
+    detail::initializePublishedBuildProgress(gState.structure->renderBlocks.size());
     structure::recordProjectionAnchor(gState.anchor.x, gState.anchor.y, gState.anchor.z);
     logger().info(
         "Structure projection enabled: {} renderable blocks at ({}, {}, {})",
@@ -355,140 +324,44 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
         auto const displayLayer = std::clamp(
             structure::getDisplayLayer(), 0, maxLayer
         );
-        auto const layerIsVisible = [&](int layer) {
-            return isLayerVisible(layer, layerDisplayMode, displayLayer);
-        };
         auto const structureOpacity = gOpacity.load(std::memory_order_relaxed);
         auto const correctionFillOpacity = gCorrectionFillOpacity.load(std::memory_order_relaxed);
         auto const correctionOutlineOpacity = gCorrectionOutlineOpacity.load(std::memory_order_relaxed);
-        bool const geometryTransformChanged = gState.cachedRotation != rotationTurns
-            || gState.cachedMirror != mirrorMode;
-        bool const placementMoved = gState.cachedOffsetX != offsetX
-            || gState.cachedOffsetY != offsetY || gState.cachedOffsetZ != offsetZ;
-        bool const layerChanged = gState.cachedLayerDisplayMode != layerDisplayMode
-            || gState.cachedDisplayLayer != displayLayer || gState.cachedLayerAxis != layerAxis;
-        bool const opacityChanged = std::abs(gState.cachedOpacity - structureOpacity) > 0.0001f;
-        bool const correctionStyleChanged
-            = std::abs(gState.cachedCorrectionFillOpacity - correctionFillOpacity) > 0.0001f
-            || std::abs(gState.cachedCorrectionOutlineOpacity - correctionOutlineOpacity) > 0.0001f;
-        if (geometryTransformChanged || placementMoved || layerChanged || opacityChanged || correctionStyleChanged) {
-            if (geometryTransformChanged || layerChanged || opacityChanged || correctionStyleChanged) {
-                gState.meshPreflightDone = false;
+        auto const invalidation = detail::reconcileProjectionInvalidation(
+            gState,
+            detail::ProjectionInvalidationSettings{
+                .mirrorMode               = mirrorMode,
+                .rotationTurns            = rotationTurns,
+                .offsetX                  = offsetX,
+                .offsetY                  = offsetY,
+                .offsetZ                  = offsetZ,
+                .layerDisplayMode         = layerDisplayMode,
+                .displayLayer             = displayLayer,
+                .layerAxis                = layerAxis,
+                .structureOpacity         = structureOpacity,
+                .correctionFillOpacity    = correctionFillOpacity,
+                .correctionOutlineOpacity = correctionOutlineOpacity
             }
-            if (geometryTransformChanged || opacityChanged || correctionStyleChanged) {
-                markAllSectionsDirty(gState, false);
-            }
-            if (placementMoved && !geometryTransformChanged) {
-                // Local geometry survives an XYZ move, but a task already
-                // sampling the previous world position must not be accepted.
-                for (std::size_t section = 0; section < gState.sectionDirty.size(); ++section) {
-                    ++gState.sectionRequestedRevision[section];
-                    if (gState.sectionBuildInFlight[section]) gState.sectionDirty[section] = true;
+        );
+        if (invalidation.placementViewChanged()) {
+            detail::rebuildProjectionPlacement(
+                gState,
+                player->getDimensionBlockSource(),
+                renderContext.mBlockEntityRenderDispatcher,
+                transformSettings,
+                detail::ProjectionPlacementSettings{
+                    .mirrorMode        = mirrorMode,
+                    .rotationTurns     = rotationTurns,
+                    .offsetX           = offsetX,
+                    .offsetY           = offsetY,
+                    .offsetZ           = offsetZ,
+                    .layerDisplayMode  = layerDisplayMode,
+                    .displayLayer      = displayLayer,
+                    .layerAxis         = layerAxis,
+                    .identityTransform = identityTransform
                 }
-            }
-            // LayerRange changes only invalidate sections containing blocks
-            // whose visibility crossed the old/new boundary. This mirrors
-            // Litematica's section/range intersection instead of rebuilding
-            // the whole structure for a one-layer step.
-            if (layerChanged && !geometryTransformChanged) {
-                auto const oldLayerVisible = [&](structure::LoadedStructure::RenderBlock const& entry) {
-                    if (gState.cachedLayerDisplayMode < 0 || gState.cachedLayerAxis < 0) return false;
-                    auto const layer = gState.cachedLayerAxis == 1 ? entry.x : entry.y;
-                    return isLayerVisible(
-                        layer, gState.cachedLayerDisplayMode, gState.cachedDisplayLayer
-                    );
-                };
-                for (std::size_t index = 0; index < gState.structure->renderBlocks.size(); ++index) {
-                    auto const& entry = gState.structure->renderBlocks[index];
-                    auto const visible = layerIsVisible(layerAxis == 1 ? entry.x : entry.y);
-                    if (oldLayerVisible(entry) == visible) continue;
-                    markSectionDirty(gState, gState.blockToSection[index], false);
-                    gState.correctionStates[index] = visible
-                        ? CorrectionState::Unknown
-                        : CorrectionState::Correct;
-                }
-            }
-
-            gState.cachedRotation = rotationTurns;
-            gState.cachedMirror = mirrorMode;
-            gState.cachedOffsetX = offsetX;
-            gState.cachedOffsetY = offsetY;
-            gState.cachedOffsetZ = offsetZ;
-            gState.cachedLayerDisplayMode = layerDisplayMode;
-            gState.cachedDisplayLayer = displayLayer;
-            gState.cachedLayerAxis = layerAxis;
-            gState.cachedOpacity = structureOpacity;
-            gState.cachedCorrectionFillOpacity = correctionFillOpacity;
-            gState.cachedCorrectionOutlineOpacity = correctionOutlineOpacity;
-            // Rotation/mirror alter local block models, so only those require
-            // throwing away every GPU mesh. XYZ movement is represented by the
-            // world matrix and keeps the existing section meshes alive.
-            if (geometryTransformChanged) {
-                std::fill(
-                    gState.correctionStates.begin(),
-                    gState.correctionStates.end(),
-                    CorrectionState::Unknown
-                );
-                for (auto& meshes : gState.sectionMeshes) {
-                    for (auto& mesh : meshes) mesh.reset();
-                }
-                for (auto& mesh : gState.warningFillSectionMeshes) mesh.reset();
-                for (auto& mesh : gState.correctionOutlineSectionMeshes) mesh.reset();
-                for (auto& mesh : gState.liquidProxySectionMeshes) mesh.reset();
-                for (auto& mesh : gState.blockEntityPlaceholderSectionMeshes) mesh.reset();
-                gState.structureBoundsMesh.reset();
-                std::fill(gState.progressCorrect.begin(), gState.progressCorrect.end(), 0);
-                std::fill(gState.progressErrorKind.begin(), gState.progressErrorKind.end(), 0);
-                gState.progressCorrectCount = 0;
-                gState.progressVisibleCorrectCount = 0;
-                gState.progressWrongTypeCount = 0;
-                gState.progressWrongStateCount = 0;
-                gBuildProgressPlaced.store(0, std::memory_order_release);
-                gBuildProgressVisiblePlaced.store(0, std::memory_order_release);
-                gBuildProgressWrongType.store(0, std::memory_order_release);
-                gBuildProgressWrongState.store(0, std::memory_order_release);
-            }
-
-            if (geometryTransformChanged || layerChanged) {
-                gState.progressVisibleCorrectCount = 0;
-                std::uint64_t visibleTotal{};
-                for (std::size_t index = 0; index < gState.structure->renderBlocks.size(); ++index) {
-                    auto const& entry = gState.structure->renderBlocks[index];
-                    if (!layerIsVisible(layerAxis == 1 ? entry.x : entry.y)) continue;
-                    ++visibleTotal;
-                    if (gState.progressCorrect[index] != 0) {
-                        ++gState.progressVisibleCorrectCount;
-                    }
-                }
-                gBuildProgressVisiblePlaced.store(
-                    gState.progressVisibleCorrectCount, std::memory_order_release
-                );
-                gBuildProgressVisibleTotal.store(
-                    visibleTotal, std::memory_order_release
-                );
-            }
-
-            if (geometryTransformChanged || placementMoved || layerChanged) {
-                detail::rebuildProjectionPlacement(
-                    gState,
-                    player->getDimensionBlockSource(),
-                    renderContext.mBlockEntityRenderDispatcher,
-                    transformSettings,
-                    detail::ProjectionPlacementSettings{
-                        .mirrorMode        = mirrorMode,
-                        .rotationTurns     = rotationTurns,
-                        .offsetX           = offsetX,
-                        .offsetY           = offsetY,
-                        .offsetZ           = offsetZ,
-                        .layerDisplayMode  = layerDisplayMode,
-                        .displayLayer      = displayLayer,
-                        .layerAxis         = layerAxis,
-                        .identityTransform = identityTransform
-                    }
-                );
-            }
+            );
         }
-
         auto& blockTessellator = *gState.blockTessellator;
         blockTessellator.setRegion(player->getDimensionBlockSource());
 
@@ -507,16 +380,15 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
             layerAxis
         );
         if (correctionChanges.overall) {
-            gBuildProgressPlaced.store(gState.progressCorrectCount, std::memory_order_release);
+            detail::publishPlacedProgress(gState.progressCorrectCount);
         }
         if (correctionChanges.visible) {
-            gBuildProgressVisiblePlaced.store(
-                gState.progressVisibleCorrectCount, std::memory_order_release
-            );
+            detail::publishVisiblePlacedProgress(gState.progressVisibleCorrectCount);
         }
         if (correctionChanges.errors) {
-            gBuildProgressWrongType.store(gState.progressWrongTypeCount, std::memory_order_release);
-            gBuildProgressWrongState.store(gState.progressWrongStateCount, std::memory_order_release);
+            detail::publishErrorProgress(
+                gState.progressWrongTypeCount, gState.progressWrongStateCount
+            );
         }
 
         ProjectionSectionBuildSettings const sectionBuildSettings{
@@ -936,18 +808,7 @@ void requestNextStructureAnchor(int x, int y, int z) {
 }
 
 BuildProgress getBuildProgress() {
-    BuildProgress result;
-    result.total = gBuildProgressTotal.load(std::memory_order_acquire);
-    result.placed = gBuildProgressPlaced.load(std::memory_order_acquire);
-    result.visibleTotal = gBuildProgressVisibleTotal.load(std::memory_order_acquire);
-    result.visiblePlaced = gBuildProgressVisiblePlaced.load(std::memory_order_acquire);
-    result.wrongType = gBuildProgressWrongType.load(std::memory_order_acquire);
-    result.wrongState = gBuildProgressWrongState.load(std::memory_order_acquire);
-    if (result.placed > result.total) result.placed = result.total;
-    if (result.visiblePlaced > result.visibleTotal) result.visiblePlaced = result.visibleTotal;
-    if (result.wrongType > result.total) result.wrongType = result.total;
-    if (result.wrongState > result.total) result.wrongState = result.total;
-    return result;
+    return detail::getPublishedBuildProgress();
 }
 
 ProjectionQuery queryProjection(LocalPlayer& player, BlockPos const& worldPos) {
