@@ -117,6 +117,7 @@ LHolo/
 │  │     └─ ProjectionRenderHooks.* 有状态 LevelRendererPlayer 渲染 Hook 薄壳
 │  ├─ place/
 │  │  ├─ PlaceHelper.cpp        轻松/手动/范围放置：投影查表、背包取物、放置事务
+│  │  ├─ PlacementState.*       放置会话状态（开关、定时、近期格、失败计划缓存）
 │  │  └─ PlaceHelper.h          配置开关与 Hook 生命周期接口
 │  └─ input/
 │     ├─ MenuInputGuard.cpp     菜单期间阻止本地玩家开始/持续破坏方块
@@ -215,6 +216,8 @@ LHolo/
   `ProjectionFramePipeline`/`CorrectionTracker` 负责。
 - `overlay` 负责“外部 GUI 如何安全进入游戏图形链”，不解析结构或扫描世界方块。
 - `place` 负责轻松、手动和范围放置：调用 projection 查询接口，在完整背包中查找物品，必要时交换到快捷栏，并发送 `InventoryTransactionPacket`；不碰渲染与配置。
+- `place/PlacementState` 持有放置会话状态：开关、手动/范围定时、近期放置格与失败计划缓存；
+  放置逻辑仍在 `PlaceHelper`，只通过访问器读写。
 - `input` 负责菜单期间的最小游戏动作保护；当前只拦截本地玩家破坏方块，不扩展为移动冻结或全交互封锁。
 - `plugin` 只把生命周期委托给 `app/AppKernel`，不承载业务逻辑。
 

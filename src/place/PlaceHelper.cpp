@@ -16,6 +16,8 @@
 
 #include "place/PlaceHelper.h"
 
+#include "place/PlacementState.h"
+
 #include "plugin/LHolo.h"
 #include "projection/Projection.h"
 #include "structure/StructureLoader.h"
@@ -72,6 +74,9 @@
 namespace lholo::place {
 namespace {
 
+using detail::FailedPlanKey;
+using detail::FailedPlanKeyHash;
+
 // Easy-place searches the full inventory (hotbar 0-8, backpack 9-35) for the
 // matching block item and references the found slot directly in the placement
 // transaction, so no cross-container inventory request is needed.
@@ -102,46 +107,6 @@ constexpr std::uint64_t kManualRepeatIntervalMs = 120;
 // after the press, so a stale click never places a block later.
 constexpr std::uint64_t kManualRequestTimeoutMs = 400;
 
-std::atomic_bool gEnabled{false};
-std::atomic_bool gRangeEnabled{false};
-// Manual mode: hold the right mouse button to place, instead of auto-placing.
-std::atomic_bool gManualMode{false};
-// Manual-mode press/hold tracking (typematic repeat). gManualHeld spans the
-// press (startBuildBlock) to the release (stopBuildBlock); the timestamps drive
-// the repeat rate.
-std::atomic_bool     gManualHeld{false};
-// Pending first block of a press; set on press and kept until placed so a quick
-// tap (released before the next game tick) still places one block.
-std::atomic_bool     gManualPlaceRequested{false};
-std::atomic_uint64_t gManualPressAt{0};
-std::atomic_uint64_t gLastManualPlaceAt{0};
-// Scan radius for range placement (blocks). Actual placement still respects
-// the player's reach.
-std::atomic_int gPlacementRadius{4};
-std::atomic_uint64_t gNextPlaceAt{0};
-std::atomic_uint64_t gNextSwapAt{0};
-// Recently-placed cells, so a cell placed a tick ago is not targeted again
-// before the server applies it and the correction scan catches up. This is what
-// stops a slab (or any block) being placed twice into the same cell during the
-// server round-trip (the reported "slab becomes a full block"). Keyed by packed
-// world position; the value is the millisecond time the lock expires.
-std::mutex                                      gRecentMutex;
-std::unordered_map<std::int64_t, std::uint64_t> gRecentPlacements;
-
-struct FailedPlanKey {
-    std::int64_t cell;
-    uint         runtimeId;
-    int          itemAux;
-    int          eyeX;
-    int          eyeY;
-    int          eyeZ;
-    int          viewX;
-    int          viewY;
-    int          viewZ;
-
-    bool operator==(FailedPlanKey const&) const = default;
-};
-
 struct PlacementContext {
     Vec3  eye;
     float reachSquared;
@@ -153,27 +118,6 @@ struct PlacementContext {
     int   viewZ;
 };
 
-struct FailedPlanKeyHash {
-    std::size_t operator()(FailedPlanKey const& key) const noexcept {
-        std::size_t result = std::hash<std::int64_t>{}(key.cell);
-        auto const combine = [&result](auto value) {
-            std::size_t const hash = std::hash<decltype(value)>{}(value);
-            result ^= hash + 0x9e3779b9U + (result << 6U) + (result >> 2U);
-        };
-        combine(key.runtimeId);
-        combine(key.itemAux);
-        combine(key.eyeX);
-        combine(key.eyeY);
-        combine(key.eyeZ);
-        combine(key.viewX);
-        combine(key.viewY);
-        combine(key.viewZ);
-        return result;
-    }
-};
-
-std::unordered_map<FailedPlanKey, std::uint64_t, FailedPlanKeyHash> gFailedRangePlans;
-
 std::int64_t packBlockPos(BlockPos const& p) {
     return (static_cast<std::int64_t>(p.x) & 0x3FFFFFF) << 38
          | (static_cast<std::int64_t>(p.z) & 0x3FFFFFF) << 12
@@ -181,25 +125,20 @@ std::int64_t packBlockPos(BlockPos const& p) {
 }
 
 bool recentlyPlaced(BlockPos const& cell, std::uint64_t now) {
-    std::lock_guard lock(gRecentMutex);
-    auto const it = gRecentPlacements.find(packBlockPos(cell));
-    return it != gRecentPlacements.end() && now < it->second;
+    std::lock_guard lock(detail::placementRecentMutex());
+    auto const it = detail::placementRecentPlacements().find(packBlockPos(cell));
+    return it != detail::placementRecentPlacements().end() && now < it->second;
 }
 
 void markPlaced(BlockPos const& cell, std::uint64_t now) {
-    std::lock_guard lock(gRecentMutex);
-    if (gRecentPlacements.size() > 256) {
-        for (auto it = gRecentPlacements.begin(); it != gRecentPlacements.end();) {
-            it = now >= it->second ? gRecentPlacements.erase(it) : std::next(it);
+    std::lock_guard lock(detail::placementRecentMutex());
+    if (detail::placementRecentPlacements().size() > 256) {
+        for (auto it = detail::placementRecentPlacements().begin(); it != detail::placementRecentPlacements().end();) {
+            it = now >= it->second ? detail::placementRecentPlacements().erase(it) : std::next(it);
         }
     }
-    gRecentPlacements[packBlockPos(cell)] = now + kCellLockMs;
+    detail::placementRecentPlacements()[packBlockPos(cell)] = now + kCellLockMs;
 }
-
-// Name of the block-entity block the crosshair currently points at, shown in
-// the HUD so projected chests/signs/hoppers/... can be identified.
-std::string gAimedBlockEntityName;
-std::mutex  gAimedNameMutex;
 
 void updateAimedBlockEntityName(Block const* block) {
     std::string name;
@@ -207,8 +146,8 @@ void updateAimedBlockEntityName(Block const* block) {
         ItemStack const item(*block, 1, nullptr);
         name = item.getName();
     }
-    std::lock_guard lock(gAimedNameMutex);
-    gAimedBlockEntityName = std::move(name);
+    std::lock_guard lock(detail::placementAimedNameMutex());
+    detail::placementAimedBlockEntityName() = std::move(name);
 }
 
 auto& logger() {
@@ -279,17 +218,17 @@ FailedPlanKey makeFailedPlanKey(
 }
 
 bool isFailedPlanCached(FailedPlanKey const& key, std::uint64_t now) {
-    auto const found = gFailedRangePlans.find(key);
-    return found != gFailedRangePlans.end() && now < found->second;
+    auto const found = detail::placementFailedRangePlans().find(key);
+    return found != detail::placementFailedRangePlans().end() && now < found->second;
 }
 
 void cacheFailedPlan(FailedPlanKey const& key, std::uint64_t now) {
-    if (gFailedRangePlans.size() > 256) {
-        for (auto it = gFailedRangePlans.begin(); it != gFailedRangePlans.end();) {
-            it = now >= it->second ? gFailedRangePlans.erase(it) : std::next(it);
+    if (detail::placementFailedRangePlans().size() > 256) {
+        for (auto it = detail::placementFailedRangePlans().begin(); it != detail::placementFailedRangePlans().end();) {
+            it = now >= it->second ? detail::placementFailedRangePlans().erase(it) : std::next(it);
         }
     }
-    gFailedRangePlans[key] = now + kFailedPlanCacheMs;
+    detail::placementFailedRangePlans()[key] = now + kFailedPlanCacheMs;
 }
 
 // Find an inventory slot holding the item that places `block`. Match on item +
@@ -520,7 +459,7 @@ bool placeBlock(LocalPlayer& player, ProjectionTarget const& target, int slot, I
         true
     );
     player.getClientInstance().getPacketSender().sendToServer(packet);
-    gNextPlaceAt.store(GetTickCount64() + kMinSendIntervalMs, std::memory_order_release);
+    detail::placementNextPlaceAt().store(GetTickCount64() + kMinSendIntervalMs, std::memory_order_release);
     return true;
 }
 
@@ -734,7 +673,7 @@ bool resolveOrientedPlacement(
 void tickRangePlace(LocalPlayer& player, PlacementContext const& placementContext) {
     auto const now = GetTickCount64();
     Vec3 const center = player.getPosition();
-    float const radius = static_cast<float>(gPlacementRadius.load(std::memory_order_relaxed));
+    float const radius = static_cast<float>(detail::placementRadius().load(std::memory_order_relaxed));
     auto& region = player.getDimensionBlockSource();
 
     auto candidates = projection::queryMissingCellsInRange(player, center, radius);
@@ -775,12 +714,12 @@ void tickRangePlace(LocalPlayer& player, PlacementContext const& placementContex
         if (found.slot >= kHotbarSlots) {
             // Back off a rejected swap; see sendInventorySwap and the same
             // logic in tickEasyPlace.
-            if (now < gNextSwapAt.load(std::memory_order_acquire)) continue;
+            if (now < detail::placementNextSwapAt().load(std::memory_order_acquire)) continue;
             auto& inventory = player.getInventory();
             int const hotbarSlot = player.getSelectedItemSlot();
             auto const& toItem = inventory.getItem(hotbarSlot);
             sendInventorySwap(player, found.slot, hotbarSlot, *found.item, toItem);
-            gNextSwapAt.store(now + kSwapRetryMs, std::memory_order_release);
+            detail::placementNextSwapAt().store(now + kSwapRetryMs, std::memory_order_release);
             return;
         }
         player.setSelectedSlot(found.slot);
@@ -809,9 +748,9 @@ void tickEasyPlace() {
         return;
     }
 
-    if (!gEnabled.load(std::memory_order_acquire)
-        && !gManualMode.load(std::memory_order_acquire)
-        && !gRangeEnabled.load(std::memory_order_acquire)) {
+    if (!detail::placementEnabled().load(std::memory_order_acquire)
+        && !detail::placementManualMode().load(std::memory_order_acquire)
+        && !detail::placementRangeEnabled().load(std::memory_order_acquire)) {
         updateAimedBlockEntityName(nullptr);
         return;
     }
@@ -831,10 +770,10 @@ void tickEasyPlace() {
     PlacementContext const placementContext = makePlacementContext(origin, dir, pickRange);
     updateAimedBlockEntityName(target ? target->block : nullptr);
     auto const tickNow = GetTickCount64();
-    if (tickNow < gNextPlaceAt.load(std::memory_order_acquire)) return;
+    if (tickNow < detail::placementNextPlaceAt().load(std::memory_order_acquire)) return;
 
     // Range placement scans everything within the configured radius.
-    if (gRangeEnabled.load(std::memory_order_acquire)) {
+    if (detail::placementRangeEnabled().load(std::memory_order_acquire)) {
         tickRangePlace(*player, placementContext);
         return;
     }
@@ -844,23 +783,23 @@ void tickEasyPlace() {
     // right-click press: startBuildBlock sets a one-shot request (consumed by
     // the placement below); the buildBlock hook cancels the vanilla build so
     // nothing is placed twice.
-    if (gManualMode.load(std::memory_order_acquire)) {
+    if (detail::placementManualMode().load(std::memory_order_acquire)) {
         auto const nowManual = GetTickCount64();
         bool allowed = false;
         // First block of a press: place it even if the button was already
         // released (a quick tap), until the request goes stale.
-        if (gManualPlaceRequested.load(std::memory_order_acquire)) {
-            if (nowManual - gManualPressAt.load(std::memory_order_acquire) <= kManualRequestTimeoutMs) {
+        if (detail::placementManualPlaceRequested().load(std::memory_order_acquire)) {
+            if (nowManual - detail::placementManualPressAt().load(std::memory_order_acquire) <= kManualRequestTimeoutMs) {
                 allowed = true;
             } else {
-                gManualPlaceRequested.store(false, std::memory_order_release);
+                detail::placementManualPlaceRequested().store(false, std::memory_order_release);
             }
         }
         // While the button stays held, pause for the initial delay and then
         // repeat at a steady rate (typematic).
-        if (!allowed && gManualHeld.load(std::memory_order_acquire)
-            && nowManual - gManualPressAt.load(std::memory_order_acquire) >= kManualInitialDelayMs
-            && nowManual - gLastManualPlaceAt.load(std::memory_order_acquire) >= kManualRepeatIntervalMs) {
+        if (!allowed && detail::placementManualHeld().load(std::memory_order_acquire)
+            && nowManual - detail::placementManualPressAt().load(std::memory_order_acquire) >= kManualInitialDelayMs
+            && nowManual - detail::placementLastManualPlaceAt().load(std::memory_order_acquire) >= kManualRepeatIntervalMs) {
             allowed = true;
         }
         if (!allowed) return;
@@ -894,7 +833,7 @@ void tickEasyPlace() {
     if (found.slot >= kHotbarSlots) {
         // Back off a rejected swap so it never retries more often than
         // kSwapRetryMs.
-        if (now < gNextSwapAt.load(std::memory_order_acquire)) return;
+        if (now < detail::placementNextSwapAt().load(std::memory_order_acquire)) return;
         // The server only accepts placements from the selected hotbar slot.
         // Swap the backpack item into the currently selected slot through a
         // server-synced NormalTransaction. Do not place in the same tick: the
@@ -906,7 +845,7 @@ void tickEasyPlace() {
         int const hotbarSlot = player->getSelectedItemSlot();
         auto const& toItem = inventory.getItem(hotbarSlot);
         sendInventorySwap(*player, found.slot, hotbarSlot, *found.item, toItem);
-        gNextSwapAt.store(now + kSwapRetryMs, std::memory_order_release);
+        detail::placementNextSwapAt().store(now + kSwapRetryMs, std::memory_order_release);
         return;
     }
     player->setSelectedSlot(found.slot);
@@ -914,8 +853,8 @@ void tickEasyPlace() {
     markPlaced(placement.cell, now);
     // Manual repeat bookkeeping: record this placement and mark the current
     // press as having placed its first block (so holding then auto-repeats).
-    gLastManualPlaceAt.store(now, std::memory_order_release);
-    gManualPlaceRequested.store(false, std::memory_order_release);
+    detail::placementLastManualPlaceAt().store(now, std::memory_order_release);
+    detail::placementManualPlaceRequested().store(false, std::memory_order_release);
 }
 
 LL_TYPE_INSTANCE_HOOK(
@@ -935,7 +874,7 @@ LL_TYPE_INSTANCE_HOOK(
 // check is essential: the server processes LHolo's own placement through these
 // same functions on the ServerPlayer, and that must not be suppressed.
 bool isLocalManualBuild(GameMode& gm) {
-    if (!gManualMode.load(std::memory_order_acquire)) return false;
+    if (!detail::placementManualMode().load(std::memory_order_acquire)) return false;
     auto client = ll::service::getClientInstance();
     auto* localPlayer = client ? client->getLocalPlayer() : nullptr;
     return localPlayer && &gm.mPlayer == static_cast<Player*>(localPlayer);
@@ -954,9 +893,9 @@ LL_TYPE_INSTANCE_HOOK(
     uchar             face
 ) {
     if (isLocalManualBuild(*this)) {
-        gManualPressAt.store(GetTickCount64(), std::memory_order_release);
-        gManualPlaceRequested.store(true, std::memory_order_release);
-        gManualHeld.store(true, std::memory_order_release);
+        detail::placementManualPressAt().store(GetTickCount64(), std::memory_order_release);
+        detail::placementManualPlaceRequested().store(true, std::memory_order_release);
+        detail::placementManualHeld().store(true, std::memory_order_release);
         return;  // LHolo handles the placement from tickEasyPlace.
     }
     origin(pos, face);
@@ -971,7 +910,7 @@ LL_TYPE_INSTANCE_HOOK(
     void
 ) {
     if (isLocalManualBuild(*this)) {
-        gManualHeld.store(false, std::memory_order_release);
+        detail::placementManualHeld().store(false, std::memory_order_release);
         return;
     }
     origin();
@@ -1001,53 +940,53 @@ void setEnabled(bool enabled) {
     } else {
         logger().info("Easy-place disabled");
     }
-    gEnabled.store(enabled, std::memory_order_release);
+    detail::placementEnabled().store(enabled, std::memory_order_release);
 }
 
 bool isEnabled() {
-    return gEnabled.load(std::memory_order_acquire);
+    return detail::placementEnabled().load(std::memory_order_acquire);
 }
 
 void setRangeEnabled(bool enabled) {
     if (enabled) {
-        logger().info("Range placement enabled (radius {})", gPlacementRadius.load(std::memory_order_relaxed));
+        logger().info("Range placement enabled (radius {})", detail::placementRadius().load(std::memory_order_relaxed));
     } else {
         logger().info("Range placement disabled");
     }
-    gRangeEnabled.store(enabled, std::memory_order_release);
+    detail::placementRangeEnabled().store(enabled, std::memory_order_release);
 }
 
 bool isRangeEnabled() {
-    return gRangeEnabled.load(std::memory_order_acquire);
+    return detail::placementRangeEnabled().load(std::memory_order_acquire);
 }
 
 void setPlacementRadius(int radius) {
-    gPlacementRadius.store(std::clamp(radius, 1, 4), std::memory_order_release);
+    detail::placementRadius().store(std::clamp(radius, 1, 4), std::memory_order_release);
 }
 
 int getPlacementRadius() {
-    return gPlacementRadius.load(std::memory_order_relaxed);
+    return detail::placementRadius().load(std::memory_order_relaxed);
 }
 
 void setManualMode(bool manual) {
     if (!manual) {
         // A release hook can be missed while menus or mode switches are active.
         // Never carry a stale press/hold request into the next manual session.
-        gManualHeld.store(false, std::memory_order_release);
-        gManualPlaceRequested.store(false, std::memory_order_release);
-        gManualPressAt.store(0, std::memory_order_release);
-        gLastManualPlaceAt.store(0, std::memory_order_release);
+        detail::placementManualHeld().store(false, std::memory_order_release);
+        detail::placementManualPlaceRequested().store(false, std::memory_order_release);
+        detail::placementManualPressAt().store(0, std::memory_order_release);
+        detail::placementLastManualPlaceAt().store(0, std::memory_order_release);
     }
-    gManualMode.store(manual, std::memory_order_release);
+    detail::placementManualMode().store(manual, std::memory_order_release);
 }
 
 bool isManualMode() {
-    return gManualMode.load(std::memory_order_acquire);
+    return detail::placementManualMode().load(std::memory_order_acquire);
 }
 
 std::string getAimedBlockEntityName() {
-    std::lock_guard lock(gAimedNameMutex);
-    return gAimedBlockEntityName;
+    std::lock_guard lock(detail::placementAimedNameMutex());
+    return detail::placementAimedBlockEntityName();
 }
 
 bool installHook() {
