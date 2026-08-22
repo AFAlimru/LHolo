@@ -80,7 +80,8 @@ LHolo/
 │  │  ├─ FileDialog.*           通用结构打开与 `.mcstructure` 保存对话框
 │  │  ├─ HotkeyFormat.*         纯按键名/修饰键格式化（不读会话状态）
 │  │  ├─ MenuController.*       菜单模型构建/应用、动作回调与 GUI 渲染
-│  │  └─ LHoloMenu.*            纯菜单模型、页面和动作回调
+│  │  ├─ MenuWidgets.*          通用菜单控件（分节、行、步进器、居中数值）
+│  │  └─ LHoloMenu.*            纯菜单模型、页面渲染与动作回调类型
 │  ├─ projection/
 │  │  ├─ Projection.cpp         对外门面：Hook 生命周期、设置与查询转发
 │  │  ├─ Projection.h           GUI/HUD 和辅助放置使用的投影控制接口
@@ -164,6 +165,7 @@ LHolo/
   `StructureLoader` 的会话状态驱动。
 - `ui/MenuController` 负责菜单模型构建/应用、动作回调与 GUI 渲染，只通过 `StructureSession`/
   `StructureUiState` 访问状态；`StructureLoader` 保留 HUD、快捷键事件与加载入口。
+- `ui/MenuWidgets` 提供通用菜单控件（分节、值行、复选框、步进器、居中数值绘制），不读取会话状态。
 - `structure/StructurePaths` 提供 UTF-8 路径转换，结构模块与 UI 共用。
 - `projection` 负责“结构如何出现在世界中”，不弹文件选择框、不直接操作 ImGui。
 - `projection/ProjectionTypes.h` 不包含运行状态、Hook 或 Minecraft 资源所有权；内部纯数据定义集中在
