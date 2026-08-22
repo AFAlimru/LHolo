@@ -76,6 +76,7 @@ LHolo/
 │  │  ├─ ProjectionTypes.h      对外查询与进度的纯数据类型
 │  │  ├─ ProjectionCorrections.* 有界世界纠错扫描、进度计数与 section 失效
 │  │  ├─ ProjectionInternalTypes.h 内部键、状态枚举与无资源引用类型
+│  │  ├─ ProjectionMeshScheduler.* 主线程 section 选择、局部快照与同步回退调度
 │  │  ├─ ProjectionMeshUpload.* 主线程完成队列校验、MeshData 上传与失败回退
 │  │  ├─ ProjectionMeshWorker.* 单线程 executor、generation 与完成队列
 │  │  ├─ ProjectionPlacement.*  变换/分层后的虚拟世界与方块实体放置视图
@@ -118,7 +119,10 @@ LHolo/
 - `projection/ProjectionState.h` 只声明投影运行态及资源所有权；创建、替换、清理和跨世界校验仍由
   `Projection.cpp` 的生命周期流程统一执行，禁止在状态类型中暗藏线程启动或游戏 API 调用。
 - `projection/ProjectionMeshWorker.*` 只管理单线程 executor、任务异常边界、generation 失效和完成队列；
-  Worker 任务由实现层提供，基础设施不得读取 `gState`、世界对象或渲染上下文。
+  Worker 任务由调度层提供，基础设施不得读取 `gState`、世界对象或渲染上下文。
+- `projection/ProjectionMeshScheduler.*` 仅在 opaque 主线程选择 dirty section、准备两格 halo 的只读世界视图并
+  提交 Worker Task；增量优先、距离排序、revision 合并和连续三次失败后的同步回退策略集中在这里。
+  Task 只持有显式快照，不得捕获 `gState`、`renderContext` 或活动共享 `BlockTessellator`。
 - `projection/ProjectionMeshUpload.*` 仅在主线程消费完成队列，校验 Worker/结构 generation 与 section revision，
   按每帧两个 section、1 ms 预算上传 `MeshData`；连续失败三次时保持原有同步回退策略。
 - `projection/ProjectionPlacement.*` 在变换、偏移或分层变化后重建虚拟方块/方块实体表、世界坐标索引、

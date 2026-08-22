@@ -17,6 +17,7 @@
 #include "projection/Projection.h"
 #include "projection/ProjectionCorrections.h"
 #include "projection/ProjectionInternalTypes.h"
+#include "projection/ProjectionMeshScheduler.h"
 #include "projection/ProjectionMeshUpload.h"
 #include "projection/ProjectionMeshWorker.h"
 #include "projection/ProjectionPlacement.h"
@@ -91,9 +92,6 @@
 #include "mc/world/level/block/BlockRenderLayer.h"
 #include "mc/world/level/block/actor/BlockActor.h"
 #include "mc/world/level/biome/biome_color_sampling/BiomeColorSampling.h"
-#include "mc/world/level/chunk/LevelChunk.h"
-#include "mc/world/level/chunk/ChunkViewSource.h"
-#include "mc/world/level/chunk/ChunkSourceViewGenerateMode.h"
 #include "mc/world/level/levelgen/structure/LegacyStructureSettings.h"
 #include "mc/world/level/levelgen/structure/LegacyStructureTemplate.h"
 #include "mc/world/level/material/Material.h"
@@ -109,7 +107,6 @@ namespace {
 
 using detail::CorrectionState;
 using detail::updateProjectionCorrections;
-using detail::AsyncSectionBuildResult;
 using detail::attachProjectionWorldEvents;
 using detail::disableMeshWorkerForSession;
 using detail::detachProjectionWorldEvents;
@@ -118,7 +115,6 @@ using detail::findTessellationBlockActor;
 using detail::getProjectionMirror;
 using detail::getProjectionRotation;
 using detail::isLayerVisible;
-using detail::meshWorkerIsBusy;
 using detail::meshWorkerIsDisabledForSession;
 using detail::projectionStatesMatch;
 using detail::ProjectionState;
@@ -128,8 +124,6 @@ using detail::startMeshWorker;
 using detail::stopMeshWorker;
 using detail::SubChunkKey;
 using detail::ScopedTessellationBlocks;
-using detail::submitMeshWorkerTask;
-using detail::transformStructurePosition;
 
 auto& logger() {
     return LHolo::getInstance().getSelf().getLogger();
@@ -539,27 +533,6 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
             .identityTransform        = identityTransform
         };
 
-        // This is the single geometry implementation used by both the worker
-        // (UploadMode::Never) and the compatibility fallback (Buffered).
-        auto const buildSectionCpu = [sectionBuildSettings](
-            ProjectionState& projectionState,
-            Tessellator& tessellator,
-            BlockTessellator& blockTessellator,
-            BlockSource& region,
-            std::size_t section,
-            Tessellator::UploadMode uploadMode
-        ) {
-            detail::buildProjectionSection(
-                projectionState,
-                tessellator,
-                blockTessellator,
-                region,
-                section,
-                uploadMode,
-                sectionBuildSettings
-            );
-        };
-
         if (tessellator.isTessellating()) tessellator.cancel();
 
         // Consume completed CPU data only in the opaque render pass.
@@ -595,265 +568,20 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
             ));
         }
 
-        // A single in-flight task gives each BlockTessellator exclusive access
-        // and naturally coalesces repeated changes into the latest revision.
-        if (gState.asyncMeshBuildingEnabled && !meshWorkerIsBusy()) {
-            auto const& cameraPosition = renderContext.getCameraPosition();
-            std::optional<std::size_t> selected;
-            bool selectedIncremental{};
-            float selectedDistance = std::numeric_limits<float>::max();
-            for (std::size_t section = 0; section < gState.sectionDirty.size(); ++section) {
-                if (!gState.sectionDirty[section] || gState.sectionBuildInFlight[section]) continue;
-                auto const incremental = gState.sectionIncrementalDirty[section];
-                auto const center = gState.sectionCenters[section] + Vec3{
-                    static_cast<float>(gState.anchor.x + offsetX),
-                    static_cast<float>(gState.anchor.y + offsetY),
-                    static_cast<float>(gState.anchor.z + offsetZ)
-                };
-                auto const delta = center - cameraPosition;
-                auto const distance = delta.x * delta.x + delta.y * delta.y + delta.z * delta.z;
-                if (!selected || (incremental && !selectedIncremental)
-                    || (incremental == selectedIncremental && distance < selectedDistance)) {
-                    selected = section;
-                    selectedIncremental = incremental;
-                    selectedDistance = distance;
-                }
-            }
-
-            if (selected) {
-                auto const snapshotStarted = std::chrono::steady_clock::now();
-                auto const section = *selected;
-                BlockPos minimum{INT_MAX, INT_MAX, INT_MAX};
-                BlockPos maximum{INT_MIN, INT_MIN, INT_MIN};
-                for (auto const index : gState.sectionBlockIndices[section]) {
-                    auto const local = transformStructurePosition(
-                        gState.structure->renderBlocks[index], *gState.structure, mirrorMode, rotationTurns
-                    );
-                    BlockPos const world{
-                        gState.anchor.x + offsetX + local.x,
-                        gState.anchor.y + offsetY + local.y,
-                        gState.anchor.z + offsetZ + local.z
-                    };
-                    minimum.x = std::min(minimum.x, world.x);
-                    minimum.y = std::min(minimum.y, world.y);
-                    minimum.z = std::min(minimum.z, world.z);
-                    maximum.x = std::max(maximum.x, world.x);
-                    maximum.y = std::max(maximum.y, world.y);
-                    maximum.z = std::max(maximum.z, world.z);
-                }
-                minimum = BlockPos{minimum.x - 2, minimum.y - 2, minimum.z - 2};
-                maximum = BlockPos{maximum.x + 2, maximum.y + 2, maximum.z + 2};
-
-                auto snapshot = std::make_shared<ProjectionState>();
-                snapshot->level = gState.level;
-                snapshot->dimension = gState.dimension;
-                snapshot->structureGeneration = gState.structureGeneration;
-                snapshot->anchor = gState.anchor;
-                // Structure data and the virtual projected world are immutable
-                // for one placement generation. Share them with the worker
-                // instead of rebuilding allocation-heavy section/halo maps for
-                // every task. Only correction bytes can change incrementally,
-                // so those receive a task-local copy.
-                snapshot->structure = gState.structure;
-                snapshot->correctionStates = gState.correctionStates;
-                snapshot->blockActorRendererAvailable = gState.blockActorRendererAvailable;
-                snapshot->sectionBlockIndices = {gState.sectionBlockIndices[section]};
-                snapshot->expectedWorldBlocks = gState.expectedWorldBlocks;
-                snapshot->expectedWorldBlockActors = gState.expectedWorldBlockActors;
-                snapshot->expectedWorldBlockIndices = gState.expectedWorldBlockIndices;
-                for (auto& meshes : snapshot->sectionMeshes) meshes.resize(1);
-                snapshot->warningFillSectionMeshes.resize(1);
-                snapshot->correctionOutlineSectionMeshes.resize(1);
-                snapshot->liquidProxySectionMeshes.resize(1);
-                snapshot->blockEntityPlaceholderSectionMeshes.resize(1);
-
-                auto const snapshotDataFinished = std::chrono::steady_clock::now();
-                auto const snapshotDataMicros = static_cast<std::uint64_t>(
-                    std::chrono::duration_cast<std::chrono::microseconds>(
-                        snapshotDataFinished - snapshotStarted
-                    ).count()
-                );
-                auto chunkView = std::make_shared<ChunkViewSource>(
-                    region.getChunkSource(), ChunkSource::LoadMode::Deferred
-                );
-                chunkView->move(
-                    minimum,
-                    maximum,
-                    false,
-                    ChunkSourceViewGenerateMode::DontGenerateOnlyGet,
-                    [](gsl::span<std::shared_ptr<LevelChunk>>) {},
-                    nullptr
-                );
-                auto const chunkViewMicros = static_cast<std::uint64_t>(
-                    std::chrono::duration_cast<std::chrono::microseconds>(
-                        std::chrono::steady_clock::now() - snapshotDataFinished
-                    ).count()
-                );
-                auto const snapshotPrepareMicros = static_cast<std::uint64_t>(
-                    std::chrono::duration_cast<std::chrono::microseconds>(
-                        std::chrono::steady_clock::now() - snapshotStarted
-                    ).count()
-                );
-
-                auto const workerGeneration = gState.meshWorkerGeneration;
-                auto const structureGeneration = gState.structureGeneration;
-                auto const revision = gState.sectionRequestedRevision[section];
-                auto const weakBufferService = tessellator.mBufferResourceService;
-                auto* level = gState.level;
-                auto* dimension = gState.dimension;
-                auto submitted = submitMeshWorkerTask(
-                    workerGeneration,
-                    [buildSectionCpu, snapshot, chunkView, level, dimension, weakBufferService,
-                     workerGeneration, structureGeneration, revision, section,
-                     snapshotPrepareMicros, snapshotDataMicros, chunkViewMicros]() mutable {
-                        AsyncSectionBuildResult result;
-                        result.workerGeneration = workerGeneration;
-                        result.structureGeneration = structureGeneration;
-                        result.revision = revision;
-                        result.section = section;
-                        result.snapshotPrepareMicros = snapshotPrepareMicros;
-                        result.snapshotDataMicros = snapshotDataMicros;
-                        result.chunkViewMicros = chunkViewMicros;
-                        auto const workerStarted = std::chrono::steady_clock::now();
-                        try {
-                            auto localRegion = std::make_unique<BlockSource>(
-                                *level, *dimension, *chunkView, false, true, false
-                            );
-                            BlockTessellator localBlockTessellator(localRegion.get());
-                            localBlockTessellator.mCachedGetBlock.get()
-                                = [snapshot, region = localRegion.get()](BlockPos const& position) -> Block const& {
-                                    auto const found = snapshot->expectedWorldBlocks->find(
-                                        std::tuple{position.x, position.y, position.z}
-                                    );
-                                    return found == snapshot->expectedWorldBlocks->end()
-                                        ? region->getBlock(position) : *found->second;
-                                };
-                            Tessellator localTessellator(weakBufferService);
-                            buildSectionCpu(
-                                *snapshot, localTessellator, localBlockTessellator, *localRegion,
-                                0, Tessellator::UploadMode::Never
-                            );
-                            result.workerBuildMicros = static_cast<std::uint64_t>(
-                                std::chrono::duration_cast<std::chrono::microseconds>(
-                                    std::chrono::steady_clock::now() - workerStarted
-                                ).count()
-                            );
-                            for (std::size_t bucket = 0; bucket < result.sectionMeshes.size(); ++bucket) {
-                                result.sectionMeshes[bucket] = std::move(snapshot->sectionMeshes[bucket][0]);
-                            }
-                            result.warningFillMesh = std::move(snapshot->warningFillSectionMeshes[0]);
-                            result.correctionOutlineMesh = std::move(snapshot->correctionOutlineSectionMeshes[0]);
-                            result.liquidProxyMesh = std::move(snapshot->liquidProxySectionMeshes[0]);
-                            result.blockEntityPlaceholderMesh
-                                = std::move(snapshot->blockEntityPlaceholderSectionMeshes[0]);
-                            auto failMeshValidation = [&](std::string_view meshName, std::string_view reason,
-                                                          std::uint64_t expected, std::uint64_t actual) {
-                                result.failureReason.assign(meshName);
-                                result.failureReason.append(": ");
-                                result.failureReason.append(reason);
-                                result.expectedVertexCount = expected;
-                                result.actualVertexCount = actual;
-                                return false;
-                            };
-                            auto meshDataIsConsistent = [&](std::unique_ptr<mce::Mesh> const& mesh,
-                                                            std::string_view meshName) {
-                                if (!mesh) return true;
-                                auto const& data = mesh->mMeshData.get();
-                                auto const vertexCount = data.mPositions.get().size();
-                                if (vertexCount == 0) {
-                                    return failMeshValidation(meshName, "empty position field", 1, 0);
-                                }
-                                if (data.size() == 0) {
-                                    return failMeshValidation(meshName, "MeshData::size is zero", 1, 0);
-                                }
-                                // UploadMode::Never intentionally leaves the
-                                // upload-side Mesh vertex count unset. At this
-                                // stage mPositions is authoritative; validate
-                                // every enabled CPU attribute against it.
-                                auto fieldIsConsistent = [&](auto const& field, std::string_view fieldName) {
-                                    if (field.empty() || field.size() == vertexCount) return true;
-                                    std::string reason{"attribute count mismatch: "};
-                                    reason.append(fieldName);
-                                    return failMeshValidation(meshName, reason, vertexCount, field.size());
-                                };
-                                if (!fieldIsConsistent(data.mNormals.get(), "normals")
-                                    || !fieldIsConsistent(data.mTangents.get(), "tangents")
-                                    || !fieldIsConsistent(data.mColors.get(), "colors")
-                                    || !fieldIsConsistent(data.mBoneId0s.get(), "boneId0")
-                                    || !fieldIsConsistent(data.mPBRTextureIndices.get(), "pbrTextureIndices")
-                                    || !fieldIsConsistent(data.mMERS.get(), "mers")
-                                    || !fieldIsConsistent(data.mGeoType.get(), "geoType")) return false;
-                                for (std::size_t uv = 0; uv < std::size(data.mTextureUVs); ++uv) {
-                                    std::string fieldName{"textureUV"};
-                                    fieldName += static_cast<char>('0' + uv);
-                                    if (!fieldIsConsistent(data.mTextureUVs[uv].get(), fieldName)) return false;
-                                }
-                                return true;
-                            };
-                            constexpr std::array<std::string_view, 4> meshNames{
-                                "opaque", "alpha", "alphaOneSided", "blend"
-                            };
-                            result.success = true;
-                            for (std::size_t bucket = 0; bucket < result.sectionMeshes.size(); ++bucket) {
-                                if (!meshDataIsConsistent(result.sectionMeshes[bucket], meshNames[bucket])) {
-                                    result.success = false;
-                                    break;
-                                }
-                            }
-                            result.success = result.success
-                                && meshDataIsConsistent(result.warningFillMesh, "warningFill")
-                                && meshDataIsConsistent(result.correctionOutlineMesh, "correctionOutline")
-                                && meshDataIsConsistent(result.liquidProxyMesh, "liquidProxy")
-                                && meshDataIsConsistent(result.blockEntityPlaceholderMesh, "blockEntityPlaceholder");
-                        } catch (std::exception const& exception) {
-                            result.workerBuildMicros = static_cast<std::uint64_t>(
-                                std::chrono::duration_cast<std::chrono::microseconds>(
-                                    std::chrono::steady_clock::now() - workerStarted
-                                ).count()
-                            );
-                            result.success = false;
-                            result.failureReason = std::string{"worker exception: "} + exception.what();
-                        } catch (...) {
-                            result.workerBuildMicros = static_cast<std::uint64_t>(
-                                std::chrono::duration_cast<std::chrono::microseconds>(
-                                    std::chrono::steady_clock::now() - workerStarted
-                                ).count()
-                            );
-                            result.success = false;
-                            result.failureReason = "worker non-standard exception";
-                        }
-                        return result;
-                    }
-                );
-                if (submitted) {
-                    gState.sectionBuildInFlight[section] = true;
-                    gState.sectionDirty[section] = false;
-                } else if (++gState.consecutiveMeshWorkerFailures >= 3) {
-                    gState.asyncMeshBuildingEnabled = false;
-                    disableMeshWorkerForSession();
-                    stopMeshWorker();
-                    logger().warn("Projection mesh task submission failed three times; using synchronous fallback for this session");
-                }
-            }
-        }
-
-        // Compatibility path: preserve one synchronous section per frame when
-        // worker creation or three consecutive worker operations fail.
-        if (!gState.asyncMeshBuildingEnabled) {
-            for (std::size_t attempt = 0; attempt < gState.sectionDirty.size(); ++attempt) {
-                auto const section = gState.dirtySectionCursor++ % gState.sectionDirty.size();
-                if (!gState.sectionDirty[section]) continue;
-                gState.sectionDirty[section] = false;
-                buildSectionCpu(
-                    gState, tessellator, blockTessellator, region, section,
-                    Tessellator::UploadMode::Buffered
-                );
-                gState.sectionUploadedRevision[section] = gState.sectionRequestedRevision[section];
-                gState.sectionIncrementalDirty[section] = false;
-                gState.meshPreflightDone = false;
-                break;
-            }
-        }
+        detail::scheduleProjectionMeshBuild(
+            gState,
+            tessellator,
+            region,
+            renderContext.getCameraPosition(),
+            sectionBuildSettings
+        );
+        detail::buildNextProjectionSectionSynchronously(
+            gState,
+            tessellator,
+            blockTessellator,
+            region,
+            sectionBuildSettings
+        );
     }
 
     // Keep vanilla world queries at their real BlockPos, but do not upload large
