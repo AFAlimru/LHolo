@@ -78,6 +78,7 @@ LHolo/
 │  │  ├─ ProjectionInternalTypes.h 内部键、状态枚举与无资源引用类型
 │  │  ├─ ProjectionMeshWorker.* 单线程 executor、generation 与完成队列
 │  │  ├─ ProjectionRules.*      坐标、分层、状态匹配和渲染分类纯规则
+│  │  ├─ ProjectionSectionBuilder.h Worker/同步 section 构建的只读参数快照
 │  │  ├─ ProjectionState.h      世界身份、CPU 状态、Worker 状态与 Mesh 所有权
 │  │  ├─ ProjectionVirtualWorld.* Tessellation 线程局部虚拟方块与方块实体视图
 │  │  └─ ProjectionWorldEvents.* 真实世界方块/子区块通知的监听与排队
@@ -110,6 +111,8 @@ LHolo/
   旋转、镜像、分层可见性和状态匹配规则修改时应集中在这里回归。
 - `projection/ProjectionCorrections.*` 在固定每帧预算内比较真实世界与投影单元，维护纠错状态和进度计数；
   它可以标记受影响 section，但不创建 Mesh、不访问 Tessellator，也不发布 HUD 原子状态。
+- `projection/ProjectionSectionBuilder.h` 显式列出一次 section 构建允许读取的变换、位置、透明度参数；
+  Worker 与同步回退必须复制同一份设置，禁止通过 lambda `[=]` 隐式扩大后台任务依赖。
 - `projection/ProjectionState.h` 只声明投影运行态及资源所有权；创建、替换、清理和跨世界校验仍由
   `Projection.cpp` 的生命周期流程统一执行，禁止在状态类型中暗藏线程启动或游戏 API 调用。
 - `projection/ProjectionMeshWorker.*` 只管理单线程 executor、任务异常边界、generation 失效和完成队列；

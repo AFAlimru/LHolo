@@ -19,6 +19,7 @@
 #include "projection/ProjectionInternalTypes.h"
 #include "projection/ProjectionMeshWorker.h"
 #include "projection/ProjectionRules.h"
+#include "projection/ProjectionSectionBuilder.h"
 #include "projection/ProjectionState.h"
 #include "projection/ProjectionVirtualWorld.h"
 #include "projection/ProjectionWorldEvents.h"
@@ -134,6 +135,7 @@ using detail::meshWorkerIsDisabledForSession;
 using detail::projectionStatesMatch;
 using detail::ProjectedBlockActor;
 using detail::ProjectionState;
+using detail::ProjectionSectionBuildSettings;
 using detail::RenderBucket;
 using detail::renderBucketFor;
 using detail::startMeshWorker;
@@ -672,9 +674,23 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
             gBuildProgressWrongState.store(gState.progressWrongStateCount, std::memory_order_release);
         }
 
+        ProjectionSectionBuildSettings const sectionBuildSettings{
+            .mirror                   = mirror,
+            .rotation                 = rotation,
+            .mirrorMode               = mirrorMode,
+            .rotationTurns            = rotationTurns,
+            .offsetX                  = offsetX,
+            .offsetY                  = offsetY,
+            .offsetZ                  = offsetZ,
+            .structureOpacity         = structureOpacity,
+            .correctionFillOpacity    = correctionFillOpacity,
+            .correctionOutlineOpacity = correctionOutlineOpacity,
+            .identityTransform        = identityTransform
+        };
+
         // This is the single geometry implementation used by both the worker
         // (UploadMode::Never) and the compatibility fallback (Buffered).
-        auto const buildSectionCpu = [=](
+        auto const buildSectionCpu = [sectionBuildSettings](
             ProjectionState& projectionState,
             Tessellator& tessellator,
             BlockTessellator& blockTessellator,
@@ -683,6 +699,17 @@ void renderProjection(BaseActorRenderContext& renderContext, bool renderAlphaLay
             Tessellator::UploadMode uploadMode
         ) {
 #define gState projectionState
+            auto const mirror                   = sectionBuildSettings.mirror;
+            auto const rotation                 = sectionBuildSettings.rotation;
+            auto const mirrorMode               = sectionBuildSettings.mirrorMode;
+            auto const rotationTurns            = sectionBuildSettings.rotationTurns;
+            auto const offsetX                  = sectionBuildSettings.offsetX;
+            auto const offsetY                  = sectionBuildSettings.offsetY;
+            auto const offsetZ                  = sectionBuildSettings.offsetZ;
+            auto const structureOpacity         = sectionBuildSettings.structureOpacity;
+            auto const correctionFillOpacity    = sectionBuildSettings.correctionFillOpacity;
+            auto const correctionOutlineOpacity = sectionBuildSettings.correctionOutlineOpacity;
+            auto const identityTransform        = sectionBuildSettings.identityTransform;
             LegacyStructureSettings sectionTransformSettings;
             sectionTransformSettings.setMirror(mirror);
             sectionTransformSettings.setRotation(rotation);
