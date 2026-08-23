@@ -18,7 +18,7 @@ LHolo是一个 [LeviLamina](https://github.com/LiteLDev/LeviLamina) 客户端模
 
 支持分层显示
 
-支持计数,HUD可现实 已放置/总数、类型错误数、状态错误数等等
+支持计数,HUD可显示 已放置/总数、类型错误数、状态错误数等等
 
 简单记忆功能，支持一键恢复上次投影
 
