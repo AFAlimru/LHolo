@@ -1,6 +1,7 @@
 # LHolo
 
 LHolo是一个 [LeviLamina](https://github.com/LiteLDev/LeviLamina) 客户端模组
+
 [安装教程](https://www.bilibili.com/opus/1239631121935761412)
 
 ## 简介
