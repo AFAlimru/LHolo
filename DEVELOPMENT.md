@@ -73,13 +73,13 @@ LHolo/
 │  │  ├─ java_to_bedrock/       Chunker 生成映射及运行时解析模块
 │  │  ├─ StructurePaths.*       UTF-8 路径转换
 │  │  ├─ StructureSession.*    结构会话状态（已加载结构、变换/分层、恢复快照、状态文案）
-│  │  ├─ StructureUiState.*     UI/菜单会话状态（GUI、热键、HUD、路径、材料清单）
+│  │  ├─ StructureUiState.*     UI 会话状态（GUI、热键、HUD、待处理动作、材料清单）
 │  │  ├─ StructureLoader.cpp    HUD、快捷键事件、加载入口与公开 getter（菜单/GUI 由 MenuController 负责）
 │  │  └─ StructureLoader.h      LoadedStructure 统一数据模型
 │  ├─ ui/
 │  │  ├─ FileDialog.*           通用结构打开与 `.mcstructure` 保存对话框
 │  │  ├─ HotkeyFormat.*         纯按键名/修饰键格式化（不读会话状态）
-│  │  ├─ MenuController.*       菜单模型构建/应用、动作回调与 GUI 渲染
+│  │  ├─ MenuController.*       菜单模型构建/应用、路径缓冲、页面状态、动作回调与 GUI 渲染
 │  │  ├─ MenuWidgets.*          通用菜单控件（分节、行、步进器、居中数值）
 │  │  ├─ MenuPages.*            各页面渲染、导航与材料清单弹窗
 │  │  └─ LHoloMenu.*            纯菜单模型、页面分发与动作回调类型
@@ -148,7 +148,8 @@ LHolo/
 - `projection/ProjectionController` 只编排 Hook 安装/回滚与投影禁用，不包含渲染帧逻辑。
 - `app/AppKernel` 是唯一启停入口，依赖 `ProjectionController` 与各外部模块；`plugin` 只调用 `app/`。
 - 内部模块不得 include `projection/Projection.h`；只有门面自身和外部消费者（`place`、`ui`、`plugin`）可以。
-- `ProjectionSession` 是运行时可变状态的唯一所有者，其余模块通过访问器使用。
+- `ProjectionSession` 是运行时可变状态的唯一所有者；状态算法只能通过会话加锁的作用域回调运行，
+  mutex、`ProjectionState` 和捕获线框不能被分别取得。
 
 模块边界必须保持清晰：
 
@@ -159,9 +160,12 @@ LHolo/
 - `settings/SettingsStore` 只负责 `config.json` 的读写与字段映射，不持有运行状态；应用到全局状态由
   `StructureLoader` 完成，配置默认值与钳制语义保持不变。
 - `structure/StructureUiState` 持有 UI/菜单会话状态：GUI 可见性、热键配置与按下状态、HUD 开关、
-  待处理偏移/切层/保存、路径缓冲与材料清单；交互逻辑仍在 `StructureLoader`，只通过访问器读写。
+  待处理偏移/切层/保存与材料清单；atomic、mutex 和容器均不向调用者暴露，交互逻辑仍在
+  `StructureLoader`，菜单线程专属的路径输入缓冲和当前页面由 `MenuController` 私有持有。
 - `structure/StructureSession` 持有结构会话状态：已加载结构、变换/分层值、恢复快照与状态文案；
-  公开 getter/setter 语义（含钳制）保持在 `StructureLoader`，内部读写经访问器完成。
+  mutex、原子量、字符串和容器均不向调用者暴露，菜单/HUD 通过一致快照读取，变更通过具体操作完成。
+  关闭活动投影时必须先把当前变换/分层冻结到恢复快照，再释放 `LoadedStructure`；空会话将显示层钳到
+  0 的临时 UI 值不得覆盖恢复记录。
 - `ui/HotkeyFormat` 只根据显式参数生成按键名与和弦字符串，不读取会话状态；快捷键交互仍由
   `StructureLoader` 的会话状态驱动。
 - `ui/MenuController` 负责菜单模型构建/应用、动作回调与 GUI 渲染，只通过 `StructureSession`/
@@ -187,7 +191,9 @@ LHolo/
   Mesh 提交、命中选择抑制和 `$renderBlockEntities` 后的帧入口；它只通过 `ProjectionSession` 访问会话状态，
   不直接触碰 `Projection.cpp` 的全局变量。
 - `projection/runtime/ProjectionSession.*` 持有全部会话级可变状态：状态锁、`ProjectionState`、捕获边框、
-  透明度、结构边框开关与下一次锚点，并通过访问器提供给帧编排和门面；`Projection.cpp` 不再直接读写全局量。
+  透明度、结构边框开关与下一次锚点；帧编排和只读查询通过锁内作用域回调操作状态，门面通过具体设置/
+  锚点操作访问会话，`Projection.cpp` 不直接取得锁或可变状态引用。恢复锚点只属于紧随其后的恢复激活；
+  显式关闭/禁用或成功发起普通文件加载时必须撤销尚未消费的请求，禁止旧锚点泄漏到后续结构。
 - `projection/runtime/ProjectionInvalidation.*` 对比当前帧设置与缓存值，集中处理旋转/镜像、移动、切层、透明度和
   纠错样式变化引起的 section dirty、revision、旧 Mesh 清理及可见进度重算；placement 重建仍由调用方触发。
 - `projection/runtime/ProjectionLifecycle.*` 构造尚未激活的 `ProjectionState`、解析 terrain atlas、建立 section 索引，
@@ -221,8 +227,8 @@ LHolo/
   `ProjectionFramePipeline`/`ProjectionCorrectionTracker` 负责。
 - `overlay` 负责“外部 GUI 如何安全进入游戏图形链”，不解析结构或扫描世界方块。
 - `place` 负责轻松、手动和范围放置：调用 projection 查询接口，在完整背包中查找物品，必要时交换到快捷栏，并发送 `InventoryTransactionPacket`；不碰渲染与配置。
-- `place/PlacementState` 持有放置会话状态：开关、手动/范围定时、近期放置格与失败计划缓存；
-  放置逻辑仍在 `PlaceHelper`，只通过访问器读写。
+- `place/PlacementState` 持有放置会话状态：开关、手动/范围定时、近期放置格、失败计划缓存与准心方块实体名称；
+  atomic、mutex、字符串和容器均不向调用者暴露，`PlaceHelper`/`PlacementExecutor` 只通过具体操作读写。
 - `place/PlacementExecutor` 承载轻松/手动/范围放置的规划与执行（背包查找、交换、放置事务、
   点击候选与预测匹配）；游戏 Hook 留在 `PlaceHelper`，只调用 `tickEasyPlace`/`tickRangePlace`。
 - `input` 负责菜单期间的最小游戏动作保护；当前只拦截本地玩家破坏方块，不扩展为移动冻结或全交互封锁。
@@ -1043,6 +1049,9 @@ xmake r LHoloLogicTests
 - `core/ProjectionLayoutRules`：镜像/旋转枚举映射、结构坐标变换、分层可见性、渲染桶分类。
 - `runtime/ProjectionProgress`：进度快照初始化、发布、越界钳制与重置语义。
 - `settings/SettingsStore`：配置文件缺失检测与保存/读取往返一致性。
+- `structure/StructureSession`：空会话、结构替换、变换、层数、恢复快照、关闭前冻结及分层恢复语义。
+- `place/PlacementState`：模式开关、手动放置时间、节流时间、缓存到期边界与准心名称读写。
+- `structure/StructureUiState`：HUD 快照、快捷键绑定/去重、按键释放抑制、待处理动作与材料快照。
 - `ui/HotkeyFormat`：修饰键判定、未设置与 Ctrl/Alt/Shift 和弦字符串。
 
 新增可独立链接的纯逻辑时必须同步补充对应断言；涉及 Minecraft 运行时对象（Block、BlockSource、Tessellator）的代码不进入该测试目标。

@@ -39,6 +39,7 @@ void setCorrectionOutlineOpacity(float opacity);
 bool getStructureBoundsEnabled();
 void setStructureBoundsEnabled(bool enabled);
 void requestNextStructureAnchor(int x, int y, int z);
+void cancelNextStructureAnchorRequest();
 BuildProgress getBuildProgress();
 
 ProjectionQuery queryProjection(LocalPlayer& player, BlockPos const& worldPos);

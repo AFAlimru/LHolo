@@ -1,80 +1,159 @@
 // LHolo - Client-side projection renderer for Minecraft Bedrock Windows
 // Copyright (C) 2026  MarmieQi
 //
-// UI/menu session state owned by the structure module. Accessors return the
-// underlying atomic storage so existing hotkey/menu logic keeps its exact
-// read-modify-write shapes; only the ownership location changes.
+// UI-session ownership and synchronization. Callers receive snapshots or use
+// concrete operations; atomics, mutexes and mutable containers never escape.
 
 #pragma once
 
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
-
-#include "ui/LHoloMenu.h"
 
 namespace lholo::structure::detail {
 
 struct MaterialRequirement {
-    std::string displayName;
-    std::string typeName;
+    std::string   displayName;
+    std::string   typeName;
     std::uint64_t count{};
 };
 
-std::atomic_bool&       uiGuiVisible();
-std::atomic_int&        uiOpeningInputBlockFrames();
-std::atomic_uint64_t&   uiBlockGameInputUntil();
+struct HudStateSnapshot {
+    bool  enabled{true};
+    bool  showFileName{true};
+    bool  showLayer{true};
+    bool  showOverallProgress{};
+    bool  showProgress{true};
+    bool  showWrongState{true};
+    bool  showWrongType{true};
+    bool  showBlockEntity{true};
+    int   position{1};
+    float uiScale{2.0f};
+};
 
-std::atomic_bool&       uiHudEnabled();
-std::atomic_bool&       uiHudShowFileName();
-std::atomic_bool&       uiHudShowLayer();
-std::atomic_bool&       uiHudShowOverallProgress();
-std::atomic_bool&       uiHudShowProgress();
-std::atomic_bool&       uiHudShowWrongState();
-std::atomic_bool&       uiHudShowWrongType();
-std::atomic_bool&       uiHudShowBlockEntity();
-std::atomic_int&        uiHudPosition();
-std::atomic<float>&     uiUiScale();
+struct HotkeyBindingSnapshot {
+    unsigned int key{};
+    unsigned int modifiers{};
+    bool         capturing{};
+};
 
-std::atomic_uint&       uiGuiHotkey();
-std::atomic_uint&       uiGuiHotkeyModifiers();
-std::atomic_bool&       uiCapturingGuiHotkey();
-std::atomic_bool&       uiGuiHotkeyHeld();
-std::atomic_uint&       uiLayerIncreaseHotkey();
-std::atomic_uint&       uiLayerDecreaseHotkey();
-std::atomic_uint&       uiLayerIncreaseHotkeyModifiers();
-std::atomic_uint&       uiLayerDecreaseHotkeyModifiers();
-std::atomic_bool&       uiCapturingLayerIncreaseHotkey();
-std::atomic_bool&       uiCapturingLayerDecreaseHotkey();
-std::atomic_bool&       uiLayerIncreaseHotkeyHeld();
-std::atomic_bool&       uiLayerDecreaseHotkeyHeld();
+struct PendingHotkeyActions {
+    int  offsetX{};
+    int  offsetY{};
+    int  offsetZ{};
+    int  layerDelta{};
+    bool settingsSave{};
+};
 
-std::array<std::atomic_uint, 6>&   uiMoveHotkeys();
-std::array<std::atomic_uint, 6>&   uiMoveHotkeyModifiers();
-std::array<std::atomic_bool, 6>&   uiCapturingMoveHotkey();
-std::array<std::atomic_bool, 6>&   uiMoveHotkeyHeld();
-std::atomic_bool&                  uiControlHeld();
-std::atomic_bool&                  uiAltHeld();
-std::atomic_bool&                  uiShiftHeld();
-std::array<std::atomic_uint64_t, 256>& uiConsumeKeyReleaseUntil();
+class StructureUiState {
+public:
+    static constexpr std::size_t kHotkeyCount = 9;
+    static constexpr std::size_t kMoveHotkeyCount = 6;
 
-std::atomic_int&        uiPendingOffsetX();
-std::atomic_int&        uiPendingOffsetY();
-std::atomic_int&        uiPendingOffsetZ();
-std::atomic_int&        uiPendingLayerDelta();
-std::atomic_bool&       uiPendingSettingsSave();
-std::atomic_uint64_t&   uiIgnoreHotkeyUntil();
+    static StructureUiState& getInstance();
 
-std::mutex&                        uiMaterialMutex();
-std::atomic_bool&                  uiMaterialListRequested();
-std::vector<MaterialRequirement>&  uiMaterialRequirements();
+    StructureUiState(StructureUiState const&)            = delete;
+    StructureUiState(StructureUiState&&)                 = delete;
+    StructureUiState& operator=(StructureUiState const&) = delete;
+    StructureUiState& operator=(StructureUiState&&)      = delete;
 
-std::array<char, 2048>& uiPathBuffer();
-bool&                   uiPathInitialized();
+    [[nodiscard]] bool guiVisible() const;
+    [[nodiscard]] bool toggleGuiVisible();
+    void setGuiVisible(bool visible);
+    [[nodiscard]] bool openingInputBlocked() const;
+    void setOpeningInputBlockFrames(int frames);
+    void consumeOpeningInputBlockFrame();
+    [[nodiscard]] std::uint64_t blockGameInputUntil() const;
+    void setBlockGameInputUntil(std::uint64_t deadline);
 
-lholo::ui::MenuPage&    uiActivePage();
+    [[nodiscard]] HudStateSnapshot hud() const;
+    bool setUiScale(float scale);
+    bool applyHud(HudStateSnapshot const& snapshot);
+
+    [[nodiscard]] HotkeyBindingSnapshot hotkey(std::size_t index) const;
+    [[nodiscard]] HotkeyBindingSnapshot inputHotkey(std::size_t index) const;
+    void setHotkey(std::size_t index, unsigned int key, unsigned int modifiers);
+    [[nodiscard]] std::optional<std::size_t> capturingHotkey() const;
+    void beginHotkeyCapture(std::size_t index);
+    void stopHotkeyCapture();
+    void clearHotkey(std::size_t index);
+    void bindCapturedHotkey(
+        std::size_t  index,
+        unsigned int key,
+        unsigned int modifiers
+    );
+    void resetHotkeys();
+
+    void setControlHeld(bool held);
+    void setAltHeld(bool held);
+    void setShiftHeld(bool held);
+    [[nodiscard]] unsigned int currentHotkeyModifiers() const;
+    [[nodiscard]] bool tryPressHotkey(std::size_t index);
+    [[nodiscard]] bool releaseHotkeysForKey(unsigned int key, std::uint64_t now);
+    void resetHotkeyState();
+    [[nodiscard]] std::uint64_t ignoreHotkeyUntil() const;
+    void setIgnoreHotkeyUntil(std::uint64_t deadline);
+
+    void queueMove(std::size_t index);
+    void queueLayerDelta(int delta);
+    void requestSettingsSave();
+    [[nodiscard]] PendingHotkeyActions consumePendingHotkeyActions();
+
+    void requestMaterialList();
+    [[nodiscard]] bool consumeMaterialListRequest();
+    void replaceMaterialRequirements(std::vector<MaterialRequirement> materials);
+    [[nodiscard]] std::vector<MaterialRequirement> materialRequirements() const;
+    void clearMaterials();
+
+private:
+    StructureUiState();
+
+    struct HotkeyStorage {
+        std::atomic_uint key{};
+        std::atomic_uint modifiers{};
+        std::atomic_bool capturing{};
+        std::atomic_bool held{};
+    };
+
+    [[nodiscard]] HotkeyStorage* hotkeyStorage(std::size_t index);
+    [[nodiscard]] HotkeyStorage const* hotkeyStorage(std::size_t index) const;
+
+    std::atomic_bool     mGuiVisible{false};
+    std::atomic_int      mOpeningInputBlockFrames{0};
+    std::atomic_uint64_t mBlockGameInputUntil{};
+
+    std::atomic_bool  mHudEnabled{true};
+    std::atomic_bool  mHudShowFileName{true};
+    std::atomic_bool  mHudShowLayer{true};
+    std::atomic_bool  mHudShowOverallProgress{false};
+    std::atomic_bool  mHudShowProgress{true};
+    std::atomic_bool  mHudShowWrongState{true};
+    std::atomic_bool  mHudShowWrongType{true};
+    std::atomic_bool  mHudShowBlockEntity{true};
+    std::atomic_int   mHudPosition{1};
+    std::atomic<float> mUiScale{2.0f};
+
+    std::array<HotkeyStorage, kHotkeyCount> mHotkeys;
+    std::atomic_bool mControlHeld{false};
+    std::atomic_bool mAltHeld{false};
+    std::atomic_bool mShiftHeld{false};
+    std::array<std::atomic_uint64_t, 256> mConsumeKeyReleaseUntil{};
+
+    std::atomic_int      mPendingOffsetX{0};
+    std::atomic_int      mPendingOffsetY{0};
+    std::atomic_int      mPendingOffsetZ{0};
+    std::atomic_int      mPendingLayerDelta{0};
+    std::atomic_bool     mPendingSettingsSave{false};
+    std::atomic_uint64_t mIgnoreHotkeyUntil{0};
+
+    mutable std::mutex                mMaterialMutex;
+    std::atomic_bool                  mMaterialListRequested{false};
+    std::vector<MaterialRequirement>  mMaterialRequirements;
+};
 
 } // namespace lholo::structure::detail

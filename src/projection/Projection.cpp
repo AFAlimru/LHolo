@@ -18,12 +18,12 @@
 #include "projection/ProjectionController.h"
 #include "projection/runtime/ProjectionProgress.h"
 #include "projection/runtime/ProjectionSession.h"
+#include "projection/runtime/ProjectionLifecycle.h"
 #include "projection/core/ProjectionState.h"
 #include "projection/world/ProjectionQueries.h"
 
 #include "structure/StructureLoader.h"
 
-#include <mutex>
 #include <vector>
 
 #include "mc/client/player/LocalPlayer.h"
@@ -45,39 +45,43 @@ void disable() {
 }
 
 float getOpacity() {
-    return detail::projectionOpacity();
+    return detail::ProjectionSession::getInstance().opacity();
 }
 
 void setOpacity(float opacity) {
-    detail::setProjectionOpacity(opacity);
+    detail::ProjectionSession::getInstance().setOpacity(opacity);
 }
 
 float getCorrectionFillOpacity() {
-    return detail::projectionCorrectionFillOpacity();
+    return detail::ProjectionSession::getInstance().correctionFillOpacity();
 }
 
 void setCorrectionFillOpacity(float opacity) {
-    detail::setProjectionCorrectionFillOpacity(opacity);
+    detail::ProjectionSession::getInstance().setCorrectionFillOpacity(opacity);
 }
 
 float getCorrectionOutlineOpacity() {
-    return detail::projectionCorrectionOutlineOpacity();
+    return detail::ProjectionSession::getInstance().correctionOutlineOpacity();
 }
 
 void setCorrectionOutlineOpacity(float opacity) {
-    detail::setProjectionCorrectionOutlineOpacity(opacity);
+    detail::ProjectionSession::getInstance().setCorrectionOutlineOpacity(opacity);
 }
 
 bool getStructureBoundsEnabled() {
-    return detail::projectionStructureBoundsEnabled();
+    return detail::ProjectionSession::getInstance().structureBoundsEnabled();
 }
 
 void setStructureBoundsEnabled(bool enabled) {
-    detail::setProjectionStructureBoundsEnabled(enabled);
+    detail::ProjectionSession::getInstance().setStructureBoundsEnabled(enabled);
 }
 
 void requestNextStructureAnchor(int x, int y, int z) {
-    detail::requestProjectionAnchor(x, y, z);
+    detail::ProjectionSession::getInstance().requestAnchor(x, y, z);
+}
+
+void cancelNextStructureAnchorRequest() {
+    detail::ProjectionSession::getInstance().cancelAnchorRequest();
 }
 
 BuildProgress getBuildProgress() {
@@ -85,29 +89,39 @@ BuildProgress getBuildProgress() {
 }
 
 ProjectionQuery queryProjection(LocalPlayer& player, BlockPos const& worldPos) {
-    std::unique_lock lock(detail::projectionStateMutex());
-    auto& state = detail::projectionState();
-    if (!state.enabled || !state.structure) return {nullptr, false};
-    if (state.level != &player.getLevel() || state.dimension != &player.getDimension()) {
-        detail::clearProjectionStateLocked();
-        lock.unlock();
-        structure::clear();
-        return {nullptr, false};
-    }
-    return detail::queryProjectionCell(state, worldPos);
+    ProjectionQuery result{nullptr, false};
+    bool clearStructure = false;
+    detail::ProjectionSession::getInstance().withLockedState(
+        [&](detail::ProjectionState& state, overlay::BoundsWireframe&) {
+            if (!state.enabled || !state.structure) return;
+            if (state.level != &player.getLevel() || state.dimension != &player.getDimension()) {
+                detail::resetProjectionState(state);
+                clearStructure = true;
+                return;
+            }
+            result = detail::queryProjectionCell(state, worldPos);
+        }
+    );
+    if (clearStructure) structure::clear();
+    return result;
 }
 
 std::vector<RangeCandidate> queryMissingCellsInRange(LocalPlayer& player, Vec3 const& center, float radius) {
-    std::unique_lock lock(detail::projectionStateMutex());
-    auto& state = detail::projectionState();
-    if (!state.enabled || !state.structure) return {};
-    if (state.level != &player.getLevel() || state.dimension != &player.getDimension()) {
-        detail::clearProjectionStateLocked();
-        lock.unlock();
-        structure::clear();
-        return {};
-    }
-    return detail::queryMissingProjectionCells(state, center, radius);
+    std::vector<RangeCandidate> result;
+    bool clearStructure = false;
+    detail::ProjectionSession::getInstance().withLockedState(
+        [&](detail::ProjectionState& state, overlay::BoundsWireframe&) {
+            if (!state.enabled || !state.structure) return;
+            if (state.level != &player.getLevel() || state.dimension != &player.getDimension()) {
+                detail::resetProjectionState(state);
+                clearStructure = true;
+                return;
+            }
+            result = detail::queryMissingProjectionCells(state, center, radius);
+        }
+    );
+    if (clearStructure) structure::clear();
+    return result;
 }
 
 } // namespace lholo::projection

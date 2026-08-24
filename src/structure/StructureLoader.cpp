@@ -76,10 +76,10 @@ namespace {
 
 using detail::MaterialRequirement;
 
-constexpr unsigned int   kHotkeyModifierControl    = 1u;
-constexpr unsigned int   kHotkeyModifierAlt        = 2u;
-constexpr unsigned int   kHotkeyModifierShift      = 4u;
 constexpr char           kMaterialPopupName[]       = "材料清单###LHoloMaterialList";
+constexpr std::size_t    kGuiHotkeyIndex             = 0;
+constexpr std::size_t    kLayerIncreaseHotkeyIndex   = detail::StructureUiState::kHotkeyCount - 2;
+constexpr std::size_t    kLayerDecreaseHotkeyIndex   = detail::StructureUiState::kHotkeyCount - 1;
 
 
 std::string localizedBlockName(Block const& block, std::string_view localeCode) {
@@ -163,27 +163,27 @@ auto& logger() {
     return LHolo::getInstance().getSelf().getLogger();
 }
 
+auto& uiState() {
+    return detail::StructureUiState::getInstance();
+}
+
 std::filesystem::path settingsPath() {
     return LHolo::getInstance().getSelf().getConfigDir() / "config.json";
 }
 
 
 unsigned int currentHotkeyModifiers() {
-    unsigned int modifiers{};
-    if (detail::uiControlHeld().load(std::memory_order_acquire)) modifiers |= kHotkeyModifierControl;
-    if (detail::uiAltHeld().load(std::memory_order_acquire)) modifiers |= kHotkeyModifierAlt;
-    if (detail::uiShiftHeld().load(std::memory_order_acquire)) modifiers |= kHotkeyModifierShift;
-    return modifiers;
+    return uiState().currentHotkeyModifiers();
 }
 
 } // namespace
 
 void requestMaterialList() {
-    detail::uiMaterialListRequested().store(true, std::memory_order_release);
+    uiState().requestMaterialList();
 }
 
 void processPendingMaterialList() {
-    if (!detail::uiMaterialListRequested().exchange(false, std::memory_order_acq_rel)) return;
+    if (!uiState().consumeMaterialListRequest()) return;
 
     auto const loaded = getLoaded();
     std::string localeCode;
@@ -194,102 +194,53 @@ void processPendingMaterialList() {
     std::vector<MaterialRequirement> materials;
     if (loaded) materials = collectMaterials(loaded->renderBlocks, localeCode);
 
-    std::lock_guard lock(detail::uiMaterialMutex());
-    detail::uiMaterialRequirements() = std::move(materials);
+    uiState().replaceMaterialRequirements(std::move(materials));
 }
 
 void requestOpenGui() {
-    auto const opening = !detail::uiGuiVisible().load(std::memory_order_acquire);
-    detail::uiGuiVisible().store(opening, std::memory_order_release);
+    auto const opening = uiState().toggleGuiVisible();
     if (opening) {
-        detail::uiOpeningInputBlockFrames().store(3, std::memory_order_release);
+        uiState().setOpeningInputBlockFrames(3);
     } else {
         // Consume the release half of the key/click that closed the menu.
         // Without this, Minecraft receives an unmatched Esc or mouse-up after
         // the ImGui window has already disappeared.
-        detail::uiBlockGameInputUntil().store(GetTickCount64() + 180, std::memory_order_release);
+        uiState().setBlockGameInputUntil(GetTickCount64() + 180);
     }
 }
 
-bool isGuiVisible() { return detail::uiGuiVisible().load(std::memory_order_acquire); }
+bool isGuiVisible() { return uiState().guiVisible(); }
 
 bool isInputTransitionBlocked() {
-    return GetTickCount64() <= detail::uiBlockGameInputUntil().load(std::memory_order_acquire);
+    return GetTickCount64() <= uiState().blockGameInputUntil();
 }
 
 bool handleGuiHotkeyKeyDown(unsigned int virtualKey) {
     auto const modifierKey = ui::isModifierKey(virtualKey);
     if (virtualKey == VK_CONTROL || virtualKey == VK_LCONTROL || virtualKey == VK_RCONTROL) {
-        detail::uiControlHeld().store(true, std::memory_order_release);
+        uiState().setControlHeld(true);
     } else if (virtualKey == VK_MENU || virtualKey == VK_LMENU || virtualKey == VK_RMENU) {
-        detail::uiAltHeld().store(true, std::memory_order_release);
+        uiState().setAltHeld(true);
     } else if (virtualKey == VK_SHIFT || virtualKey == VK_LSHIFT || virtualKey == VK_RSHIFT) {
-        detail::uiShiftHeld().store(true, std::memory_order_release);
+        uiState().setShiftHeld(true);
     }
 
-    std::atomic_uint* captureKey{};
-    std::atomic_uint* captureModifiers{};
-    if (detail::uiCapturingGuiHotkey().load(std::memory_order_acquire)) {
-        captureKey = &detail::uiGuiHotkey();
-        captureModifiers = &detail::uiGuiHotkeyModifiers();
-    } else if (detail::uiCapturingLayerIncreaseHotkey().load(std::memory_order_acquire)) {
-        captureKey = &detail::uiLayerIncreaseHotkey();
-        captureModifiers = &detail::uiLayerIncreaseHotkeyModifiers();
-    } else if (detail::uiCapturingLayerDecreaseHotkey().load(std::memory_order_acquire)) {
-        captureKey = &detail::uiLayerDecreaseHotkey();
-        captureModifiers = &detail::uiLayerDecreaseHotkeyModifiers();
-    } else {
-        for (std::size_t index = 0; index < detail::uiCapturingMoveHotkey().size(); ++index) {
-            if (detail::uiCapturingMoveHotkey()[index].load(std::memory_order_acquire)) {
-                captureKey = &detail::uiMoveHotkeys()[index];
-                captureModifiers = &detail::uiMoveHotkeyModifiers()[index];
-                break;
-            }
-        }
-    }
-    if (captureKey) {
+    auto const captureIndex = uiState().capturingHotkey();
+    if (captureIndex) {
         // F11 belongs to Minecraft's fullscreen toggle. Never capture or
         // consume it as a mod shortcut, including while rebinding controls.
         if (virtualKey == VK_F11) return false;
-        auto stopCapturing = [] {
-            detail::uiCapturingGuiHotkey().store(false, std::memory_order_release);
-            detail::uiCapturingLayerIncreaseHotkey().store(false, std::memory_order_release);
-            detail::uiCapturingLayerDecreaseHotkey().store(false, std::memory_order_release);
-            for (auto& capturing : detail::uiCapturingMoveHotkey()) {
-                capturing.store(false, std::memory_order_release);
-            }
-        };
         if (virtualKey == VK_ESCAPE) {
-            stopCapturing();
+            uiState().stopHotkeyCapture();
         } else if (virtualKey == VK_DELETE || virtualKey == VK_BACK) {
-            captureKey->store(0, std::memory_order_release);
-            captureModifiers->store(0, std::memory_order_release);
-            stopCapturing();
-            detail::uiPendingSettingsSave().store(true, std::memory_order_release);
+            uiState().clearHotkey(*captureIndex);
+            uiState().stopHotkeyCapture();
+            uiState().requestSettingsSave();
         } else if (!modifierKey) {
             auto const modifiers = currentHotkeyModifiers();
-            auto clearDuplicate = [captureKey, captureModifiers, virtualKey, modifiers](
-                                      std::atomic_uint& key,
-                                      std::atomic_uint& keyModifiers
-                                  ) {
-                if (&key == captureKey && &keyModifiers == captureModifiers) return;
-                if (key.load(std::memory_order_relaxed) == virtualKey
-                    && keyModifiers.load(std::memory_order_relaxed) == modifiers) {
-                    key.store(0, std::memory_order_relaxed);
-                    keyModifiers.store(0, std::memory_order_relaxed);
-                }
-            };
-            clearDuplicate(detail::uiGuiHotkey(), detail::uiGuiHotkeyModifiers());
-            clearDuplicate(detail::uiLayerIncreaseHotkey(), detail::uiLayerIncreaseHotkeyModifiers());
-            clearDuplicate(detail::uiLayerDecreaseHotkey(), detail::uiLayerDecreaseHotkeyModifiers());
-            for (std::size_t index = 0; index < detail::uiMoveHotkeys().size(); ++index) {
-                clearDuplicate(detail::uiMoveHotkeys()[index], detail::uiMoveHotkeyModifiers()[index]);
-            }
-            captureKey->store(virtualKey, std::memory_order_release);
-            captureModifiers->store(modifiers, std::memory_order_release);
-            stopCapturing();
-            detail::uiIgnoreHotkeyUntil().store(GetTickCount64() + 250, std::memory_order_release);
-            detail::uiPendingSettingsSave().store(true, std::memory_order_release);
+            uiState().bindCapturedHotkey(*captureIndex, virtualKey, modifiers);
+            uiState().setIgnoreHotkeyUntil(GetTickCount64() + 250);
+            uiState().requestSettingsSave();
         }
         return true;
     }
@@ -297,53 +248,45 @@ bool handleGuiHotkeyKeyDown(unsigned int virtualKey) {
     if (modifierKey) return false;
 
     auto const modifiers = currentHotkeyModifiers();
-    auto const hotkey = detail::uiGuiHotkey().load(std::memory_order_acquire);
-    if (hotkey != 0 && virtualKey == hotkey
-        && modifiers == detail::uiGuiHotkeyModifiers().load(std::memory_order_acquire)) {
-        if (GetTickCount64() >= detail::uiIgnoreHotkeyUntil().load(std::memory_order_acquire)
-            && !detail::uiGuiHotkeyHeld().exchange(true, std::memory_order_acq_rel)) {
+    auto const guiHotkey = uiState().inputHotkey(kGuiHotkeyIndex);
+    if (guiHotkey.key != 0 && virtualKey == guiHotkey.key
+        && modifiers == guiHotkey.modifiers) {
+        if (GetTickCount64() >= uiState().ignoreHotkeyUntil()
+            && uiState().tryPressHotkey(kGuiHotkeyIndex)) {
             requestOpenGui();
         }
         return true;
     }
     if (isGuiVisible()) return false;
 
-    for (std::size_t index = 0; index < detail::uiMoveHotkeys().size(); ++index) {
-        if (detail::uiMoveHotkeys()[index].load(std::memory_order_acquire) == virtualKey
-            && detail::uiMoveHotkeyModifiers()[index].load(std::memory_order_acquire) == modifiers) {
-            if (GetTickCount64() >= detail::uiIgnoreHotkeyUntil().load(std::memory_order_acquire)
-                && !detail::uiMoveHotkeyHeld()[index].exchange(true, std::memory_order_acq_rel)) {
-                switch (index) {
-                case 0: detail::uiPendingOffsetX().fetch_sub(1, std::memory_order_relaxed); break;
-                case 1: detail::uiPendingOffsetX().fetch_add(1, std::memory_order_relaxed); break;
-                case 2: detail::uiPendingOffsetZ().fetch_sub(1, std::memory_order_relaxed); break;
-                case 3: detail::uiPendingOffsetZ().fetch_add(1, std::memory_order_relaxed); break;
-                case 4: detail::uiPendingOffsetY().fetch_add(1, std::memory_order_relaxed); break;
-                case 5: detail::uiPendingOffsetY().fetch_sub(1, std::memory_order_relaxed); break;
-                default: break;
-                }
+    for (std::size_t index = 0; index < detail::StructureUiState::kMoveHotkeyCount; ++index) {
+        auto const hotkey = uiState().inputHotkey(index + 1);
+        if (hotkey.key == virtualKey && hotkey.modifiers == modifiers) {
+            if (GetTickCount64() >= uiState().ignoreHotkeyUntil()
+                && uiState().tryPressHotkey(index + 1)) {
+                uiState().queueMove(index);
             }
             return true;
         }
     }
 
-    auto const layerIncreaseHotkey = detail::uiLayerIncreaseHotkey().load(std::memory_order_acquire);
-    if (layerIncreaseHotkey != 0 && virtualKey == layerIncreaseHotkey
-        && modifiers == detail::uiLayerIncreaseHotkeyModifiers().load(std::memory_order_acquire)) {
-        if (detail::sessionLayerDisplayMode().load(std::memory_order_acquire) == 0) return false;
-        if (GetTickCount64() >= detail::uiIgnoreHotkeyUntil().load(std::memory_order_acquire)
-            && !detail::uiLayerIncreaseHotkeyHeld().exchange(true, std::memory_order_acq_rel)) {
-            detail::uiPendingLayerDelta().fetch_add(1, std::memory_order_relaxed);
+    auto const layerIncreaseHotkey = uiState().inputHotkey(kLayerIncreaseHotkeyIndex);
+    if (layerIncreaseHotkey.key != 0 && virtualKey == layerIncreaseHotkey.key
+        && modifiers == layerIncreaseHotkey.modifiers) {
+        if (!detail::StructureSession::getInstance().layerDisplayEnabled()) return false;
+        if (GetTickCount64() >= uiState().ignoreHotkeyUntil()
+            && uiState().tryPressHotkey(kLayerIncreaseHotkeyIndex)) {
+            uiState().queueLayerDelta(1);
         }
         return true;
     }
-    auto const layerDecreaseHotkey = detail::uiLayerDecreaseHotkey().load(std::memory_order_acquire);
-    if (layerDecreaseHotkey != 0 && virtualKey == layerDecreaseHotkey
-        && modifiers == detail::uiLayerDecreaseHotkeyModifiers().load(std::memory_order_acquire)) {
-        if (detail::sessionLayerDisplayMode().load(std::memory_order_acquire) == 0) return false;
-        if (GetTickCount64() >= detail::uiIgnoreHotkeyUntil().load(std::memory_order_acquire)
-            && !detail::uiLayerDecreaseHotkeyHeld().exchange(true, std::memory_order_acq_rel)) {
-            detail::uiPendingLayerDelta().fetch_sub(1, std::memory_order_relaxed);
+    auto const layerDecreaseHotkey = uiState().inputHotkey(kLayerDecreaseHotkeyIndex);
+    if (layerDecreaseHotkey.key != 0 && virtualKey == layerDecreaseHotkey.key
+        && modifiers == layerDecreaseHotkey.modifiers) {
+        if (!detail::StructureSession::getInstance().layerDisplayEnabled()) return false;
+        if (GetTickCount64() >= uiState().ignoreHotkeyUntil()
+            && uiState().tryPressHotkey(kLayerDecreaseHotkeyIndex)) {
+            uiState().queueLayerDelta(-1);
         }
         return true;
     }
@@ -352,133 +295,72 @@ bool handleGuiHotkeyKeyDown(unsigned int virtualKey) {
 
 bool handleGuiHotkeyKeyUp(unsigned int virtualKey) {
     if (virtualKey == VK_CONTROL || virtualKey == VK_LCONTROL || virtualKey == VK_RCONTROL) {
-        detail::uiControlHeld().store(false, std::memory_order_release);
+        uiState().setControlHeld(false);
         return false;
     }
     if (virtualKey == VK_MENU || virtualKey == VK_LMENU || virtualKey == VK_RMENU) {
-        detail::uiAltHeld().store(false, std::memory_order_release);
+        uiState().setAltHeld(false);
         return false;
     }
     if (virtualKey == VK_SHIFT || virtualKey == VK_LSHIFT || virtualKey == VK_RSHIFT) {
-        detail::uiShiftHeld().store(false, std::memory_order_release);
+        uiState().setShiftHeld(false);
         return false;
     }
 
-    bool consumed{};
-    if (virtualKey == detail::uiGuiHotkey().load(std::memory_order_acquire)) {
-        consumed = detail::uiGuiHotkeyHeld().exchange(false, std::memory_order_acq_rel) || consumed;
-    }
-    if (virtualKey == detail::uiLayerIncreaseHotkey().load(std::memory_order_acquire)) {
-        consumed = detail::uiLayerIncreaseHotkeyHeld().exchange(false, std::memory_order_acq_rel) || consumed;
-    }
-    if (virtualKey == detail::uiLayerDecreaseHotkey().load(std::memory_order_acquire)) {
-        consumed = detail::uiLayerDecreaseHotkeyHeld().exchange(false, std::memory_order_acq_rel) || consumed;
-    }
-    for (std::size_t index = 0; index < detail::uiMoveHotkeys().size(); ++index) {
-        if (virtualKey == detail::uiMoveHotkeys()[index].load(std::memory_order_acquire)) {
-            consumed = detail::uiMoveHotkeyHeld()[index].exchange(false, std::memory_order_acq_rel) || consumed;
-        }
-    }
-    if (virtualKey < detail::uiConsumeKeyReleaseUntil().size()) {
-        auto const now = GetTickCount64();
-        auto& deadline = detail::uiConsumeKeyReleaseUntil()[virtualKey];
-        if (consumed) {
-            deadline.store(now + 100, std::memory_order_release);
-            return true;
-        }
-        if (now <= deadline.load(std::memory_order_acquire)) return true;
-    }
-    return false;
+    return uiState().releaseHotkeysForKey(virtualKey, GetTickCount64());
 }
 
 void resetHotkeyState() {
-    detail::uiControlHeld().store(false, std::memory_order_release);
-    detail::uiAltHeld().store(false, std::memory_order_release);
-    detail::uiShiftHeld().store(false, std::memory_order_release);
-    detail::uiGuiHotkeyHeld().store(false, std::memory_order_release);
-    detail::uiLayerIncreaseHotkeyHeld().store(false, std::memory_order_release);
-    detail::uiLayerDecreaseHotkeyHeld().store(false, std::memory_order_release);
-    for (auto& held : detail::uiMoveHotkeyHeld()) held.store(false, std::memory_order_release);
-    for (auto& deadline : detail::uiConsumeKeyReleaseUntil()) deadline.store(0, std::memory_order_release);
+    uiState().resetHotkeyState();
 }
 
 void processPendingHotkeyActions() {
-    auto const offsetX = detail::uiPendingOffsetX().exchange(0, std::memory_order_acq_rel);
-    auto const offsetY = detail::uiPendingOffsetY().exchange(0, std::memory_order_acq_rel);
-    auto const offsetZ = detail::uiPendingOffsetZ().exchange(0, std::memory_order_acq_rel);
-    auto const layerDelta = detail::uiPendingLayerDelta().exchange(0, std::memory_order_acq_rel);
-    auto const layerActionEnabled = layerDelta != 0
-        && detail::sessionLayerDisplayMode().load(std::memory_order_relaxed) != 0;
-    bool changed = offsetX != 0 || offsetY != 0 || offsetZ != 0 || layerActionEnabled;
+    auto& session = detail::StructureSession::getInstance();
+    auto const pending = uiState().consumePendingHotkeyActions();
+    auto const layerActionEnabled = pending.layerDelta != 0 && session.transform().layerDisplayMode != 0;
+    bool changed = pending.offsetX != 0 || pending.offsetY != 0 || pending.offsetZ != 0 || layerActionEnabled;
+    session.adjustOffsets(pending.offsetX, pending.offsetY, pending.offsetZ);
+    if (layerActionEnabled) session.adjustDisplayLayer(pending.layerDelta);
 
-    auto applyOffset = [](std::atomic_int& target, int delta) {
-        if (delta == 0) return;
-        auto const current = static_cast<long long>(target.load(std::memory_order_relaxed));
-        auto const next = std::clamp(
-            current + static_cast<long long>(delta),
-            static_cast<long long>(std::numeric_limits<int>::min()),
-            static_cast<long long>(std::numeric_limits<int>::max())
-        );
-        target.store(static_cast<int>(next), std::memory_order_relaxed);
-    };
-    applyOffset(detail::sessionOffsetX(), offsetX);
-    applyOffset(detail::sessionOffsetY(), offsetY);
-    applyOffset(detail::sessionOffsetZ(), offsetZ);
-
-    if (layerActionEnabled) {
-        auto maxLayer = 0;
-        auto const layerAxis = detail::sessionLayerAxis().load(std::memory_order_relaxed);
-        {
-            std::lock_guard lock(detail::sessionLoadedMutex());
-            if (detail::sessionLoaded()) maxLayer = detail::maxLayerFor(*detail::sessionLoaded(), layerAxis);
-        }
-        auto const current = static_cast<long long>(detail::sessionDisplayLayer().load(std::memory_order_relaxed));
-        auto const next = std::clamp(current + static_cast<long long>(layerDelta), 0LL, static_cast<long long>(maxLayer));
-        detail::sessionDisplayLayer().store(static_cast<int>(next), std::memory_order_relaxed);
-    }
-
-    changed = detail::uiPendingSettingsSave().exchange(false, std::memory_order_acq_rel) || changed;
+    changed = pending.settingsSave || changed;
     if (changed) saveSettings();
 }
 
 bool hasHudInfo() {
-    if (!detail::uiHudEnabled().load(std::memory_order_relaxed)) return false;
-    if (!detail::uiHudShowFileName().load(std::memory_order_relaxed)
-        && !detail::uiHudShowLayer().load(std::memory_order_relaxed)
-        && !detail::uiHudShowOverallProgress().load(std::memory_order_relaxed)
-        && !detail::uiHudShowProgress().load(std::memory_order_relaxed)
-        && !detail::uiHudShowWrongState().load(std::memory_order_relaxed)
-        && !detail::uiHudShowWrongType().load(std::memory_order_relaxed)
-        && !detail::uiHudShowBlockEntity().load(std::memory_order_relaxed)) return false;
-    std::lock_guard lock(detail::sessionLoadedMutex());
-    return static_cast<bool>(detail::sessionLoaded());
+    auto const hud = uiState().hud();
+    if (!hud.enabled) return false;
+    if (!hud.showFileName
+        && !hud.showLayer
+        && !hud.showOverallProgress
+        && !hud.showProgress
+        && !hud.showWrongState
+        && !hud.showWrongType
+        && !hud.showBlockEntity) return false;
+    return detail::StructureSession::getInstance().hasLoaded();
 }
 
 void renderHud() {
     if (isGuiVisible()) return;
-    if (!detail::uiHudEnabled().load(std::memory_order_relaxed)) return;
-    auto const showFileName = detail::uiHudShowFileName().load(std::memory_order_relaxed);
-    auto const showLayer = detail::uiHudShowLayer().load(std::memory_order_relaxed);
-    auto const showOverallProgress = detail::uiHudShowOverallProgress().load(std::memory_order_relaxed);
-    auto const showProgress = detail::uiHudShowProgress().load(std::memory_order_relaxed);
-    auto const showWrongState = detail::uiHudShowWrongState().load(std::memory_order_relaxed);
-    auto const showWrongType = detail::uiHudShowWrongType().load(std::memory_order_relaxed);
-    auto const showBlockEntity = detail::uiHudShowBlockEntity().load(std::memory_order_relaxed);
+    auto const hud = uiState().hud();
+    if (!hud.enabled) return;
+    auto const showFileName = hud.showFileName;
+    auto const showLayer = hud.showLayer;
+    auto const showOverallProgress = hud.showOverallProgress;
+    auto const showProgress = hud.showProgress;
+    auto const showWrongState = hud.showWrongState;
+    auto const showWrongType = hud.showWrongType;
+    auto const showBlockEntity = hud.showBlockEntity;
     if (!showFileName && !showLayer && !showOverallProgress && !showProgress
         && !showWrongState && !showWrongType && !showBlockEntity) return;
 
-    std::string fileName;
-    int maxLayer{};
-    auto const layerAxis = detail::sessionLayerAxis().load(std::memory_order_relaxed);
-    {
-        std::lock_guard lock(detail::sessionLoadedMutex());
-        if (!detail::sessionLoaded()) return;
-        fileName = detail::pathToUtf8(detail::sessionLoaded()->sourcePath.filename());
-        maxLayer = detail::maxLayerFor(*detail::sessionLoaded(), layerAxis);
-    }
+    auto const sessionSnapshot = detail::StructureSession::getInstance().snapshot();
+    if (!sessionSnapshot.loaded) return;
+    auto const fileName = detail::pathToUtf8(sessionSnapshot.loaded->sourcePath.filename());
+    auto const layerAxis = sessionSnapshot.transform.layerAxis;
+    auto const maxLayer = layerAxis == 1 ? sessionSnapshot.maxLayerX : sessionSnapshot.maxLayerY;
 
     auto const displaySize = ImGui::GetIO().DisplaySize;
-    auto uiScale = detail::uiUiScale().load(std::memory_order_relaxed);
+    auto uiScale = hud.uiScale;
     if (uiScale <= 0.0f) {
         uiScale = std::clamp(
             std::min(displaySize.x / 1920.0f, displaySize.y / 1080.0f),
@@ -488,14 +370,14 @@ void renderHud() {
     }
     auto const hudMetrics = lholo::ui::calculateMetrics(displaySize, uiScale);
     lholo::ui::applyFluentTheme(hudMetrics);
-    auto const layerMode = detail::sessionLayerDisplayMode().load(std::memory_order_relaxed);
+    auto const layerMode = sessionSnapshot.transform.layerDisplayMode;
     auto const currentLayer = std::clamp(
-        detail::sessionDisplayLayer().load(std::memory_order_relaxed),
+        sessionSnapshot.transform.displayLayer,
         0,
         maxLayer
     );
 
-    auto const hudPosition = std::clamp(detail::uiHudPosition().load(std::memory_order_relaxed), 0, 3);
+    auto const hudPosition = std::clamp(hud.position, 0, 3);
     auto const right = hudPosition >= 2;
     auto const bottom = (hudPosition & 1) != 0;
     auto const margin = hudMetrics.outerPadding;
@@ -594,80 +476,77 @@ void renderGui() {
 void loadSettings() {
     auto const path = settingsPath();
     try {
+        auto& session = detail::StructureSession::getInstance();
         lholo::settings::Settings settings;
         if (!lholo::settings::loadSettingsFile(path, settings)) {
             saveSettings();
             return;
         }
-        std::lock_guard lock(detail::sessionLoadedMutex());
-        detail::sessionLastPath() = settings.lastStructurePath;
-        detail::uiUiScale().store(std::clamp(settings.uiScale, 0.0f, 5.0f), std::memory_order_relaxed);
+        session.setLastPath(settings.lastStructurePath);
+        uiState().setUiScale(std::clamp(settings.uiScale, 0.0f, 5.0f));
         projection::setOpacity(settings.opacity);
         projection::setCorrectionFillOpacity(settings.correctionFillOpacity);
         projection::setCorrectionOutlineOpacity(settings.correctionOutlineOpacity);
         projection::setStructureBoundsEnabled(settings.structureBoundsEnabled);
         // Transform and layer state are session-local. Only the explicit
         // "restore last projection" record below is persisted.
-        detail::sessionRotationQuarterTurns().store(0, std::memory_order_relaxed);
-        detail::sessionMirror().store(0, std::memory_order_relaxed);
-        detail::sessionOffsetX().store(0, std::memory_order_relaxed);
-        detail::sessionOffsetY().store(0, std::memory_order_relaxed);
-        detail::sessionOffsetZ().store(0, std::memory_order_relaxed);
-        detail::sessionLayerDisplayMode().store(0, std::memory_order_relaxed);
-        detail::sessionDisplayLayer().store(0, std::memory_order_relaxed);
-        detail::sessionLayerAxis().store(0, std::memory_order_relaxed);
-        detail::uiHudEnabled().store(settings.hudEnabled, std::memory_order_relaxed);
-        detail::uiHudShowFileName().store(settings.hudShowFileName, std::memory_order_relaxed);
-        detail::uiHudShowLayer().store(settings.hudShowLayer, std::memory_order_relaxed);
-        detail::uiHudShowOverallProgress().store(settings.hudShowOverallProgress, std::memory_order_relaxed);
-        detail::uiHudShowProgress().store(settings.hudShowProgress, std::memory_order_relaxed);
-        detail::uiHudShowWrongState().store(settings.hudShowWrongState, std::memory_order_relaxed);
-        detail::uiHudShowWrongType().store(settings.hudShowWrongType, std::memory_order_relaxed);
-        detail::uiHudShowBlockEntity().store(settings.hudShowBlockEntity, std::memory_order_relaxed);
-        detail::uiHudPosition().store(std::clamp(settings.hudPosition, 0, 3), std::memory_order_relaxed);
+        session.resetTransform();
+        auto hud = uiState().hud();
+        hud.enabled = settings.hudEnabled;
+        hud.showFileName = settings.hudShowFileName;
+        hud.showLayer = settings.hudShowLayer;
+        hud.showOverallProgress = settings.hudShowOverallProgress;
+        hud.showProgress = settings.hudShowProgress;
+        hud.showWrongState = settings.hudShowWrongState;
+        hud.showWrongType = settings.hudShowWrongType;
+        hud.showBlockEntity = settings.hudShowBlockEntity;
+        hud.position = std::clamp(settings.hudPosition, 0, 3);
+        uiState().applyHud(hud);
         // Assisted-placement modes are intentionally session-only. Ignore
         // legacy persisted values and always begin a new game session disabled.
         place::setEnabled(false);
         place::setManualMode(false);
         place::setRangeEnabled(false);
         place::setPlacementRadius(std::clamp(settings.placementRadius, 1, 4));
-        detail::uiGuiHotkey().store(std::clamp(settings.guiHotkey, 0, 255), std::memory_order_relaxed);
-        detail::uiGuiHotkeyModifiers().store(
-            std::clamp(settings.guiHotkeyModifiers, 0, 7), std::memory_order_relaxed
+        uiState().setHotkey(
+            kGuiHotkeyIndex,
+            std::clamp(settings.guiHotkey, 0, 255),
+            std::clamp(settings.guiHotkeyModifiers, 0, 7)
         );
-        detail::uiLayerIncreaseHotkey().store(
-            std::clamp(settings.layerIncreaseHotkey, 0, 255), std::memory_order_relaxed
+        uiState().setHotkey(
+            kLayerIncreaseHotkeyIndex,
+            std::clamp(settings.layerIncreaseHotkey, 0, 255),
+            std::clamp(settings.layerIncreaseHotkeyModifiers, 0, 7)
         );
-        detail::uiLayerDecreaseHotkey().store(
-            std::clamp(settings.layerDecreaseHotkey, 0, 255), std::memory_order_relaxed
+        uiState().setHotkey(
+            kLayerDecreaseHotkeyIndex,
+            std::clamp(settings.layerDecreaseHotkey, 0, 255),
+            std::clamp(settings.layerDecreaseHotkeyModifiers, 0, 7)
         );
-        detail::uiLayerIncreaseHotkeyModifiers().store(
-            std::clamp(settings.layerIncreaseHotkeyModifiers, 0, 7), std::memory_order_relaxed
-        );
-        detail::uiLayerDecreaseHotkeyModifiers().store(
-            std::clamp(settings.layerDecreaseHotkeyModifiers, 0, 7), std::memory_order_relaxed
-        );
-        for (std::size_t index = 0; index < detail::uiMoveHotkeys().size(); ++index) {
-            detail::uiMoveHotkeys()[index].store(
-                std::clamp(settings.moveHotkeys[index], 0, 255), std::memory_order_relaxed
-            );
-            detail::uiMoveHotkeyModifiers()[index].store(
-                std::clamp(settings.moveHotkeyModifiers[index], 0, 7), std::memory_order_relaxed
+        for (std::size_t index = 0; index < detail::StructureUiState::kMoveHotkeyCount; ++index) {
+            uiState().setHotkey(
+                index + 1,
+                std::clamp(settings.moveHotkeys[index], 0, 255),
+                std::clamp(settings.moveHotkeyModifiers[index], 0, 7)
             );
         }
-        detail::sessionHasSavedProjection().store(settings.hasSavedProjection, std::memory_order_relaxed);
-        detail::sessionSavedAnchorX().store(settings.savedAnchorX, std::memory_order_relaxed);
-        detail::sessionSavedAnchorY().store(settings.savedAnchorY, std::memory_order_relaxed);
-        detail::sessionSavedAnchorZ().store(settings.savedAnchorZ, std::memory_order_relaxed);
-        detail::sessionSavedRotation().store(settings.savedRotation, std::memory_order_relaxed);
-        detail::sessionSavedMirror().store(std::clamp(settings.savedMirror, 0, 2), std::memory_order_relaxed);
-        detail::sessionSavedOffsetX().store(settings.savedOffsetX, std::memory_order_relaxed);
-        detail::sessionSavedOffsetY().store(settings.savedOffsetY, std::memory_order_relaxed);
-        detail::sessionSavedOffsetZ().store(settings.savedOffsetZ, std::memory_order_relaxed);
-        detail::sessionSavedLayerDisplayMode().store(settings.savedLayerDisplayMode, std::memory_order_relaxed);
-        detail::sessionSavedDisplayLayer().store(settings.savedDisplayLayer, std::memory_order_relaxed);
-        detail::sessionSavedLayerAxis().store(std::clamp(settings.savedLayerAxis, 0, 1), std::memory_order_relaxed);
-        detail::sessionSavedStructurePath() = settings.savedStructurePath;
+        session.setSavedProjection({
+            settings.hasSavedProjection,
+            settings.savedAnchorX,
+            settings.savedAnchorY,
+            settings.savedAnchorZ,
+            {
+                settings.savedRotation,
+                std::clamp(settings.savedMirror, 0, 2),
+                settings.savedOffsetX,
+                settings.savedOffsetY,
+                settings.savedOffsetZ,
+                settings.savedLayerDisplayMode,
+                settings.savedDisplayLayer,
+                std::clamp(settings.savedLayerAxis, 0, 1)
+            },
+            settings.savedStructurePath
+        });
         logger().info("Loaded projection settings from {}", path.string());
     } catch (std::exception const& exception) {
         logger().error("Could not load projection settings {}: {}", path.string(), exception.what());
@@ -677,75 +556,58 @@ void loadSettings() {
 void saveSettings() {
     auto const path = settingsPath();
     try {
-        bool hasActiveProjection = false;
-        {
-            std::lock_guard lock(detail::sessionLoadedMutex());
-            hasActiveProjection = static_cast<bool>(detail::sessionLoaded());
-        }
-        if (hasActiveProjection && detail::sessionHasSavedProjection().load(std::memory_order_acquire)) {
-            // Only an active projection may update its restore snapshot. At
-            // startup the session-local transform/layer values intentionally
-            // reset to defaults; copying those values before the user restores
-            // a structure would silently destroy the saved state.
-            detail::sessionSavedRotation().store(detail::sessionRotationQuarterTurns().load(std::memory_order_relaxed), std::memory_order_relaxed);
-            detail::sessionSavedMirror().store(detail::sessionMirror().load(std::memory_order_relaxed), std::memory_order_relaxed);
-            detail::sessionSavedOffsetX().store(detail::sessionOffsetX().load(std::memory_order_relaxed), std::memory_order_relaxed);
-            detail::sessionSavedOffsetY().store(detail::sessionOffsetY().load(std::memory_order_relaxed), std::memory_order_relaxed);
-            detail::sessionSavedOffsetZ().store(detail::sessionOffsetZ().load(std::memory_order_relaxed), std::memory_order_relaxed);
-            detail::sessionSavedLayerDisplayMode().store(detail::sessionLayerDisplayMode().load(std::memory_order_relaxed), std::memory_order_relaxed);
-            detail::sessionSavedDisplayLayer().store(detail::sessionDisplayLayer().load(std::memory_order_relaxed), std::memory_order_relaxed);
-            detail::sessionSavedLayerAxis().store(detail::sessionLayerAxis().load(std::memory_order_relaxed), std::memory_order_relaxed);
-        }
-        std::string lastPath;
-        std::string savedStructurePath;
-        {
-            std::lock_guard lock(detail::sessionLoadedMutex());
-            lastPath = detail::sessionLastPath();
-            savedStructurePath = detail::sessionSavedStructurePath();
-        }
+        auto& session = detail::StructureSession::getInstance();
+        // Only an active projection may update its restore snapshot. At
+        // startup the session-local transform/layer values intentionally
+        // reset to defaults; copying those values before the user restores
+        // a structure would silently destroy the saved state.
+        session.refreshSavedTransformIfActive();
+        auto const sessionSnapshot = session.snapshot();
+        auto const hud = uiState().hud();
         lholo::settings::Settings settings;
-        settings.lastStructurePath = lastPath;
-        settings.uiScale = detail::uiUiScale().load(std::memory_order_relaxed);
+        settings.lastStructurePath = sessionSnapshot.lastPath;
+        settings.uiScale = hud.uiScale;
         settings.opacity = projection::getOpacity();
         settings.correctionFillOpacity = projection::getCorrectionFillOpacity();
         settings.correctionOutlineOpacity = projection::getCorrectionOutlineOpacity();
         settings.structureBoundsEnabled = projection::getStructureBoundsEnabled();
         settings.placementRadius = place::getPlacementRadius();
-        settings.hudEnabled = detail::uiHudEnabled().load(std::memory_order_relaxed);
-        settings.hudShowFileName = detail::uiHudShowFileName().load(std::memory_order_relaxed);
-        settings.hudShowLayer = detail::uiHudShowLayer().load(std::memory_order_relaxed);
-        settings.hudShowOverallProgress = detail::uiHudShowOverallProgress().load(std::memory_order_relaxed);
-        settings.hudShowProgress = detail::uiHudShowProgress().load(std::memory_order_relaxed);
-        settings.hudShowWrongState = detail::uiHudShowWrongState().load(std::memory_order_relaxed);
-        settings.hudShowWrongType = detail::uiHudShowWrongType().load(std::memory_order_relaxed);
-        settings.hudShowBlockEntity = detail::uiHudShowBlockEntity().load(std::memory_order_relaxed);
-        settings.hudPosition = detail::uiHudPosition().load(std::memory_order_relaxed);
-        settings.guiHotkey = detail::uiGuiHotkey().load(std::memory_order_relaxed);
-        settings.guiHotkeyModifiers = detail::uiGuiHotkeyModifiers().load(std::memory_order_relaxed);
-        settings.layerIncreaseHotkey = detail::uiLayerIncreaseHotkey().load(std::memory_order_relaxed);
-        settings.layerDecreaseHotkey = detail::uiLayerDecreaseHotkey().load(std::memory_order_relaxed);
-        settings.layerIncreaseHotkeyModifiers
-            = detail::uiLayerIncreaseHotkeyModifiers().load(std::memory_order_relaxed);
-        settings.layerDecreaseHotkeyModifiers
-            = detail::uiLayerDecreaseHotkeyModifiers().load(std::memory_order_relaxed);
+        settings.hudEnabled = hud.enabled;
+        settings.hudShowFileName = hud.showFileName;
+        settings.hudShowLayer = hud.showLayer;
+        settings.hudShowOverallProgress = hud.showOverallProgress;
+        settings.hudShowProgress = hud.showProgress;
+        settings.hudShowWrongState = hud.showWrongState;
+        settings.hudShowWrongType = hud.showWrongType;
+        settings.hudShowBlockEntity = hud.showBlockEntity;
+        settings.hudPosition = hud.position;
+        auto const guiHotkey = uiState().hotkey(kGuiHotkeyIndex);
+        auto const layerIncreaseHotkey = uiState().hotkey(kLayerIncreaseHotkeyIndex);
+        auto const layerDecreaseHotkey = uiState().hotkey(kLayerDecreaseHotkeyIndex);
+        settings.guiHotkey = guiHotkey.key;
+        settings.guiHotkeyModifiers = guiHotkey.modifiers;
+        settings.layerIncreaseHotkey = layerIncreaseHotkey.key;
+        settings.layerDecreaseHotkey = layerDecreaseHotkey.key;
+        settings.layerIncreaseHotkeyModifiers = layerIncreaseHotkey.modifiers;
+        settings.layerDecreaseHotkeyModifiers = layerDecreaseHotkey.modifiers;
         for (std::size_t index = 0; index < settings.moveHotkeys.size(); ++index) {
-            settings.moveHotkeys[index] = detail::uiMoveHotkeys()[index].load(std::memory_order_relaxed);
-            settings.moveHotkeyModifiers[index]
-                = detail::uiMoveHotkeyModifiers()[index].load(std::memory_order_relaxed);
+            auto const moveHotkey = uiState().hotkey(index + 1);
+            settings.moveHotkeys[index] = moveHotkey.key;
+            settings.moveHotkeyModifiers[index] = moveHotkey.modifiers;
         }
-        settings.hasSavedProjection = detail::sessionHasSavedProjection().load(std::memory_order_relaxed);
-        settings.savedAnchorX = detail::sessionSavedAnchorX().load(std::memory_order_relaxed);
-        settings.savedAnchorY = detail::sessionSavedAnchorY().load(std::memory_order_relaxed);
-        settings.savedAnchorZ = detail::sessionSavedAnchorZ().load(std::memory_order_relaxed);
-        settings.savedRotation = detail::sessionSavedRotation().load(std::memory_order_relaxed);
-        settings.savedMirror = detail::sessionSavedMirror().load(std::memory_order_relaxed);
-        settings.savedOffsetX = detail::sessionSavedOffsetX().load(std::memory_order_relaxed);
-        settings.savedOffsetY = detail::sessionSavedOffsetY().load(std::memory_order_relaxed);
-        settings.savedOffsetZ = detail::sessionSavedOffsetZ().load(std::memory_order_relaxed);
-        settings.savedLayerDisplayMode = detail::sessionSavedLayerDisplayMode().load(std::memory_order_relaxed);
-        settings.savedDisplayLayer = detail::sessionSavedDisplayLayer().load(std::memory_order_relaxed);
-        settings.savedLayerAxis = detail::sessionSavedLayerAxis().load(std::memory_order_relaxed);
-        settings.savedStructurePath = savedStructurePath;
+        settings.hasSavedProjection = sessionSnapshot.saved.available;
+        settings.savedAnchorX = sessionSnapshot.saved.anchorX;
+        settings.savedAnchorY = sessionSnapshot.saved.anchorY;
+        settings.savedAnchorZ = sessionSnapshot.saved.anchorZ;
+        settings.savedRotation = sessionSnapshot.saved.transform.rotation;
+        settings.savedMirror = sessionSnapshot.saved.transform.mirror;
+        settings.savedOffsetX = sessionSnapshot.saved.transform.offsetX;
+        settings.savedOffsetY = sessionSnapshot.saved.transform.offsetY;
+        settings.savedOffsetZ = sessionSnapshot.saved.transform.offsetZ;
+        settings.savedLayerDisplayMode = sessionSnapshot.saved.transform.layerDisplayMode;
+        settings.savedDisplayLayer = sessionSnapshot.saved.transform.displayLayer;
+        settings.savedLayerAxis = sessionSnapshot.saved.transform.layerAxis;
+        settings.savedStructurePath = sessionSnapshot.saved.structurePath;
         lholo::settings::saveSettingsFile(path, settings);
     } catch (std::exception const& exception) {
         logger().error("Could not save projection settings {}: {}", path.string(), exception.what());
@@ -753,62 +615,40 @@ void saveSettings() {
 }
 
 std::shared_ptr<LoadedStructure const> getLoaded() {
-    std::lock_guard lock(detail::sessionLoadedMutex());
-    return detail::sessionLoaded();
+    return detail::StructureSession::getInstance().loaded();
 }
 
 int getRotationQuarterTurns() {
-    return detail::sessionRotationQuarterTurns().load(std::memory_order_relaxed);
+    return detail::StructureSession::getInstance().transform().rotation;
 }
 
 int getMirrorMode() {
-    return std::clamp(detail::sessionMirror().load(std::memory_order_relaxed), 0, 2);
+    return std::clamp(detail::StructureSession::getInstance().transform().mirror, 0, 2);
 }
 
-int getOffsetX() { return detail::sessionOffsetX().load(std::memory_order_relaxed); }
-int getOffsetY() { return detail::sessionOffsetY().load(std::memory_order_relaxed); }
-int getOffsetZ() { return detail::sessionOffsetZ().load(std::memory_order_relaxed); }
-int getLayerDisplayMode() { return detail::sessionLayerDisplayMode().load(std::memory_order_relaxed); }
-int getDisplayLayer() { return detail::sessionDisplayLayer().load(std::memory_order_relaxed); }
-int getLayerAxis() { return detail::sessionLayerAxis().load(std::memory_order_relaxed); }
+int getOffsetX() { return detail::StructureSession::getInstance().transform().offsetX; }
+int getOffsetY() { return detail::StructureSession::getInstance().transform().offsetY; }
+int getOffsetZ() { return detail::StructureSession::getInstance().transform().offsetZ; }
+int getLayerDisplayMode() { return detail::StructureSession::getInstance().transform().layerDisplayMode; }
+int getDisplayLayer() { return detail::StructureSession::getInstance().transform().displayLayer; }
+int getLayerAxis() { return detail::StructureSession::getInstance().transform().layerAxis; }
 
 void recordProjectionAnchor(int x, int y, int z) {
-    detail::sessionSavedAnchorX().store(x, std::memory_order_relaxed);
-    detail::sessionSavedAnchorY().store(y, std::memory_order_relaxed);
-    detail::sessionSavedAnchorZ().store(z, std::memory_order_relaxed);
-    detail::sessionSavedRotation().store(detail::sessionRotationQuarterTurns().load(std::memory_order_relaxed), std::memory_order_relaxed);
-    detail::sessionSavedMirror().store(detail::sessionMirror().load(std::memory_order_relaxed), std::memory_order_relaxed);
-    detail::sessionSavedOffsetX().store(detail::sessionOffsetX().load(std::memory_order_relaxed), std::memory_order_relaxed);
-    detail::sessionSavedOffsetY().store(detail::sessionOffsetY().load(std::memory_order_relaxed), std::memory_order_relaxed);
-    detail::sessionSavedOffsetZ().store(detail::sessionOffsetZ().load(std::memory_order_relaxed), std::memory_order_relaxed);
-    detail::sessionSavedLayerDisplayMode().store(detail::sessionLayerDisplayMode().load(std::memory_order_relaxed), std::memory_order_relaxed);
-    detail::sessionSavedDisplayLayer().store(detail::sessionDisplayLayer().load(std::memory_order_relaxed), std::memory_order_relaxed);
-    detail::sessionSavedLayerAxis().store(detail::sessionLayerAxis().load(std::memory_order_relaxed), std::memory_order_relaxed);
-    {
-        std::lock_guard lock(detail::sessionLoadedMutex());
-        detail::sessionSavedStructurePath() = detail::sessionLastPath();
-    }
-    detail::sessionHasSavedProjection().store(true, std::memory_order_release);
+    detail::StructureSession::getInstance().recordProjectionAnchor(x, y, z);
     saveSettings();
 }
 
 void clear() {
     // Withdraw the requested structure before waiting for the mesh worker.
-    // Otherwise the render hook can observe the old detail::sessionLoaded() in the gap after
+    // Otherwise the render hook can observe the old loaded structure in the gap after
     // projection::disable() and immediately enable the projection again.
-    {
-        std::lock_guard lock(detail::sessionLoadedMutex());
-        detail::sessionLoaded().reset();
-        detail::sessionStatus() = "已关闭投影";
-    }
+    detail::StructureSession::getInstance().clearLoaded("已关闭投影");
 
     // The active projection and in-flight worker keep non-owning Block pointers
     // into the Java mapper registry. Stop them before releasing that registry.
     projection::disable();
     resetJavaBlockMappingCache();
-    detail::uiMaterialListRequested().store(false, std::memory_order_release);
-    std::lock_guard materialLock(detail::uiMaterialMutex());
-    detail::uiMaterialRequirements().clear();
+    uiState().clearMaterials();
 }
 
 } // namespace lholo::structure

@@ -1,37 +1,83 @@
 // LHolo - Client-side projection renderer for Minecraft Bedrock Windows
 // Copyright (C) 2026  MarmieQi
 //
-// Session-wide mutable state access contract. The storage is still owned by
-// the projection facade; these accessors let frame orchestration run from
-// runtime/ without touching Projection.cpp globals directly.
+// Projection-session ownership and synchronization. Projection algorithms run
+// through withLockedState, so the mutex, state and capture wireframe cannot be
+// acquired or retained independently.
 
 #pragma once
 
-#include <mutex>
+#include "overlay/BoundsWireframe.h"
+#include "projection/core/ProjectionState.h"
 
-namespace lholo::overlay {
-class BoundsWireframe;
-}
+#include <atomic>
+#include <functional>
+#include <mutex>
+#include <optional>
+#include <type_traits>
+#include <utility>
 
 namespace lholo::projection::detail {
 
-struct ProjectionState;
+struct ProjectionAnchor {
+    int x{};
+    int y{};
+    int z{};
+};
 
-std::mutex&               projectionStateMutex();
-ProjectionState&          projectionState();
-void                      clearProjectionStateLocked();
-overlay::BoundsWireframe& projectionCaptureBounds();
+class ProjectionSession {
+public:
+    static ProjectionSession& getInstance();
 
-float projectionOpacity();
-void  setProjectionOpacity(float opacity);
-float projectionCorrectionFillOpacity();
-void  setProjectionCorrectionFillOpacity(float opacity);
-float projectionCorrectionOutlineOpacity();
-void  setProjectionCorrectionOutlineOpacity(float opacity);
-bool  projectionStructureBoundsEnabled();
-void  setProjectionStructureBoundsEnabled(bool enabled);
+    ProjectionSession(ProjectionSession const&)            = delete;
+    ProjectionSession(ProjectionSession&&)                 = delete;
+    ProjectionSession& operator=(ProjectionSession const&) = delete;
+    ProjectionSession& operator=(ProjectionSession&&)      = delete;
 
-bool consumeProjectionAnchor(int& x, int& y, int& z);
-void requestProjectionAnchor(int x, int y, int z);
+    template <class Operation>
+    decltype(auto) withLockedState(Operation&& operation) {
+        using Result = std::invoke_result_t<
+            Operation,
+            ProjectionState&,
+            overlay::BoundsWireframe&
+        >;
+        static_assert(!std::is_reference_v<Result> && !std::is_pointer_v<Result>);
+        std::lock_guard lock(mStateMutex);
+        return std::invoke(
+            std::forward<Operation>(operation),
+            mState,
+            mCaptureBounds
+        );
+    }
+
+    [[nodiscard]] float opacity() const;
+    void setOpacity(float opacity);
+    [[nodiscard]] float correctionFillOpacity() const;
+    void setCorrectionFillOpacity(float opacity);
+    [[nodiscard]] float correctionOutlineOpacity() const;
+    void setCorrectionOutlineOpacity(float opacity);
+    [[nodiscard]] bool structureBoundsEnabled() const;
+    void setStructureBoundsEnabled(bool enabled);
+
+    [[nodiscard]] std::optional<ProjectionAnchor> consumeAnchor();
+    void requestAnchor(int x, int y, int z);
+    void cancelAnchorRequest();
+
+private:
+    ProjectionSession() = default;
+
+    std::atomic<float> mOpacity{1.0f};
+    std::atomic<float> mCorrectionFillOpacity{0.15f};
+    std::atomic<float> mCorrectionOutlineOpacity{1.0f};
+    std::atomic_bool   mStructureBoundsEnabled{true};
+    std::atomic_bool   mPendingAnchor{false};
+    std::atomic_int    mPendingAnchorX{0};
+    std::atomic_int    mPendingAnchorY{0};
+    std::atomic_int    mPendingAnchorZ{0};
+
+    std::mutex               mStateMutex;
+    ProjectionState          mState;
+    overlay::BoundsWireframe mCaptureBounds;
+};
 
 } // namespace lholo::projection::detail

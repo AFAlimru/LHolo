@@ -3,9 +3,12 @@
 
 #include <cstdio>
 
+#include "place/PlacementState.h"
 #include "projection/core/ProjectionRules.h"
 #include "projection/runtime/ProjectionProgress.h"
 #include "settings/SettingsStore.h"
+#include "structure/StructureSession.h"
+#include "structure/StructureUiState.h"
 #include "ui/HotkeyFormat.h"
 
 #include <Windows.h>
@@ -147,6 +150,221 @@ void testSettingsStore() {
     std::filesystem::remove(path, error);
 }
 
+void testStructureSession() {
+    using lholo::structure::detail::SavedProjectionSnapshot;
+    using lholo::structure::detail::StructureSession;
+
+    auto& session = StructureSession::getInstance();
+    session.clearLoaded("尚未加载结构文件");
+    session.resetTransform();
+    session.setLastPath("initial.mcstructure");
+    session.setSavedProjection(SavedProjectionSnapshot{});
+
+    auto snapshot = session.snapshot();
+    LHOLO_CHECK(!snapshot.loaded);
+    LHOLO_CHECK(snapshot.status == "尚未加载结构文件");
+    LHOLO_CHECK(snapshot.lastPath == "initial.mcstructure");
+    LHOLO_CHECK(snapshot.transform.rotation == 0);
+    LHOLO_CHECK(!snapshot.saved.available);
+
+    auto loaded = std::make_shared<LoadedStructure>();
+    loaded->sizeX = 7;
+    loaded->sizeY = 5;
+    loaded->sizeZ = 3;
+    session.replaceLoaded(loaded, "active.mcstructure", "loaded");
+    LHOLO_CHECK(session.setRotation(2));
+    LHOLO_CHECK(!session.setRotation(2));
+    LHOLO_CHECK(session.setMirror(1));
+    LHOLO_CHECK(session.setOffsetX(12));
+    LHOLO_CHECK(session.setOffsetY(-4));
+    LHOLO_CHECK(session.setLayerDisplayMode(1));
+    LHOLO_CHECK(session.setDisplayLayer(4));
+    LHOLO_CHECK(session.setLayerAxis(1));
+
+    snapshot = session.snapshot();
+    LHOLO_CHECK(snapshot.loaded == loaded);
+    LHOLO_CHECK(snapshot.maxLayerY == 4);
+    LHOLO_CHECK(snapshot.maxLayerX == 6);
+    LHOLO_CHECK(snapshot.transform.offsetX == 12);
+    LHOLO_CHECK(snapshot.transform.offsetY == -4);
+
+    session.recordProjectionAnchor(10, 20, 30);
+    auto const saved = session.savedProjection();
+    LHOLO_CHECK(saved.available);
+    LHOLO_CHECK(saved.anchorX == 10);
+    LHOLO_CHECK(saved.anchorY == 20);
+    LHOLO_CHECK(saved.anchorZ == 30);
+    LHOLO_CHECK(saved.transform.rotation == 2);
+    LHOLO_CHECK(saved.transform.mirror == 1);
+    LHOLO_CHECK(saved.structurePath == "active.mcstructure");
+
+    auto layered = std::make_shared<LoadedStructure>();
+    layered->sizeX = 3;
+    layered->sizeY = 8;
+    layered->sizeZ = 4;
+    session.replaceLoaded(layered, "layered.mcstructure", "layered");
+    session.setLayerDisplayMode(2);
+    session.setDisplayLayer(7);
+    session.setLayerAxis(0);
+    session.recordProjectionAnchor(40, 50, 60);
+    session.clearLoaded("closed");
+    session.setDisplayLayer(0); // Empty-menu clamping must not alter the saved layer.
+    auto const layeredSaved = session.savedProjection();
+    LHOLO_CHECK(layeredSaved.transform.layerDisplayMode == 2);
+    LHOLO_CHECK(layeredSaved.transform.displayLayer == 7);
+    LHOLO_CHECK(layeredSaved.transform.layerAxis == 0);
+
+    session.setLayerDisplayMode(layeredSaved.transform.layerDisplayMode);
+    session.setDisplayLayer(layeredSaved.transform.displayLayer);
+    session.setLayerAxis(layeredSaved.transform.layerAxis);
+    session.replaceLoaded(layered, layeredSaved.structurePath, "restored");
+    snapshot = session.snapshot();
+    LHOLO_CHECK(snapshot.loaded == layered);
+    LHOLO_CHECK(snapshot.maxLayerY == 7);
+    LHOLO_CHECK(snapshot.transform.displayLayer == 7);
+
+    session.clearLoaded("closed");
+}
+
+void testPlacementState() {
+    using lholo::place::detail::FailedPlanKey;
+    using lholo::place::detail::PlacementState;
+
+    auto& state = PlacementState::getInstance();
+    state.setEnabled(true);
+    state.setRangeEnabled(true);
+    state.setManualMode(true);
+    state.setRadius(3);
+    state.setManualPressAt(100);
+    state.setLastManualPlaceAt(80);
+    state.setManualPlaceRequested(true);
+    state.setManualHeld(true);
+    state.setNextPlaceAt(140);
+    state.setNextSwapAt(150);
+
+    LHOLO_CHECK(state.enabled());
+    LHOLO_CHECK(state.rangeEnabled());
+    LHOLO_CHECK(state.manualMode());
+    LHOLO_CHECK(state.radius() == 3);
+    LHOLO_CHECK(state.manualPressAt() == 100);
+    LHOLO_CHECK(state.lastManualPlaceAt() == 80);
+    LHOLO_CHECK(state.manualPlaceRequested());
+    LHOLO_CHECK(state.manualHeld());
+    LHOLO_CHECK(state.nextPlaceAt() == 140);
+    LHOLO_CHECK(state.nextSwapAt() == 150);
+
+    constexpr std::int64_t recentCell = 0x123456789LL;
+    state.recordRecentPlacement(recentCell, 100, 150);
+    LHOLO_CHECK(state.recentPlacementActive(recentCell, 149));
+    LHOLO_CHECK(!state.recentPlacementActive(recentCell, 150));
+
+    FailedPlanKey const failedKey{recentCell, 42, 7, 1, 2, 3, 4, 5, 6};
+    state.cacheFailedPlan(failedKey, 200, 250);
+    LHOLO_CHECK(state.failedPlanCached(failedKey, 249));
+    LHOLO_CHECK(!state.failedPlanCached(failedKey, 250));
+
+    state.setAimedBlockEntityName("Test block entity");
+    LHOLO_CHECK(state.aimedBlockEntityName() == "Test block entity");
+
+    state.setEnabled(false);
+    state.setRangeEnabled(false);
+    state.setManualMode(false);
+    state.setRadius(4);
+    state.setManualPressAt(0);
+    state.setLastManualPlaceAt(0);
+    state.setManualPlaceRequested(false);
+    state.setManualHeld(false);
+    state.setNextPlaceAt(0);
+    state.setNextSwapAt(0);
+    state.setAimedBlockEntityName({});
+}
+
+void testStructureUiState() {
+    using lholo::structure::detail::HudStateSnapshot;
+    using lholo::structure::detail::StructureUiState;
+
+    auto& state = StructureUiState::getInstance();
+    state.resetHotkeys();
+    state.resetHotkeyState();
+    state.stopHotkeyCapture();
+    (void)state.consumePendingHotkeyActions();
+    state.clearMaterials();
+
+    auto hud = state.hud();
+    hud.enabled = false;
+    hud.showLayer = false;
+    hud.position = 3;
+    hud.uiScale = 1.5f;
+    LHOLO_CHECK(state.applyHud(hud));
+    LHOLO_CHECK(!state.applyHud(hud));
+    auto const appliedHud = state.hud();
+    LHOLO_CHECK(!appliedHud.enabled);
+    LHOLO_CHECK(!appliedHud.showLayer);
+    LHOLO_CHECK(appliedHud.position == 3);
+    LHOLO_CHECK(appliedHud.uiScale == 1.5f);
+
+    state.resetHotkeys();
+    LHOLO_CHECK(state.hotkey(0).key == 'M');
+    LHOLO_CHECK(state.hotkey(0).modifiers == lholo::ui::kHotkeyModifierAlt);
+    LHOLO_CHECK(state.hotkey(1).key == VK_LEFT);
+    LHOLO_CHECK(state.hotkey(7).key == VK_UP);
+
+    state.beginHotkeyCapture(1);
+    LHOLO_CHECK(state.capturingHotkey() == 1);
+    state.setHotkey(2, 'K', lholo::ui::kHotkeyModifierControl);
+    state.bindCapturedHotkey(1, 'K', lholo::ui::kHotkeyModifierControl);
+    LHOLO_CHECK(state.hotkey(1).key == 'K');
+    LHOLO_CHECK(state.hotkey(2).key == 0);
+    LHOLO_CHECK(!state.capturingHotkey());
+
+    state.setControlHeld(true);
+    state.setShiftHeld(true);
+    LHOLO_CHECK(
+        state.currentHotkeyModifiers()
+        == (lholo::ui::kHotkeyModifierControl | lholo::ui::kHotkeyModifierShift)
+    );
+    state.setControlHeld(false);
+    state.setShiftHeld(false);
+
+    state.resetHotkeys();
+    LHOLO_CHECK(state.tryPressHotkey(0));
+    LHOLO_CHECK(!state.tryPressHotkey(0));
+    LHOLO_CHECK(state.releaseHotkeysForKey('M', 100));
+    LHOLO_CHECK(state.releaseHotkeysForKey('M', 150));
+    LHOLO_CHECK(!state.releaseHotkeysForKey('M', 201));
+
+    state.queueMove(0);
+    state.queueMove(4);
+    state.queueLayerDelta(-1);
+    state.requestSettingsSave();
+    auto const pending = state.consumePendingHotkeyActions();
+    LHOLO_CHECK(pending.offsetX == -1);
+    LHOLO_CHECK(pending.offsetY == 1);
+    LHOLO_CHECK(pending.offsetZ == 0);
+    LHOLO_CHECK(pending.layerDelta == -1);
+    LHOLO_CHECK(pending.settingsSave);
+
+    state.replaceMaterialRequirements({{"Stone", "minecraft:stone", 12}});
+    auto const materials = state.materialRequirements();
+    LHOLO_CHECK(materials.size() == 1);
+    LHOLO_CHECK(materials[0].typeName == "minecraft:stone");
+    LHOLO_CHECK(materials[0].count == 12);
+
+    state.setGuiVisible(false);
+    LHOLO_CHECK(state.toggleGuiVisible());
+    LHOLO_CHECK(state.guiVisible());
+    state.setOpeningInputBlockFrames(1);
+    LHOLO_CHECK(state.openingInputBlocked());
+    state.consumeOpeningInputBlockFrame();
+    LHOLO_CHECK(!state.openingInputBlocked());
+
+    state.setGuiVisible(false);
+    state.resetHotkeys();
+    state.resetHotkeyState();
+    state.clearMaterials();
+    state.applyHud(HudStateSnapshot{});
+}
+
 void testHotkeyFormat() {
     LHOLO_CHECK(lholo::ui::isModifierKey(VK_CONTROL));
     LHOLO_CHECK(lholo::ui::isModifierKey(VK_MENU));
@@ -165,6 +383,9 @@ int main() {
     testLayoutRules();
     testProgress();
     testSettingsStore();
+    testStructureSession();
+    testPlacementState();
+    testStructureUiState();
     testHotkeyFormat();
     std::printf("LHoloLogicTests: %d checks, %d failures\n", gChecks, gFailures);
     return gFailures == 0 ? 0 : 1;

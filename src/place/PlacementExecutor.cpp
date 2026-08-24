@@ -77,6 +77,10 @@ namespace {
 using detail::FailedPlanKey;
 using detail::FailedPlanKeyHash;
 using detail::PlacementContext;
+
+auto& placementState() {
+    return detail::PlacementState::getInstance();
+}
 constexpr int kHotbarSlots = 9;
 constexpr int kInventorySlots = 36;
 // A cell that was just placed must not be re-targeted until the server applies
@@ -112,19 +116,11 @@ std::int64_t packBlockPos(BlockPos const& p) {
 }
 
 bool recentlyPlaced(BlockPos const& cell, std::uint64_t now) {
-    std::lock_guard lock(detail::placementRecentMutex());
-    auto const it = detail::placementRecentPlacements().find(packBlockPos(cell));
-    return it != detail::placementRecentPlacements().end() && now < it->second;
+    return placementState().recentPlacementActive(packBlockPos(cell), now);
 }
 
 void markPlaced(BlockPos const& cell, std::uint64_t now) {
-    std::lock_guard lock(detail::placementRecentMutex());
-    if (detail::placementRecentPlacements().size() > 256) {
-        for (auto it = detail::placementRecentPlacements().begin(); it != detail::placementRecentPlacements().end();) {
-            it = now >= it->second ? detail::placementRecentPlacements().erase(it) : std::next(it);
-        }
-    }
-    detail::placementRecentPlacements()[packBlockPos(cell)] = now + kCellLockMs;
+    placementState().recordRecentPlacement(packBlockPos(cell), now, now + kCellLockMs);
 }
 
 void updateAimedBlockEntityName(Block const* block) {
@@ -133,8 +129,7 @@ void updateAimedBlockEntityName(Block const* block) {
         ItemStack const item(*block, 1, nullptr);
         name = item.getName();
     }
-    std::lock_guard lock(detail::placementAimedNameMutex());
-    detail::placementAimedBlockEntityName() = std::move(name);
+    placementState().setAimedBlockEntityName(std::move(name));
 }
 
 auto& logger() {
@@ -205,17 +200,11 @@ FailedPlanKey makeFailedPlanKey(
 }
 
 bool isFailedPlanCached(FailedPlanKey const& key, std::uint64_t now) {
-    auto const found = detail::placementFailedRangePlans().find(key);
-    return found != detail::placementFailedRangePlans().end() && now < found->second;
+    return placementState().failedPlanCached(key, now);
 }
 
 void cacheFailedPlan(FailedPlanKey const& key, std::uint64_t now) {
-    if (detail::placementFailedRangePlans().size() > 256) {
-        for (auto it = detail::placementFailedRangePlans().begin(); it != detail::placementFailedRangePlans().end();) {
-            it = now >= it->second ? detail::placementFailedRangePlans().erase(it) : std::next(it);
-        }
-    }
-    detail::placementFailedRangePlans()[key] = now + kFailedPlanCacheMs;
+    placementState().cacheFailedPlan(key, now, now + kFailedPlanCacheMs);
 }
 
 // Find an inventory slot holding the item that places `block`. Match on item +
@@ -446,7 +435,7 @@ bool placeBlock(LocalPlayer& player, ProjectionTarget const& target, int slot, I
         true
     );
     player.getClientInstance().getPacketSender().sendToServer(packet);
-    detail::placementNextPlaceAt().store(GetTickCount64() + kMinSendIntervalMs, std::memory_order_release);
+    placementState().setNextPlaceAt(GetTickCount64() + kMinSendIntervalMs);
     return true;
 }
 
@@ -660,7 +649,7 @@ bool resolveOrientedPlacement(
 void tickRangePlaceImpl(LocalPlayer& player, PlacementContext const& placementContext) {
     auto const now = GetTickCount64();
     Vec3 const center = player.getPosition();
-    float const radius = static_cast<float>(detail::placementRadius().load(std::memory_order_relaxed));
+    float const radius = static_cast<float>(placementState().radius());
     auto& region = player.getDimensionBlockSource();
 
     auto candidates = projection::queryMissingCellsInRange(player, center, radius);
@@ -701,12 +690,12 @@ void tickRangePlaceImpl(LocalPlayer& player, PlacementContext const& placementCo
         if (found.slot >= kHotbarSlots) {
             // Back off a rejected swap; see sendInventorySwap and the same
             // logic in tickEasyPlaceImpl.
-            if (now < detail::placementNextSwapAt().load(std::memory_order_acquire)) continue;
+            if (now < placementState().nextSwapAt()) continue;
             auto& inventory = player.getInventory();
             int const hotbarSlot = player.getSelectedItemSlot();
             auto const& toItem = inventory.getItem(hotbarSlot);
             sendInventorySwap(player, found.slot, hotbarSlot, *found.item, toItem);
-            detail::placementNextSwapAt().store(now + kSwapRetryMs, std::memory_order_release);
+            placementState().setNextSwapAt(now + kSwapRetryMs);
             return;
         }
         player.setSelectedSlot(found.slot);
@@ -735,9 +724,9 @@ void tickEasyPlaceImpl() {
         return;
     }
 
-    if (!detail::placementEnabled().load(std::memory_order_acquire)
-        && !detail::placementManualMode().load(std::memory_order_acquire)
-        && !detail::placementRangeEnabled().load(std::memory_order_acquire)) {
+    if (!placementState().enabled()
+        && !placementState().manualMode()
+        && !placementState().rangeEnabled()) {
         updateAimedBlockEntityName(nullptr);
         return;
     }
@@ -757,10 +746,10 @@ void tickEasyPlaceImpl() {
     PlacementContext const placementContext = makePlacementContext(origin, dir, pickRange);
     updateAimedBlockEntityName(target ? target->block : nullptr);
     auto const tickNow = GetTickCount64();
-    if (tickNow < detail::placementNextPlaceAt().load(std::memory_order_acquire)) return;
+    if (tickNow < placementState().nextPlaceAt()) return;
 
     // Range placement scans everything within the configured radius.
-    if (detail::placementRangeEnabled().load(std::memory_order_acquire)) {
+    if (placementState().rangeEnabled()) {
         tickRangePlaceImpl(*player, placementContext);
         return;
     }
@@ -770,23 +759,23 @@ void tickEasyPlaceImpl() {
     // right-click press: startBuildBlock sets a one-shot request (consumed by
     // the placement below); the buildBlock hook cancels the vanilla build so
     // nothing is placed twice.
-    if (detail::placementManualMode().load(std::memory_order_acquire)) {
+    if (placementState().manualMode()) {
         auto const nowManual = GetTickCount64();
         bool allowed = false;
         // First block of a press: place it even if the button was already
         // released (a quick tap), until the request goes stale.
-        if (detail::placementManualPlaceRequested().load(std::memory_order_acquire)) {
-            if (nowManual - detail::placementManualPressAt().load(std::memory_order_acquire) <= kManualRequestTimeoutMs) {
+        if (placementState().manualPlaceRequested()) {
+            if (nowManual - placementState().manualPressAt() <= kManualRequestTimeoutMs) {
                 allowed = true;
             } else {
-                detail::placementManualPlaceRequested().store(false, std::memory_order_release);
+                placementState().setManualPlaceRequested(false);
             }
         }
         // While the button stays held, pause for the initial delay and then
         // repeat at a steady rate (typematic).
-        if (!allowed && detail::placementManualHeld().load(std::memory_order_acquire)
-            && nowManual - detail::placementManualPressAt().load(std::memory_order_acquire) >= kManualInitialDelayMs
-            && nowManual - detail::placementLastManualPlaceAt().load(std::memory_order_acquire) >= kManualRepeatIntervalMs) {
+        if (!allowed && placementState().manualHeld()
+            && nowManual - placementState().manualPressAt() >= kManualInitialDelayMs
+            && nowManual - placementState().lastManualPlaceAt() >= kManualRepeatIntervalMs) {
             allowed = true;
         }
         if (!allowed) return;
@@ -820,7 +809,7 @@ void tickEasyPlaceImpl() {
     if (found.slot >= kHotbarSlots) {
         // Back off a rejected swap so it never retries more often than
         // kSwapRetryMs.
-        if (now < detail::placementNextSwapAt().load(std::memory_order_acquire)) return;
+        if (now < placementState().nextSwapAt()) return;
         // The server only accepts placements from the selected hotbar slot.
         // Swap the backpack item into the currently selected slot through a
         // server-synced NormalTransaction. Do not place in the same tick: the
@@ -832,7 +821,7 @@ void tickEasyPlaceImpl() {
         int const hotbarSlot = player->getSelectedItemSlot();
         auto const& toItem = inventory.getItem(hotbarSlot);
         sendInventorySwap(*player, found.slot, hotbarSlot, *found.item, toItem);
-        detail::placementNextSwapAt().store(now + kSwapRetryMs, std::memory_order_release);
+        placementState().setNextSwapAt(now + kSwapRetryMs);
         return;
     }
     player->setSelectedSlot(found.slot);
@@ -840,8 +829,8 @@ void tickEasyPlaceImpl() {
     markPlaced(placement.cell, now);
     // Manual repeat bookkeeping: record this placement and mark the current
     // press as having placed its first block (so holding then auto-repeats).
-    detail::placementLastManualPlaceAt().store(now, std::memory_order_release);
-    detail::placementManualPlaceRequested().store(false, std::memory_order_release);
+    placementState().setLastManualPlaceAt(now);
+    placementState().setManualPlaceRequested(false);
 }
 } // namespace
 

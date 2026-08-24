@@ -78,6 +78,10 @@ namespace {
 using detail::FailedPlanKey;
 using detail::FailedPlanKeyHash;
 
+auto& placementState() {
+    return detail::PlacementState::getInstance();
+}
+
 // Easy-place searches the full inventory (hotbar 0-8, backpack 9-35) for the
 // matching block item and references the found slot directly in the placement
 // transaction, so no cross-container inventory request is needed.
@@ -102,7 +106,7 @@ LL_TYPE_INSTANCE_HOOK(
 // check is essential: the server processes LHolo's own placement through these
 // same functions on the ServerPlayer, and that must not be suppressed.
 bool isLocalManualBuild(GameMode& gm) {
-    if (!detail::placementManualMode().load(std::memory_order_acquire)) return false;
+    if (!placementState().manualMode()) return false;
     auto client = ll::service::getClientInstance();
     auto* localPlayer = client ? client->getLocalPlayer() : nullptr;
     return localPlayer && &gm.mPlayer == static_cast<Player*>(localPlayer);
@@ -121,9 +125,9 @@ LL_TYPE_INSTANCE_HOOK(
     uchar             face
 ) {
     if (isLocalManualBuild(*this)) {
-        detail::placementManualPressAt().store(GetTickCount64(), std::memory_order_release);
-        detail::placementManualPlaceRequested().store(true, std::memory_order_release);
-        detail::placementManualHeld().store(true, std::memory_order_release);
+        placementState().setManualPressAt(GetTickCount64());
+        placementState().setManualPlaceRequested(true);
+        placementState().setManualHeld(true);
         return;  // LHolo handles the placement from tickEasyPlace.
     }
     origin(pos, face);
@@ -138,7 +142,7 @@ LL_TYPE_INSTANCE_HOOK(
     void
 ) {
     if (isLocalManualBuild(*this)) {
-        detail::placementManualHeld().store(false, std::memory_order_release);
+        placementState().setManualHeld(false);
         return;
     }
     origin();
@@ -168,53 +172,52 @@ void setEnabled(bool enabled) {
     } else {
         logger().info("Easy-place disabled");
     }
-    detail::placementEnabled().store(enabled, std::memory_order_release);
+    placementState().setEnabled(enabled);
 }
 
 bool isEnabled() {
-    return detail::placementEnabled().load(std::memory_order_acquire);
+    return placementState().enabled();
 }
 
 void setRangeEnabled(bool enabled) {
     if (enabled) {
-        logger().info("Range placement enabled (radius {})", detail::placementRadius().load(std::memory_order_relaxed));
+        logger().info("Range placement enabled (radius {})", placementState().radius());
     } else {
         logger().info("Range placement disabled");
     }
-    detail::placementRangeEnabled().store(enabled, std::memory_order_release);
+    placementState().setRangeEnabled(enabled);
 }
 
 bool isRangeEnabled() {
-    return detail::placementRangeEnabled().load(std::memory_order_acquire);
+    return placementState().rangeEnabled();
 }
 
 void setPlacementRadius(int radius) {
-    detail::placementRadius().store(std::clamp(radius, 1, 4), std::memory_order_release);
+    placementState().setRadius(std::clamp(radius, 1, 4));
 }
 
 int getPlacementRadius() {
-    return detail::placementRadius().load(std::memory_order_relaxed);
+    return placementState().radius();
 }
 
 void setManualMode(bool manual) {
     if (!manual) {
         // A release hook can be missed while menus or mode switches are active.
         // Never carry a stale press/hold request into the next manual session.
-        detail::placementManualHeld().store(false, std::memory_order_release);
-        detail::placementManualPlaceRequested().store(false, std::memory_order_release);
-        detail::placementManualPressAt().store(0, std::memory_order_release);
-        detail::placementLastManualPlaceAt().store(0, std::memory_order_release);
+        placementState().setManualHeld(false);
+        placementState().setManualPlaceRequested(false);
+        placementState().setManualPressAt(0);
+        placementState().setLastManualPlaceAt(0);
     }
-    detail::placementManualMode().store(manual, std::memory_order_release);
+    placementState().setManualMode(manual);
 }
 
 bool isManualMode() {
-    return detail::placementManualMode().load(std::memory_order_acquire);
+    return placementState().manualMode();
 }
 
 std::string getAimedBlockEntityName() {
-    std::lock_guard lock(detail::placementAimedNameMutex());
-    return detail::placementAimedBlockEntityName();
+    return placementState().aimedBlockEntityName();
 }
 
 bool installHook() {

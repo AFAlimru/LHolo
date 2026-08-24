@@ -1,9 +1,9 @@
 // LHolo - Client-side projection renderer for Minecraft Bedrock Windows
 // Copyright (C) 2026  MarmieQi
 //
-// Placement session state owned by the place module: toggles, manual/range
-// timers, recent cells, failed-plan cache and the aimed block-entity name.
-// Accessors return the underlying storage so logic keeps its exact shapes.
+// Placement-session ownership and synchronization. Callers use concrete
+// operations; the underlying atomics, mutexes and mutable caches never escape
+// this module.
 
 #pragma once
 
@@ -49,22 +49,66 @@ struct FailedPlanKeyHash {
     }
 };
 
-std::atomic_bool& placementEnabled();
-std::atomic_bool& placementRangeEnabled();
-std::atomic_bool& placementManualMode();
-std::atomic_bool& placementManualHeld();
-std::atomic_bool& placementManualPlaceRequested();
-std::atomic_uint64_t& placementManualPressAt();
-std::atomic_uint64_t& placementLastManualPlaceAt();
-std::atomic_int& placementRadius();
-std::atomic_uint64_t& placementNextPlaceAt();
-std::atomic_uint64_t& placementNextSwapAt();
+class PlacementState {
+public:
+    static PlacementState& getInstance();
 
-std::mutex&                                      placementRecentMutex();
-std::unordered_map<std::int64_t, std::uint64_t>& placementRecentPlacements();
-std::unordered_map<FailedPlanKey, std::uint64_t, FailedPlanKeyHash>& placementFailedRangePlans();
+    PlacementState(PlacementState const&)            = delete;
+    PlacementState(PlacementState&&)                 = delete;
+    PlacementState& operator=(PlacementState const&) = delete;
+    PlacementState& operator=(PlacementState&&)      = delete;
 
-std::string& placementAimedBlockEntityName();
-std::mutex&  placementAimedNameMutex();
+    [[nodiscard]] bool enabled() const;
+    void setEnabled(bool enabled);
+    [[nodiscard]] bool rangeEnabled() const;
+    void setRangeEnabled(bool enabled);
+    [[nodiscard]] bool manualMode() const;
+    void setManualMode(bool manual);
+    [[nodiscard]] int radius() const;
+    void setRadius(int radius);
+
+    [[nodiscard]] bool manualHeld() const;
+    void setManualHeld(bool held);
+    [[nodiscard]] bool manualPlaceRequested() const;
+    void setManualPlaceRequested(bool requested);
+    [[nodiscard]] std::uint64_t manualPressAt() const;
+    void setManualPressAt(std::uint64_t time);
+    [[nodiscard]] std::uint64_t lastManualPlaceAt() const;
+    void setLastManualPlaceAt(std::uint64_t time);
+
+    [[nodiscard]] std::uint64_t nextPlaceAt() const;
+    void setNextPlaceAt(std::uint64_t time);
+    [[nodiscard]] std::uint64_t nextSwapAt() const;
+    void setNextSwapAt(std::uint64_t time);
+
+    [[nodiscard]] bool recentPlacementActive(std::int64_t cell, std::uint64_t now) const;
+    void recordRecentPlacement(std::int64_t cell, std::uint64_t now, std::uint64_t expiresAt);
+    [[nodiscard]] bool failedPlanCached(FailedPlanKey const& key, std::uint64_t now) const;
+    void cacheFailedPlan(FailedPlanKey const& key, std::uint64_t now, std::uint64_t expiresAt);
+
+    [[nodiscard]] std::string aimedBlockEntityName() const;
+    void setAimedBlockEntityName(std::string name);
+
+private:
+    PlacementState() = default;
+
+    std::atomic_bool     mEnabled{false};
+    std::atomic_bool     mRangeEnabled{false};
+    std::atomic_bool     mManualMode{false};
+    std::atomic_bool     mManualHeld{false};
+    std::atomic_bool     mManualPlaceRequested{false};
+    std::atomic_uint64_t mManualPressAt{0};
+    std::atomic_uint64_t mLastManualPlaceAt{0};
+    std::atomic_int      mRadius{4};
+    std::atomic_uint64_t mNextPlaceAt{0};
+    std::atomic_uint64_t mNextSwapAt{0};
+
+    mutable std::mutex                               mRecentMutex;
+    std::unordered_map<std::int64_t, std::uint64_t> mRecentPlacements;
+    std::unordered_map<FailedPlanKey, std::uint64_t, FailedPlanKeyHash> mFailedRangePlans;
+
+    mutable std::mutex mAimedNameMutex;
+    std::string        mAimedBlockEntityName;
+};
 
 } // namespace lholo::place::detail
