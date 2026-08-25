@@ -86,8 +86,8 @@ public:
     [[nodiscard]] bool failedPlanCached(FailedPlanKey const& key, std::uint64_t now) const;
     void cacheFailedPlan(FailedPlanKey const& key, std::uint64_t now, std::uint64_t expiresAt);
 
-    [[nodiscard]] std::string aimedBlockEntityName() const;
-    void setAimedBlockEntityName(std::string name);
+    [[nodiscard]] std::string aimedProjectedBlockName() const;
+    void setAimedProjectedBlockName(std::string name);
 
 private:
     PlacementState() = default;
@@ -107,8 +107,8 @@ private:
     std::unordered_map<std::int64_t, std::uint64_t> mRecentPlacements;
     std::unordered_map<FailedPlanKey, std::uint64_t, FailedPlanKeyHash> mFailedRangePlans;
 
-    mutable std::mutex mAimedNameMutex;
-    std::string        mAimedBlockEntityName;
+    mutable std::mutex mAimedProjectedBlockNameMutex;
+    std::string        mAimedProjectedBlockName;
 };
 
 } // namespace lholo::place::detail

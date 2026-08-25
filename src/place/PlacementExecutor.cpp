@@ -52,7 +52,6 @@
 #include "mc/world/level/block/Block.h"
 #include "mc/world/level/block/BlockType.h"
 #include "mc/world/level/block/SlabBlock.h"
-#include "mc/world/level/block/actor/BlockActorType.h"
 #include "mc/deps/nbt/ByteTag.h"
 #include "mc/deps/nbt/CompoundTag.h"
 #include "mc/deps/nbt/IntTag.h"
@@ -123,13 +122,10 @@ void markPlaced(BlockPos const& cell, std::uint64_t now) {
     placementState().recordRecentPlacement(packBlockPos(cell), now, now + kCellLockMs);
 }
 
-void updateAimedBlockEntityName(Block const* block) {
-    std::string name;
-    if (block && block->getBlockEntityType() != BlockActorType::Undefined) {
-        ItemStack const item(*block, 1, nullptr);
-        name = item.getName();
-    }
-    placementState().setAimedBlockEntityName(std::move(name));
+void updateAimedProjectedBlockName(Block const* block) {
+    placementState().setAimedProjectedBlockName(
+        block ? block->buildDescriptionName() : std::string{}
+    );
 }
 
 auto& logger() {
@@ -709,25 +705,27 @@ void tickEasyPlaceImpl() {
 
     auto client = ll::service::getClientInstance();
     if (!client) {
-        updateAimedBlockEntityName(nullptr);
+        updateAimedProjectedBlockName(nullptr);
         return;
     }
     auto* player = client->getLocalPlayer();
     if (!player) {
-        updateAimedBlockEntityName(nullptr);
+        updateAimedProjectedBlockName(nullptr);
         return;
     }
     // Only act during gameplay: menus, pause screens and the LHolo GUI itself
     // disable in-game input.
     if (!client->isInGameInputEnabled() || structure::isGuiVisible()) {
-        updateAimedBlockEntityName(nullptr);
+        updateAimedProjectedBlockName(nullptr);
         return;
     }
 
-    if (!placementState().enabled()
-        && !placementState().manualMode()
-        && !placementState().rangeEnabled()) {
-        updateAimedBlockEntityName(nullptr);
+    bool const placementActive = placementState().enabled()
+        || placementState().manualMode()
+        || placementState().rangeEnabled();
+    bool const showProjectedBlockName = structure::shouldShowProjectedBlockName();
+    if (!placementActive && !showProjectedBlockName) {
+        updateAimedProjectedBlockName(nullptr);
         return;
     }
 
@@ -736,15 +734,18 @@ void tickEasyPlaceImpl() {
     Vec3 const rawDir = player->getViewVector(1.0f);
     float const length = std::sqrt(rawDir.x * rawDir.x + rawDir.y * rawDir.y + rawDir.z * rawDir.z);
     if (length <= 0.0f) {
-        updateAimedBlockEntityName(nullptr);
+        updateAimedProjectedBlockName(nullptr);
         return;
     }
     Vec3 const dir{rawDir.x / length, rawDir.y / length, rawDir.z / length};
 
     float const pickRange = player->getPickRange();
     auto target = findProjectionTarget(*player, origin, dir, pickRange);
+    updateAimedProjectedBlockName(
+        showProjectedBlockName && target ? target->block : nullptr
+    );
+    if (!placementActive) return;
     PlacementContext const placementContext = makePlacementContext(origin, dir, pickRange);
-    updateAimedBlockEntityName(target ? target->block : nullptr);
     auto const tickNow = GetTickCount64();
     if (tickNow < placementState().nextPlaceAt()) return;
 

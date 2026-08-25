@@ -420,7 +420,12 @@ void renderHudPage(MenuModel& model, UiMetrics const& metrics) {
         renderCheckboxRow("##HudProgress", "显示建造进度", model.hudShowProgress, metrics);
         renderCheckboxRow("##HudWrongState", "显示朝向错误", model.hudShowWrongState, metrics);
         renderCheckboxRow("##HudWrongType", "显示放置错误", model.hudShowWrongType, metrics);
-        renderCheckboxRow("##HudBlockEntity", "显示方块实体名称", model.hudShowBlockEntity, metrics);
+        renderCheckboxRow(
+            "##HudProjectedBlockName",
+            "显示投影方块名称",
+            model.hudShowProjectedBlockName,
+            metrics
+        );
         ImGui::EndDisabled();
         ImGui::TextDisabled("HUD 仅在关闭投影菜单后显示");
     });

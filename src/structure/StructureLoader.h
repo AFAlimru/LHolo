@@ -51,6 +51,7 @@ struct LoadedStructure {
 
 void requestOpenGui();
 bool isGuiVisible();
+bool shouldShowProjectedBlockName();
 bool isInputTransitionBlocked();
 bool handleGuiHotkeyKeyDown(unsigned int virtualKey);
 bool handleGuiHotkeyKeyUp(unsigned int virtualKey);

@@ -31,7 +31,7 @@ struct HudStateSnapshot {
     bool  showProgress{true};
     bool  showWrongState{true};
     bool  showWrongType{true};
-    bool  showBlockEntity{true};
+    bool  showProjectedBlockName{true};
     int   position{1};
     float uiScale{2.0f};
 };
@@ -134,7 +134,7 @@ private:
     std::atomic_bool  mHudShowProgress{true};
     std::atomic_bool  mHudShowWrongState{true};
     std::atomic_bool  mHudShowWrongType{true};
-    std::atomic_bool  mHudShowBlockEntity{true};
+    std::atomic_bool  mHudShowProjectedBlockName{true};
     std::atomic_int   mHudPosition{1};
     std::atomic<float> mUiScale{2.0f};
 

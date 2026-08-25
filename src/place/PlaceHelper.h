@@ -32,9 +32,8 @@ int  getPlacementRadius();
 // placing automatically. Applies to both easy-place and range placement.
 void setManualMode(bool manual);
 bool isManualMode();
-// Name of the block-entity block (chest, sign, hopper, ...) the crosshair
-// points at, for the HUD to identify projected placeholder boxes.
-std::string getAimedBlockEntityName();
+// Display name of the projected blueprint block currently under the crosshair.
+std::string getAimedProjectedBlockName();
 
 bool installHook();
 void uninstallHook();

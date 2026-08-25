@@ -30,7 +30,10 @@ bool loadSettingsFile(std::filesystem::path const& path, Settings& out) {
     out.hudShowProgress = json.value("hudShowProgress", out.hudShowProgress);
     out.hudShowWrongState = json.value("hudShowWrongState", out.hudShowWrongState);
     out.hudShowWrongType = json.value("hudShowWrongType", out.hudShowWrongType);
-    out.hudShowBlockEntity = json.value("hudShowBlockEntity", out.hudShowBlockEntity);
+    out.hudShowProjectedBlockName = json.value(
+        "hudShowProjectedBlockName",
+        json.value("hudShowBlockEntity", out.hudShowProjectedBlockName)
+    );
     out.hudPosition = json.value("hudPosition", out.hudPosition);
     out.guiHotkey = json.value("guiHotkey", out.guiHotkey);
     out.guiHotkeyModifiers = json.value("guiHotkeyModifiers", out.guiHotkeyModifiers);
@@ -85,7 +88,7 @@ void saveSettingsFile(std::filesystem::path const& path, Settings const& setting
     if (error) throw std::runtime_error(error.message());
 
     nlohmann::ordered_json const json{
-        {"version", 8},
+        {"version", 9},
         {"lastStructurePath", settings.lastStructurePath},
         {"uiScale", settings.uiScale},
         {"opacity", settings.opacity},
@@ -100,7 +103,7 @@ void saveSettingsFile(std::filesystem::path const& path, Settings const& setting
         {"hudShowProgress", settings.hudShowProgress},
         {"hudShowWrongState", settings.hudShowWrongState},
         {"hudShowWrongType", settings.hudShowWrongType},
-        {"hudShowBlockEntity", settings.hudShowBlockEntity},
+        {"hudShowProjectedBlockName", settings.hudShowProjectedBlockName},
         {"hudPosition", settings.hudPosition},
         {"guiHotkey", settings.guiHotkey},
         {"guiHotkeyModifiers", settings.guiHotkeyModifiers},

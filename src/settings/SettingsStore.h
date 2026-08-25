@@ -27,7 +27,7 @@ struct Settings {
     bool hudShowProgress{true};
     bool hudShowWrongState{true};
     bool hudShowWrongType{true};
-    bool hudShowBlockEntity{true};
+    bool hudShowProjectedBlockName{true};
     int hudPosition{1};
     int guiHotkey{'M'};
     int guiHotkeyModifiers{2};

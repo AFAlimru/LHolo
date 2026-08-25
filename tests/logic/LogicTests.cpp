@@ -2,6 +2,7 @@
 // Run with: xmake r LHoloLogicTests
 
 #include <cstdio>
+#include <fstream>
 
 #include "place/PlacementState.h"
 #include "projection/core/ProjectionRules.h"
@@ -128,6 +129,7 @@ void testSettingsStore() {
     settings.uiScale = 1.25f;
     settings.guiHotkey = 'L';
     settings.guiHotkeyModifiers = 1;
+    settings.hudShowProjectedBlockName = false;
     settings.moveHotkeys[4] = 0x57; // W
     settings.hasSavedProjection = true;
     settings.savedAnchorX = 12;
@@ -139,10 +141,21 @@ void testSettingsStore() {
     LHOLO_CHECK(loaded.uiScale == 1.25f);
     LHOLO_CHECK(loaded.guiHotkey == 'L');
     LHOLO_CHECK(loaded.guiHotkeyModifiers == 1);
+    LHOLO_CHECK(!loaded.hudShowProjectedBlockName);
     LHOLO_CHECK(loaded.moveHotkeys[4] == 0x57);
     LHOLO_CHECK(loaded.hasSavedProjection);
     LHOLO_CHECK(loaded.savedAnchorX == 12);
     LHOLO_CHECK(loaded.savedAnchorZ == -34);
+
+    // Existing configs keep their preference when the old, narrower
+    // block-entity label migrates to the projected-block label.
+    {
+        std::ofstream legacy(path, std::ios::trunc);
+        legacy << R"({"hudShowBlockEntity":false})";
+    }
+    lholo::settings::Settings migrated;
+    LHOLO_CHECK(lholo::settings::loadSettingsFile(path, migrated));
+    LHOLO_CHECK(!migrated.hudShowProjectedBlockName);
 
     lholo::settings::Settings missing;
     std::filesystem::remove(path, error);
@@ -263,8 +276,8 @@ void testPlacementState() {
     LHOLO_CHECK(state.failedPlanCached(failedKey, 249));
     LHOLO_CHECK(!state.failedPlanCached(failedKey, 250));
 
-    state.setAimedBlockEntityName("Test block entity");
-    LHOLO_CHECK(state.aimedBlockEntityName() == "Test block entity");
+    state.setAimedProjectedBlockName("Test projected block");
+    LHOLO_CHECK(state.aimedProjectedBlockName() == "Test projected block");
 
     state.setEnabled(false);
     state.setRangeEnabled(false);
@@ -276,7 +289,7 @@ void testPlacementState() {
     state.setManualHeld(false);
     state.setNextPlaceAt(0);
     state.setNextSwapAt(0);
-    state.setAimedBlockEntityName({});
+    state.setAimedProjectedBlockName({});
 }
 
 void testStructureUiState() {
@@ -293,6 +306,7 @@ void testStructureUiState() {
     auto hud = state.hud();
     hud.enabled = false;
     hud.showLayer = false;
+    hud.showProjectedBlockName = false;
     hud.position = 3;
     hud.uiScale = 1.5f;
     LHOLO_CHECK(state.applyHud(hud));
@@ -300,6 +314,7 @@ void testStructureUiState() {
     auto const appliedHud = state.hud();
     LHOLO_CHECK(!appliedHud.enabled);
     LHOLO_CHECK(!appliedHud.showLayer);
+    LHOLO_CHECK(!appliedHud.showProjectedBlockName);
     LHOLO_CHECK(appliedHud.position == 3);
     LHOLO_CHECK(appliedHud.uiScale == 1.5f);
 

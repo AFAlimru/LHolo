@@ -104,7 +104,7 @@ HudStateSnapshot StructureUiState::hud() const {
         mHudShowProgress.load(std::memory_order_relaxed),
         mHudShowWrongState.load(std::memory_order_relaxed),
         mHudShowWrongType.load(std::memory_order_relaxed),
-        mHudShowBlockEntity.load(std::memory_order_relaxed),
+        mHudShowProjectedBlockName.load(std::memory_order_relaxed),
         mHudPosition.load(std::memory_order_relaxed),
         mUiScale.load(std::memory_order_relaxed)
     };
@@ -123,7 +123,9 @@ bool StructureUiState::applyHud(HudStateSnapshot const& snapshot) {
     changed = updateRelaxed(mHudShowProgress, snapshot.showProgress) || changed;
     changed = updateRelaxed(mHudShowWrongState, snapshot.showWrongState) || changed;
     changed = updateRelaxed(mHudShowWrongType, snapshot.showWrongType) || changed;
-    changed = updateRelaxed(mHudShowBlockEntity, snapshot.showBlockEntity) || changed;
+    changed = updateRelaxed(
+        mHudShowProjectedBlockName, snapshot.showProjectedBlockName
+    ) || changed;
     changed = updateRelaxed(mHudPosition, snapshot.position) || changed;
     changed = updateRelaxed(mUiScale, snapshot.uiScale) || changed;
     return changed;

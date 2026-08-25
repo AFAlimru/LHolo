@@ -211,6 +211,11 @@ void requestOpenGui() {
 
 bool isGuiVisible() { return uiState().guiVisible(); }
 
+bool shouldShowProjectedBlockName() {
+    auto const hud = uiState().hud();
+    return hud.enabled && hud.showProjectedBlockName;
+}
+
 bool isInputTransitionBlocked() {
     return GetTickCount64() <= uiState().blockGameInputUntil();
 }
@@ -335,7 +340,7 @@ bool hasHudInfo() {
         && !hud.showProgress
         && !hud.showWrongState
         && !hud.showWrongType
-        && !hud.showBlockEntity) return false;
+        && !hud.showProjectedBlockName) return false;
     return detail::StructureSession::getInstance().hasLoaded();
 }
 
@@ -349,9 +354,9 @@ void renderHud() {
     auto const showProgress = hud.showProgress;
     auto const showWrongState = hud.showWrongState;
     auto const showWrongType = hud.showWrongType;
-    auto const showBlockEntity = hud.showBlockEntity;
+    auto const showProjectedBlockName = hud.showProjectedBlockName;
     if (!showFileName && !showLayer && !showOverallProgress && !showProgress
-        && !showWrongState && !showWrongType && !showBlockEntity) return;
+        && !showWrongState && !showWrongType && !showProjectedBlockName) return;
 
     auto const sessionSnapshot = detail::StructureSession::getInstance().snapshot();
     if (!sessionSnapshot.loaded) return;
@@ -456,12 +461,12 @@ void renderHud() {
                 );
             }
         }
-        auto const aimedBlockEntity = place::getAimedBlockEntityName();
-        if (showBlockEntity && !aimedBlockEntity.empty()) {
+        auto const aimedProjectedBlock = place::getAimedProjectedBlockName();
+        if (showProjectedBlockName && !aimedProjectedBlock.empty()) {
             ImGui::TextColored(
                 ImVec4(0.55f, 0.85f, 1.0f, 1.0f),
-                "方块实体：%s",
-                aimedBlockEntity.c_str()
+                "投影方块：%s",
+                aimedProjectedBlock.c_str()
             );
         }
     }
@@ -499,7 +504,7 @@ void loadSettings() {
         hud.showProgress = settings.hudShowProgress;
         hud.showWrongState = settings.hudShowWrongState;
         hud.showWrongType = settings.hudShowWrongType;
-        hud.showBlockEntity = settings.hudShowBlockEntity;
+        hud.showProjectedBlockName = settings.hudShowProjectedBlockName;
         hud.position = std::clamp(settings.hudPosition, 0, 3);
         uiState().applyHud(hud);
         // Assisted-placement modes are intentionally session-only. Ignore
@@ -579,7 +584,7 @@ void saveSettings() {
         settings.hudShowProgress = hud.showProgress;
         settings.hudShowWrongState = hud.showWrongState;
         settings.hudShowWrongType = hud.showWrongType;
-        settings.hudShowBlockEntity = hud.showBlockEntity;
+        settings.hudShowProjectedBlockName = hud.showProjectedBlockName;
         settings.hudPosition = hud.position;
         auto const guiHotkey = uiState().hotkey(kGuiHotkeyIndex);
         auto const layerIncreaseHotkey = uiState().hotkey(kLayerIncreaseHotkeyIndex);

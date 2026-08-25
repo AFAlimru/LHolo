@@ -30,7 +30,7 @@ LHolo 的投影、纠错、HUD 和菜单都只存在于客户端，不产生碰�
 - 可选整体结构边框。
 - 支持准心轻松放置、按住右键的手动放置，以及半径 1～4 的范围放置；三种模式在 GUI 中互斥。
 - `.mcstructure` 中带 NBT 的方块实体优先使用原版方块实体渲染器；没有可用渲染器或 Tessellation 结果的方块使用贴图占位外壳。
-- HUD 可显示文件名、显示层、建造进度、放置错误数和朝向错误数；支持四角定位和单项关闭，两类错误可分别配置。
+- HUD 可显示文件名、显示层、建造进度、放置错误数、朝向错误数和准心指向的投影方块名称；支持四角定位和单项关闭，两类错误可分别配置。
 - GUI 使用外部注入 Dear ImGui，不使用游戏表单。
 - 默认 `Alt + M` 打开菜单；聊天栏输入 `LHolo`（ASCII 大小写不敏感）也可打开，消息在客户端拦截，不发往服务器。
 - LHolo 菜单打开及关闭过渡期间，客户端阻止本地控制玩家开始或继续破坏方块；本地存档和远程服务器均有效，服务器无需安装 LHolo。
@@ -178,6 +178,9 @@ LHolo/
   `projection/core/ProjectionInternalTypes.h`，投影状态与 Worker/Mesh 生命周期仍由实现层负责。
 - `projection/core/ProjectionRules.*` 只根据显式参数计算结果，不读取全局投影状态，也不持有游戏对象；
   旋转、镜像、分层可见性和状态匹配规则修改时应集中在这里回归。
+  方块状态旋转/镜像必须使用当前 Bedrock 的
+  `VanillaBlockStateTransformUtils::transformBlock`；禁止退回只覆盖旧 aux data 的
+  `LegacyStructureTemplate::_mapToData`，否则 `rail_direction` 等现代状态不会随结构变换。
 - `projection/correction/ProjectionCorrectionTracker.*` 在固定每帧预算内比较真实世界与投影单元，维护纠错状态和进度计数；
   它可以标记受影响 section，但不创建 Mesh、不访问 Tessellator，也不发布 HUD 原子状态。
 - `projection/runtime/ProjectionFramePipeline.*` 只在 opaque pass 按固定顺序执行纠错扫描与进度发布、完成队列上传、
@@ -227,7 +230,7 @@ LHolo/
   `ProjectionFramePipeline`/`ProjectionCorrectionTracker` 负责。
 - `overlay` 负责“外部 GUI 如何安全进入游戏图形链”，不解析结构或扫描世界方块。
 - `place` 负责轻松、手动和范围放置：调用 projection 查询接口，在完整背包中查找物品，必要时交换到快捷栏，并发送 `InventoryTransactionPacket`；不碰渲染与配置。
-- `place/PlacementState` 持有放置会话状态：开关、手动/范围定时、近期放置格、失败计划缓存与准心方块实体名称；
+- `place/PlacementState` 持有放置会话状态：开关、手动/范围定时、近期放置格、失败计划缓存与准心投影方块名称；
   atomic、mutex、字符串和容器均不向调用者暴露，`PlaceHelper`/`PlacementExecutor` 只通过具体操作读写。
 - `place/PlacementExecutor` 承载轻松/手动/范围放置的规划与执行（背包查找、交换、放置事务、
   点击候选与预测匹配）；游戏 Hook 留在 `PlaceHelper`，只调用 `tickEasyPlace`/`tickRangePlace`。
@@ -388,7 +391,8 @@ world = anchor + userOffset + transform(local, mirror, rotation)
 当前顺序固定为“镜像后旋转”。局部位置与方块状态必须使用同一旋转/镜像：
 
 - 坐标：`transformStructurePosition()`。
-- 方块朝向/状态：`LegacyStructureTemplate::_mapToData()`，输入同一份 `LegacyStructureSettings`。
+- 方块朝向/状态：`VanillaBlockStateTransformUtils::transformBlock()`，旋转和镜像取自同一份
+  `LegacyStructureSettings`。
 
 只改坐标而不改方块状态，会导致楼梯、栅栏门、活塞、观察者等方向判定错误。
 
@@ -415,7 +419,7 @@ LHolo 不自制草方块、楼梯等材质模型。它使用：
 - Worker 中每个 biome-tinted 方块（草和四种 foliage tint）在 Tessellate 前都调用 `BlockTessellator::buildBiomeWeights()`，禁止复用空缓存或上一方块位置的群系权重。独立投影 Tessellator 不经过原版区块管线的树叶着色步骤，因此四种 foliage tint 还使用 `BiomeColorSampling::getTessellationPolicy()` 计算原版群系颜色并与网格顶点色相乘；草方块仍由原版 Tessellator 按面着色，不能把整块顶点统一乘绿色，否则泥土面也会变色。树叶类型和颜色不由 LHolo 维护。
 - Minecraft level atlas 提供纹理。
 - `BlockGraphics::getRenderLayer()` 取得实际渲染层。
-- `LegacyStructureTemplate::_mapToData()` 取得旋转/镜像后的方块状态。
+- `VanillaBlockStateTransformUtils::transformBlock()` 取得旋转/镜像后的方块状态。
 
 这样可保留草色、生物群系着色、方块模型和原版纹理。若新版本出现草方块白顶、随机材质或黑块，应先检查 atlas、BlockGraphics、Tessellator 缓存和材质，不要重新引入手写 UV。
 
@@ -753,7 +757,7 @@ LeviLamina Hook：
 mods/LHolo/config/config.json
 ```
 
-当前配置版本：`8`。
+当前配置版本：`9`。
 
 正式持久化字段：
 
@@ -765,7 +769,8 @@ mods/LHolo/config/config.json
 - `correctionOutlineOpacity`
 - `structureBoundsEnabled`
 - `placementRadius`
-- HUD 开关、各项显示开关（含 `hudShowBlockEntity` 方块实体名称）、位置
+- HUD 开关、各项显示开关（含 `hudShowProjectedBlockName` 投影方块名称）、位置；读取时兼容旧键
+  `hudShowBlockEntity`，保存时只写新键
 - GUI、移动、显示层快捷键与修饰键
 - 上次投影是否存在、文件路径、绝对锚点
 - 上次投影旋转、镜像、偏移、显示模式、显示层和分层轴
@@ -868,7 +873,7 @@ D:\games\LeviLauncher\MC\versions\1.26.20.04\mods\LHolo
 - `BlockSource::getLiquidBlock()` 的读取语义；它仅用于纠错查询，当前没有虚拟液体 Hook。
 - `tessellateInWorld()` 参数和顶点数据布局。
 - `BlockGraphics::getRenderLayer()`。
-- `LegacyStructureTemplate::_mapToData()` 与 `LegacyStructureSettings`。
+- `VanillaBlockStateTransformUtils::transformBlock()` 与 `LegacyStructureSettings`。
 - ItemInHandRenderer 中 opaque/alpha/one-sided/blend 材质。
 - Deferred 标志与 outline/selection overlay 材质。
 - `RenderMaterial` primitive、blend、depth bias 字段。

@@ -18,8 +18,8 @@
 #include "mc/world/Facing.h"
 #include "mc/world/level/block/Block.h"
 #include "mc/world/level/block/VanillaStates.h"
+#include "mc/world/level/block/states/VanillaBlockStateTransformUtils.h"
 #include "mc/world/level/levelgen/structure/LegacyStructureSettings.h"
-#include "mc/world/level/levelgen/structure/LegacyStructureTemplate.h"
 
 namespace lholo::projection::detail {
 
@@ -30,10 +30,13 @@ Block const* transformExpectedBlock(
 ) {
     if (!block) return nullptr;
     if (identityTransform) return block;
-    // Use the same generic permutation mapping as vanilla structure placement.
-    // The engine owns the complete set of transformable states, so new or
-    // uncommon directional blocks require no LHolo-side block/state table.
-    return &LegacyStructureTemplate::_mapToData(*block, settings);
+    // Use Bedrock's current generic state transformer. The legacy structure
+    // aux-data mapper does not cover every modern state (notably
+    // rail_direction), while this path owns the complete rotation/mirror
+    // handling used by current blocks.
+    return VanillaBlockStateTransformUtils::transformBlock(
+        *block, settings.getRotation(), settings.getMirror()
+    );
 }
 
 bool projectionStatesMatch(Block const& expected, Block const& actual) {

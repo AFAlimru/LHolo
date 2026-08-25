@@ -101,14 +101,14 @@ void PlacementState::cacheFailedPlan(
     mFailedRangePlans[key] = expiresAt;
 }
 
-std::string PlacementState::aimedBlockEntityName() const {
-    std::lock_guard lock(mAimedNameMutex);
-    return mAimedBlockEntityName;
+std::string PlacementState::aimedProjectedBlockName() const {
+    std::lock_guard lock(mAimedProjectedBlockNameMutex);
+    return mAimedProjectedBlockName;
 }
 
-void PlacementState::setAimedBlockEntityName(std::string name) {
-    std::lock_guard lock(mAimedNameMutex);
-    mAimedBlockEntityName = std::move(name);
+void PlacementState::setAimedProjectedBlockName(std::string name) {
+    std::lock_guard lock(mAimedProjectedBlockNameMutex);
+    mAimedProjectedBlockName = std::move(name);
 }
 
 } // namespace lholo::place::detail

@@ -106,7 +106,7 @@ struct MenuModel {
     bool hudShowProgress{true};
     bool hudShowWrongState{true};
     bool hudShowWrongType{true};
-    bool hudShowBlockEntity{true};
+    bool hudShowProjectedBlockName{true};
 
     std::vector<MaterialRow> materials;
     bool materialPopupRequested{};

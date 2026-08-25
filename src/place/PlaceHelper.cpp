@@ -20,8 +20,6 @@
 #include "place/PlacementState.h"
 
 #include "plugin/LHolo.h"
-#include "projection/Projection.h"
-#include "structure/StructureLoader.h"
 
 #include "ll/api/memory/Hook.h"
 #include "ll/api/mod/NativeMod.h"
@@ -30,61 +28,22 @@
 #include "mc/client/game/ClientInstance.h"
 #include "mc/client/game/IClientInstance.h"
 #include "mc/client/player/LocalPlayer.h"
-#include "mc/deps/core/math/Vec3.h"
-#include "mc/network/PacketSender.h"
-#include "mc/network/packet/InventoryTransactionPacket.h"
-#include "mc/world/Facing.h"
 #include "mc/world/gamemode/GameMode.h"
-#include "mc/world/ContainerID.h"
-#include "mc/world/actor/player/Inventory.h"
 #include "mc/world/actor/player/Player.h"
-#include "mc/world/inventory/transaction/ComplexInventoryTransaction.h"
-#include "mc/world/inventory/transaction/InventoryAction.h"
-#include "mc/world/inventory/transaction/InventorySource.h"
-#include "mc/world/inventory/transaction/InventorySourceType.h"
-#include "mc/world/inventory/transaction/InventoryTransaction.h"
-#include "mc/world/inventory/transaction/ItemUseInventoryTransaction.h"
-#include "mc/world/item/ItemInstance.h"
-#include "mc/world/item/ItemStack.h"
 #include "mc/world/level/BlockPos.h"
-#include "mc/world/level/BlockSource.h"
 #include "mc/world/level/Tick.h"
-#include "mc/world/level/block/Block.h"
-#include "mc/world/level/block/BlockType.h"
-#include "mc/world/level/block/SlabBlock.h"
-#include "mc/world/level/block/actor/BlockActorType.h"
-#include "mc/deps/nbt/ByteTag.h"
-#include "mc/deps/nbt/CompoundTag.h"
-#include "mc/deps/nbt/IntTag.h"
-#include "mc/deps/nbt/StringTag.h"
-#include "mc/deps/nbt/Tag.h"
 
 #include <Windows.h>
 
 #include <algorithm>
-#include <atomic>
-#include <cmath>
-#include <cstdint>
-#include <iterator>
-#include <limits>
-#include <mutex>
-#include <optional>
-#include <string_view>
-#include <unordered_map>
 
 namespace lholo::place {
 namespace {
-
-using detail::FailedPlanKey;
-using detail::FailedPlanKeyHash;
 
 auto& placementState() {
     return detail::PlacementState::getInstance();
 }
 
-// Easy-place searches the full inventory (hotbar 0-8, backpack 9-35) for the
-// matching block item and references the found slot directly in the placement
-// transaction, so no cross-container inventory request is needed.
 auto& logger() {
     return LHolo::getInstance().getSelf().getLogger();
 }
@@ -216,8 +175,8 @@ bool isManualMode() {
     return placementState().manualMode();
 }
 
-std::string getAimedBlockEntityName() {
-    return placementState().aimedBlockEntityName();
+std::string getAimedProjectedBlockName() {
+    return placementState().aimedProjectedBlockName();
 }
 
 bool installHook() {

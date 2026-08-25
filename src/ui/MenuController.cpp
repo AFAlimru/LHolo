@@ -122,7 +122,7 @@ MenuModel buildStructureMenuModel(float effectiveUiScale) {
     model.hudShowProgress = hud.showProgress;
     model.hudShowWrongState = hud.showWrongState;
     model.hudShowWrongType = hud.showWrongType;
-    model.hudShowBlockEntity = hud.showBlockEntity;
+    model.hudShowProjectedBlockName = hud.showProjectedBlockName;
     for (auto const& definition : kHotkeyDefinitions) {
         auto const binding = uiState().hotkey(static_cast<std::size_t>(definition.id));
         auto& row = model.hotkeys[static_cast<std::size_t>(definition.id)];
@@ -197,7 +197,7 @@ void applyStructureMenuModel(MenuModel const& model, float effectiveUiScale) {
     hud.showProgress = model.hudShowProgress;
     hud.showWrongState = model.hudShowWrongState;
     hud.showWrongType = model.hudShowWrongType;
-    hud.showBlockEntity = model.hudShowBlockEntity;
+    hud.showProjectedBlockName = model.hudShowProjectedBlockName;
     changed = uiState().applyHud(hud) || changed;
     structure::capture::Draft captureDraft;
     captureDraft.mode = static_cast<structure::capture::CaptureMode>(
