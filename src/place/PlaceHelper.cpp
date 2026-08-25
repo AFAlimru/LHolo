@@ -30,6 +30,7 @@
 #include "mc/client/player/LocalPlayer.h"
 #include "mc/world/gamemode/GameMode.h"
 #include "mc/world/actor/player/Player.h"
+#include "mc/world/item/ItemStack.h"
 #include "mc/world/level/BlockPos.h"
 #include "mc/world/level/Tick.h"
 
@@ -71,6 +72,12 @@ bool isLocalManualBuild(GameMode& gm) {
     return localPlayer && &gm.mPlayer == static_cast<Player*>(localPlayer);
 }
 
+void requestManualPlacement(bool held) {
+    placementState().setManualPressAt(GetTickCount64());
+    placementState().setManualPlaceRequested(true);
+    placementState().setManualHeld(held);
+}
+
 // Manual-mode press edge: the initial right-click. Begin a held sequence (first
 // block placed immediately by tickEasyPlace, then typematic repeat) and cancel
 // the vanilla build start so nothing is placed twice.
@@ -84,12 +91,28 @@ LL_TYPE_INSTANCE_HOOK(
     uchar             face
 ) {
     if (isLocalManualBuild(*this)) {
-        placementState().setManualPressAt(GetTickCount64());
-        placementState().setManualPlaceRequested(true);
-        placementState().setManualHeld(true);
+        requestManualPlacement(true);
         return;  // LHolo handles the placement from tickEasyPlace.
     }
     origin(pos, face);
+}
+
+// Right-clicking a floating projection targets air, so Bedrock calls useItem
+// instead of startBuildBlock. Capture it as a one-shot request: unlike the
+// build path, air use has no matching stopBuildBlock edge we can rely on.
+LL_TYPE_INSTANCE_HOOK(
+    GameModeUseItemHook,
+    ll::memory::HookPriority::Normal,
+    GameMode,
+    &GameMode::$useItem,
+    bool,
+    ::ItemStack& item
+) {
+    if (isLocalManualBuild(*this)) {
+        requestManualPlacement(false);
+        return false;
+    }
+    return origin(item);
 }
 
 // Manual-mode release edge: stop the typematic repeat when the button is let go.
@@ -187,6 +210,9 @@ bool installHook() {
     if (GameModeStartBuildHook::hook() < 0) {
         logger().warn("Failed to install manual-place start hook; manual mode will be unavailable");
     }
+    if (GameModeUseItemHook::hook() < 0) {
+        logger().warn("Failed to install manual-place air-use hook; floating manual placement will be unavailable");
+    }
     if (GameModeStopBuildHook::hook() < 0) {
         logger().warn("Failed to install manual-place stop hook; manual mode may keep repeating");
     }
@@ -199,6 +225,7 @@ bool installHook() {
 void uninstallHook() {
     GameModeBuildBlockHook::unhook();
     GameModeStopBuildHook::unhook();
+    GameModeUseItemHook::unhook();
     GameModeStartBuildHook::unhook();
     LocalPlayerEasyPlaceHook::unhook();
 }

@@ -430,43 +430,39 @@ void renderHud() {
                 layerAxis == 1 ? "X" : "Y"
             );
         }
-        if (showOverallProgress || showProgress || showWrongState || showWrongType) {
-            auto const progress = projection::getBuildProgress();
-            if (showOverallProgress) {
-                ImGui::Text(
-                    "总体进度：%llu / %llu",
-                    static_cast<unsigned long long>(progress.placed),
-                    static_cast<unsigned long long>(progress.total)
-                );
-            }
-            if (showProgress) {
-                ImGui::Text(
-                    "建造进度：%llu / %llu",
-                    static_cast<unsigned long long>(progress.visiblePlaced),
-                    static_cast<unsigned long long>(progress.visibleTotal)
-                );
-            }
-            if (showWrongState && progress.wrongState != 0) {
-                ImGui::TextColored(
-                    ImVec4(1.0f, 0.62f, 0.18f, 1.0f),
-                    "朝向错误：%llu",
-                    static_cast<unsigned long long>(progress.wrongState)
-                );
-            }
-            if (showWrongType && progress.wrongType != 0) {
-                ImGui::TextColored(
-                    ImVec4(1.0f, 0.28f, 0.24f, 1.0f),
-                    "放置错误：%llu",
-                    static_cast<unsigned long long>(progress.wrongType)
-                );
-            }
+        auto const showAnyProgress = showOverallProgress || showProgress || showWrongState || showWrongType;
+        projection::BuildProgress progress{};
+        if (showAnyProgress) progress = projection::getBuildProgress();
+        if (showOverallProgress) {
+            ImGui::Text(
+                "总体进度：%llu / %llu",
+                static_cast<unsigned long long>(progress.placed),
+                static_cast<unsigned long long>(progress.total)
+            );
+        }
+        if (showProgress) {
+            ImGui::Text(
+                "建造进度：%llu / %llu",
+                static_cast<unsigned long long>(progress.visiblePlaced),
+                static_cast<unsigned long long>(progress.visibleTotal)
+            );
         }
         auto const aimedProjectedBlock = place::getAimedProjectedBlockName();
         if (showProjectedBlockName && !aimedProjectedBlock.empty()) {
+            ImGui::Text("投影方块：%s", aimedProjectedBlock.c_str());
+        }
+        if (showWrongState && progress.wrongState != 0) {
             ImGui::TextColored(
-                ImVec4(0.55f, 0.85f, 1.0f, 1.0f),
-                "投影方块：%s",
-                aimedProjectedBlock.c_str()
+                ImVec4(1.0f, 0.62f, 0.18f, 1.0f),
+                "朝向错误：%llu",
+                static_cast<unsigned long long>(progress.wrongState)
+            );
+        }
+        if (showWrongType && progress.wrongType != 0) {
+            ImGui::TextColored(
+                ImVec4(1.0f, 0.28f, 0.24f, 1.0f),
+                "放置错误：%llu",
+                static_cast<unsigned long long>(progress.wrongType)
             );
         }
     }
