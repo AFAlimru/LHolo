@@ -146,11 +146,20 @@ CorrectionProgressChanges updateCorrectionTracker(
     // Official BlockSource notifications update only changed cells.
     auto const changedPositions = takePendingBlockChanges(kCorrectionChecksPerFrame);
     std::size_t correctionChecks{};
-    for (auto const& changedPosition : changedPositions) {
+    for (auto const& change : changedPositions) {
+        auto const& changedPosition = change.position;
         auto const found = state.expectedWorldBlockIndices->find(std::tuple{
             changedPosition.x, changedPosition.y, changedPosition.z
         });
         if (found != state.expectedWorldBlockIndices->end()) {
+            if (change.destroyedAt != 0) {
+                state.pendingBrokenCells.push_back(BrokenProjectionCell{
+                    changedPosition.x,
+                    changedPosition.y,
+                    changedPosition.z,
+                    change.destroyedAt,
+                });
+            }
             updateCorrection(found->second);
             ++correctionChecks;
         }

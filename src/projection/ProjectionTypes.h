@@ -37,4 +37,15 @@ struct RangeCandidate {
     Block const* block;
 };
 
+// A real solid block was removed from a cell owned by the active projection.
+// `destroyedAt` uses the same monotonic Windows uptime clock as placement
+// throttling, so the placement layer can apply policy without projection
+// depending on it.
+struct BrokenProjectionCell {
+    int           x;
+    int           y;
+    int           z;
+    std::uint64_t destroyedAt;
+};
+
 } // namespace lholo::projection

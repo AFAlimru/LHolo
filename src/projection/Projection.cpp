@@ -88,6 +88,18 @@ BuildProgress getBuildProgress() {
     return detail::getPublishedBuildProgress();
 }
 
+std::vector<BrokenProjectionCell> takeBrokenProjectionCells(LocalPlayer& player) {
+    std::vector<BrokenProjectionCell> result;
+    detail::ProjectionSession::getInstance().withLockedState(
+        [&](detail::ProjectionState& state, overlay::BoundsWireframe&) {
+            if (!state.enabled || !state.structure) return;
+            if (state.level != &player.getLevel() || state.dimension != &player.getDimension()) return;
+            result.swap(state.pendingBrokenCells);
+        }
+    );
+    return result;
+}
+
 ProjectionQuery queryProjection(LocalPlayer& player, BlockPos const& worldPos) {
     ProjectionQuery result{nullptr, false};
     bool clearStructure = false;

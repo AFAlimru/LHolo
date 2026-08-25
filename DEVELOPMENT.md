@@ -743,7 +743,8 @@ LeviLamina Hook：
   - `setTargetBlock` / `setSelectedItem` 用导出 setter 填 `mTargetBlockId` / `mItem`，避免未导出的赋值运算符。
   - 点击点取支撑面中心：`(cell + at)` 的中点。
   - `GameMode::useItemOn`（客户端）只做本地预测不持久；`Player::sendNetworkPacket` 在单机不送达集成服务器，两条路都不可用。
-- 节流：只有 `Missing` 格可进入规划，发送前再次读取真实世界；目标格只要已存在任何方块（包括错误类型或错误朝向/状态）就停止，不允许再次尝试放置。实际发包后才写入逐格锁，在 `kCellLockMs`（500 ms）内不重复发包，等待服务器应用和纠错扫描更新；新格可立即放置（受 tick 20 Hz 上限约束）。发送地板间隔 `kMinSendIntervalMs`（40 ms）防异常 tick 率双发。范围模式每 tick 最多执行 16 次昂贵的放置规划，失败规划缓存 250 ms。
+- 节流：只有 `Missing` 格可进入规划，发送前再次读取真实世界；目标格只要已存在任何方块（包括错误类型或错误朝向/状态）就停止，不允许再次尝试放置。实际发包后才写入逐格锁，在 `kCellLockMs`（500 ms）内不重复发包，等待服务器应用和纠错扫描更新；新格可立即放置（受 tick 20 Hz 上限约束）。发送地板间隔 `kMinSendIntervalMs`（40 ms）防异常 tick 率双发。背包交换未生效时由 `kSwapRetryMs`（200 ms）限制重发；成功交换仍在下一游戏 tick 尝试放置。范围模式每 tick 最多执行 16 次昂贵的放置规划，失败规划缓存 250 ms。
+- 破坏抑制：复用投影的 `BlockSourceListener::onBlockChanged`，以主方块层 `oldBlock` 非空气且 `block` 为空气识别破坏；纠错层只转发属于当前投影的坐标和原始发生时间。放置层用压缩坐标稀疏保存 10 秒截止时间，轻松/范围放置在库存搜索和方向规划前跳过，手动放置绕过。空表通过最早到期时间原子值直接返回，不扫描投影、不轮询世界、也不启动计时线程。
 - 守卫：开关关闭、未进世界、`isInGameInputEnabled()` 为假（菜单/暂停）或 LHolo 菜单打开时全部跳过。
 
 ### 12.3 已知限制
@@ -977,6 +978,7 @@ D:\games\LeviLauncher\MC\versions\1.26.20.04\mods\LHolo
 - [ ] 移动/旋转投影后旧位置虚拟水消失、新位置出现。
 - [ ] 退出世界再进入，虚拟水不残留。
 - [ ] 灵动视效/Deferred 路径下注入水体正常。
+- [ ] 破坏投影位置上已放置的实体方块后，轻松放置和范围放置在 10 秒内不自动补回，到期后可再次自动放置；手动放置不受限制。
 - [ ] 草方块颜色、顶面和侧面与原版一致。
 - [ ] 石头、玻璃、玻璃板、栅栏、楼梯、门等模型正常。
 - [ ] 透明度 100% 与低透明度均无整体黑块。
@@ -1061,7 +1063,7 @@ xmake r LHoloLogicTests
 - `runtime/ProjectionProgress`：进度快照初始化、发布、越界钳制与重置语义。
 - `settings/SettingsStore`：配置文件缺失检测与保存/读取往返一致性。
 - `structure/StructureSession`：空会话、结构替换、变换、层数、恢复快照、关闭前冻结及分层恢复语义。
-- `place/PlacementState`：模式开关、手动放置时间、节流时间、缓存到期边界与准心名称读写。
+- `place/PlacementState`：模式开关、手动放置时间、节流时间、自动放置抑制和缓存到期边界与准心名称读写。
 - `structure/StructureUiState`：HUD 快照、快捷键绑定/去重、按键释放抑制、待处理动作与材料快照。
 - `ui/HotkeyFormat`：修饰键判定、未设置与 Ctrl/Alt/Shift 和弦字符串。
 

@@ -41,6 +41,7 @@ void setStructureBoundsEnabled(bool enabled);
 void requestNextStructureAnchor(int x, int y, int z);
 void cancelNextStructureAnchorRequest();
 BuildProgress getBuildProgress();
+std::vector<BrokenProjectionCell> takeBrokenProjectionCells(LocalPlayer& player);
 
 ProjectionQuery queryProjection(LocalPlayer& player, BlockPos const& worldPos);
 

@@ -10,21 +10,25 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <deque>
 #include <mutex>
 #include <tuple>
+
+#include <Windows.h>
 
 #include "mc/world/level/BlockSource.h"
 #include "mc/world/level/BlockSourceListener.h"
 #include "mc/world/level/Level.h"
 #include "mc/world/level/LevelListener.h"
+#include "mc/world/level/block/Block.h"
 #include "mc/world/level/chunk/LevelChunk.h"
 
 namespace lholo::projection::detail {
 namespace {
 
 std::mutex                gPendingEventsMutex;
-std::deque<BlockPos>      gIncomingBlockChanges;
+std::deque<PendingBlockChange> gIncomingBlockChanges;
 std::deque<SubChunkKey>   gIncomingLoadedSubChunks;
 std::atomic<BlockSource*> gAttachedBlockSource{};
 std::atomic<ChunkSource*> gAttachedChunkSource{};
@@ -46,16 +50,23 @@ public:
     void onBlockChanged(
         BlockSource&,
         BlockPos const&              pos,
-        uint,
-        Block const&,
-        Block const&,
+        uint                           layer,
+        Block const&                  block,
+        Block const&                  oldBlock,
         int,
         ActorBlockSyncMessage const*,
         BlockChangedEventTarget,
         Actor*
     ) override {
+        // Layer zero is the ordinary solid-block layer. Keep the occurrence
+        // time with the fact so delayed consumers never restart the 10-second
+        // auto-placement suppression window.
+        bool const destroyed = layer == 0 && !oldBlock.isAir() && block.isAir();
         std::lock_guard lock(gPendingEventsMutex);
-        gIncomingBlockChanges.push_back(pos);
+        gIncomingBlockChanges.push_back(PendingBlockChange{
+            pos,
+            destroyed ? GetTickCount64() : 0,
+        });
     }
 };
 
@@ -121,8 +132,8 @@ void detachProjectionWorldEvents() {
     gIncomingLoadedSubChunks.clear();
 }
 
-std::vector<BlockPos> takePendingBlockChanges(std::size_t limit) {
-    std::vector<BlockPos> changes;
+std::vector<PendingBlockChange> takePendingBlockChanges(std::size_t limit) {
+    std::vector<PendingBlockChange> changes;
     {
         std::lock_guard lock(gPendingEventsMutex);
         auto const count = std::min(limit, gIncomingBlockChanges.size());
@@ -132,16 +143,25 @@ std::vector<BlockPos> takePendingBlockChanges(std::size_t limit) {
             gIncomingBlockChanges.pop_front();
         }
     }
-    std::sort(changes.begin(), changes.end(), [](BlockPos const& lhs, BlockPos const& rhs) {
-        return std::tie(lhs.x, lhs.y, lhs.z) < std::tie(rhs.x, rhs.y, rhs.z);
+    std::sort(changes.begin(), changes.end(), [](auto const& lhs, auto const& rhs) {
+        return std::tie(lhs.position.x, lhs.position.y, lhs.position.z)
+            < std::tie(rhs.position.x, rhs.position.y, rhs.position.z);
     });
-    changes.erase(
-        std::unique(changes.begin(), changes.end(), [](BlockPos const& lhs, BlockPos const& rhs) {
-            return lhs.x == rhs.x && lhs.y == rhs.y && lhs.z == rhs.z;
-        }),
-        changes.end()
-    );
-    return changes;
+    std::vector<PendingBlockChange> merged;
+    merged.reserve(changes.size());
+    for (auto const& change : changes) {
+        if (!merged.empty()
+            && merged.back().position.x == change.position.x
+            && merged.back().position.y == change.position.y
+            && merged.back().position.z == change.position.z) {
+            // Preserve the latest destruction if one position changed more
+            // than once before this batch was consumed.
+            merged.back().destroyedAt = std::max(merged.back().destroyedAt, change.destroyedAt);
+            continue;
+        }
+        merged.push_back(change);
+    }
+    return merged;
 }
 
 std::vector<SubChunkKey> takePendingLoadedSubChunks(std::size_t limit) {

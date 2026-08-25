@@ -272,6 +272,22 @@ void testPlacementState() {
     LHOLO_CHECK(state.recentPlacementActive(recentCell, 149));
     LHOLO_CHECK(!state.recentPlacementActive(recentCell, 150));
 
+    constexpr std::int64_t suppressedCell = 0x23456789ALL;
+    LHOLO_CHECK(!state.autoPlacementSuppressionsActive(100));
+    state.suppressAutoPlacement(suppressedCell, 200);
+    LHOLO_CHECK(state.autoPlacementSuppressionsActive(100));
+    LHOLO_CHECK(state.autoPlacementSuppressed(suppressedCell, 199));
+    LHOLO_CHECK(!state.autoPlacementSuppressionsActive(200));
+    LHOLO_CHECK(!state.autoPlacementSuppressed(suppressedCell, 200));
+
+    // Extending the current earliest entry may leave the cheap expiry hint at
+    // its old value, but the first boundary refresh must retain the live entry.
+    state.suppressAutoPlacement(suppressedCell, 300);
+    state.suppressAutoPlacement(suppressedCell, 350);
+    LHOLO_CHECK(state.autoPlacementSuppressionsActive(300));
+    LHOLO_CHECK(state.autoPlacementSuppressed(suppressedCell, 349));
+    LHOLO_CHECK(!state.autoPlacementSuppressionsActive(350));
+
     FailedPlanKey const failedKey{recentCell, 42, 7, 1, 2, 3, 4, 5, 6};
     state.cacheFailedPlan(failedKey, 200, 250);
     LHOLO_CHECK(state.failedPlanCached(failedKey, 249));

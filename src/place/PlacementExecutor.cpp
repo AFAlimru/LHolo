@@ -91,12 +91,16 @@ constexpr std::uint64_t kCellLockMs = 500;
 constexpr std::uint64_t kMinSendIntervalMs = 40;
 // Backoff for a rejected inventory swap. Without it a failed swap retries every
 // tick and spams the server.
-constexpr std::uint64_t kSwapRetryMs = 50;
+constexpr std::uint64_t kSwapRetryMs = 200;
 // Bound expensive getPlacementBlock planning in range mode. Failed plans are
 // cached by target, exact block state, item aux, eye position and view vector;
 // changing the player's aim invalidates the cache immediately.
 constexpr int           kRangePlanBudgetPerTick = 16;
 constexpr std::uint64_t kFailedPlanCacheMs      = 250;
+// A projected solid block that was removed must not be rebuilt by
+// automatic placement immediately. Manual placement remains an explicit user
+// action and bypasses this policy.
+constexpr std::uint64_t kBrokenCellSuppressionMs = 10'000;
 // Manual-mode typematic repeat: after the first block on press, holding pauses
 // for kManualInitialDelayMs and then auto-repeats every kManualRepeatIntervalMs
 // (like keyboard key-repeat), so a tap places one and a hold streams at a steady
@@ -120,6 +124,19 @@ bool recentlyPlaced(BlockPos const& cell, std::uint64_t now) {
 
 void markPlaced(BlockPos const& cell, std::uint64_t now) {
     placementState().recordRecentPlacement(packBlockPos(cell), now, now + kCellLockMs);
+}
+
+void consumeBrokenProjectionCells(LocalPlayer& player, std::uint64_t now) {
+    for (auto const& broken : projection::takeBrokenProjectionCells(player)) {
+        // Use the event timestamp, not the consumption timestamp. Events held
+        // while placement is inactive therefore still expire after ten real
+        // seconds and never begin a fresh cooldown when placement resumes.
+        if (now - broken.destroyedAt >= kBrokenCellSuppressionMs) continue;
+        placementState().suppressAutoPlacement(
+            packBlockPos(BlockPos{broken.x, broken.y, broken.z}),
+            broken.destroyedAt + kBrokenCellSuppressionMs
+        );
+    }
 }
 
 void updateAimedProjectedBlockName(Block const* block) {
@@ -649,10 +666,18 @@ void tickRangePlaceImpl(LocalPlayer& player, PlacementContext const& placementCo
     auto& region = player.getDimensionBlockSource();
 
     auto candidates = projection::queryMissingCellsInRange(player, center, radius);
+    bool const suppressionsActive = placementState().autoPlacementSuppressionsActive(now);
     auto const inventorySnapshot = snapshotInventory(player);
     int plannedCandidates = 0;
     for (auto const& cand : candidates) {
         BlockPos const cell{cand.x, cand.y, cand.z};
+
+        // Empty suppression state takes one branch for the entire candidate
+        // batch; hash lookups happen only during an active ten-second window.
+        if (suppressionsActive
+            && placementState().autoPlacementSuppressed(packBlockPos(cell), now)) {
+            continue;
+        }
 
         // Skip cells placed a moment ago until the server applies them, so a
         // cell is never placed twice mid-round-trip (the slab double-place).
@@ -713,6 +738,8 @@ void tickEasyPlaceImpl() {
         updateAimedProjectedBlockName(nullptr);
         return;
     }
+    auto const tickNow = GetTickCount64();
+    consumeBrokenProjectionCells(*player, tickNow);
     // Only act during gameplay: menus, pause screens and the LHolo GUI itself
     // disable in-game input.
     if (!client->isInGameInputEnabled() || structure::isGuiVisible()) {
@@ -746,7 +773,6 @@ void tickEasyPlaceImpl() {
     );
     if (!placementActive) return;
     PlacementContext const placementContext = makePlacementContext(origin, dir, pickRange);
-    auto const tickNow = GetTickCount64();
     if (tickNow < placementState().nextPlaceAt()) return;
 
     // Range placement scans everything within the configured radius.
@@ -760,7 +786,8 @@ void tickEasyPlaceImpl() {
     // right-click press: startBuildBlock sets a one-shot request (consumed by
     // the placement below); the buildBlock hook cancels the vanilla build so
     // nothing is placed twice.
-    if (placementState().manualMode()) {
+    bool const manualPlacement = placementState().manualMode();
+    if (manualPlacement) {
         auto const nowManual = GetTickCount64();
         bool allowed = false;
         // First block of a press: place it even if the button was already
@@ -786,6 +813,11 @@ void tickEasyPlaceImpl() {
     // Skip cells placed a moment ago until the server applies them; new cells
     // place immediately.
     auto const now = GetTickCount64();
+    if (!manualPlacement
+        && placementState().autoPlacementSuppressionsActive(now)
+        && placementState().autoPlacementSuppressed(packBlockPos(target->cell), now)) {
+        return;
+    }
     if (recentlyPlaced(target->cell, now)) return;
 
     auto const found = findItemSlot(*player, *target->block);

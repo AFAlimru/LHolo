@@ -83,6 +83,9 @@ public:
 
     [[nodiscard]] bool recentPlacementActive(std::int64_t cell, std::uint64_t now) const;
     void recordRecentPlacement(std::int64_t cell, std::uint64_t now, std::uint64_t expiresAt);
+    [[nodiscard]] bool autoPlacementSuppressionsActive(std::uint64_t now);
+    [[nodiscard]] bool autoPlacementSuppressed(std::int64_t cell, std::uint64_t now) const;
+    void suppressAutoPlacement(std::int64_t cell, std::uint64_t expiresAt);
     [[nodiscard]] bool failedPlanCached(FailedPlanKey const& key, std::uint64_t now) const;
     void cacheFailedPlan(FailedPlanKey const& key, std::uint64_t now, std::uint64_t expiresAt);
 
@@ -105,6 +108,8 @@ private:
 
     mutable std::mutex                               mRecentMutex;
     std::unordered_map<std::int64_t, std::uint64_t> mRecentPlacements;
+    std::unordered_map<std::int64_t, std::uint64_t> mAutoPlacementSuppressions;
+    std::atomic_uint64_t                             mNextAutoPlacementSuppressionExpiry{0};
     std::unordered_map<FailedPlanKey, std::uint64_t, FailedPlanKeyHash> mFailedRangePlans;
 
     mutable std::mutex mAimedProjectedBlockNameMutex;

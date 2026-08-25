@@ -7,6 +7,7 @@
 #pragma once
 
 #include "projection/core/ProjectionInternalTypes.h"
+#include "projection/ProjectionTypes.h"
 
 #include <array>
 #include <cstddef>
@@ -72,6 +73,7 @@ struct ProjectionState {
     std::uint64_t                   progressWrongStateCount{};
     std::size_t                     correctionScanCursor{};
     std::set<SubChunkKey>           pendingLoadedSubChunks;
+    std::vector<BrokenProjectionCell> pendingBrokenCells;
     int                             cachedRotation{-1};
     int                             cachedMirror{-1};
     int                             cachedOffsetX{};

@@ -83,6 +83,42 @@ void PlacementState::recordRecentPlacement(
     mRecentPlacements[cell] = expiresAt;
 }
 
+bool PlacementState::autoPlacementSuppressionsActive(std::uint64_t now) {
+    auto const nextExpiry = mNextAutoPlacementSuppressionExpiry.load(std::memory_order_acquire);
+    if (nextExpiry == 0) return false;
+    // The earliest active expiry provides the empty/common fast path and avoids
+    // scanning the sparse map every tick while every entry is still active.
+    if (now < nextExpiry) return true;
+
+    std::lock_guard lock(mRecentMutex);
+    std::uint64_t earliest{};
+    for (auto it = mAutoPlacementSuppressions.begin(); it != mAutoPlacementSuppressions.end();) {
+        if (now >= it->second) {
+            it = mAutoPlacementSuppressions.erase(it);
+            continue;
+        }
+        if (earliest == 0 || it->second < earliest) earliest = it->second;
+        ++it;
+    }
+    mNextAutoPlacementSuppressionExpiry.store(earliest, std::memory_order_release);
+    return earliest != 0;
+}
+
+bool PlacementState::autoPlacementSuppressed(std::int64_t cell, std::uint64_t now) const {
+    std::lock_guard lock(mRecentMutex);
+    auto const found = mAutoPlacementSuppressions.find(cell);
+    return found != mAutoPlacementSuppressions.end() && now < found->second;
+}
+
+void PlacementState::suppressAutoPlacement(std::int64_t cell, std::uint64_t expiresAt) {
+    std::lock_guard lock(mRecentMutex);
+    mAutoPlacementSuppressions[cell] = expiresAt;
+    auto const nextExpiry = mNextAutoPlacementSuppressionExpiry.load(std::memory_order_relaxed);
+    if (nextExpiry == 0 || expiresAt < nextExpiry) {
+        mNextAutoPlacementSuppressionExpiry.store(expiresAt, std::memory_order_release);
+    }
+}
+
 bool PlacementState::failedPlanCached(FailedPlanKey const& key, std::uint64_t now) const {
     auto const found = mFailedRangePlans.find(key);
     return found != mFailedRangePlans.end() && now < found->second;
