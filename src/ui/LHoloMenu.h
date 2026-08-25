@@ -82,6 +82,7 @@ struct MenuModel {
     bool manualPlace{};
     bool rangeEnabled{};
     int placementRadius{4};
+    int autoPlacementBreakCooldownSeconds{10};
     int offsetX{};
     int offsetY{};
     int offsetZ{};

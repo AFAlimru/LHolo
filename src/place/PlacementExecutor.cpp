@@ -97,10 +97,6 @@ constexpr std::uint64_t kSwapRetryMs = 200;
 // changing the player's aim invalidates the cache immediately.
 constexpr int           kRangePlanBudgetPerTick = 16;
 constexpr std::uint64_t kFailedPlanCacheMs      = 250;
-// A projected solid block that was removed must not be rebuilt by
-// automatic placement immediately. Manual placement remains an explicit user
-// action and bypasses this policy.
-constexpr std::uint64_t kBrokenCellSuppressionMs = 10'000;
 // Manual-mode typematic repeat: after the first block on press, holding pauses
 // for kManualInitialDelayMs and then auto-repeats every kManualRepeatIntervalMs
 // (like keyboard key-repeat), so a tap places one and a hold streams at a steady
@@ -127,14 +123,18 @@ void markPlaced(BlockPos const& cell, std::uint64_t now) {
 }
 
 void consumeBrokenProjectionCells(LocalPlayer& player, std::uint64_t now) {
-    for (auto const& broken : projection::takeBrokenProjectionCells(player)) {
+    auto const brokenCells = projection::takeBrokenProjectionCells(player);
+    auto const cooldownSeconds = placementState().autoPlacementBreakCooldownSeconds();
+    if (cooldownSeconds <= 0) return;
+    auto const cooldownMs = static_cast<std::uint64_t>(cooldownSeconds) * 1'000;
+    for (auto const& broken : brokenCells) {
         // Use the event timestamp, not the consumption timestamp. Events held
-        // while placement is inactive therefore still expire after ten real
-        // seconds and never begin a fresh cooldown when placement resumes.
-        if (now - broken.destroyedAt >= kBrokenCellSuppressionMs) continue;
+        // while placement is inactive therefore still expire after the
+        // configured real-time duration and never restart when placement resumes.
+        if (now - broken.destroyedAt >= cooldownMs) continue;
         placementState().suppressAutoPlacement(
             packBlockPos(BlockPos{broken.x, broken.y, broken.z}),
-            broken.destroyedAt + kBrokenCellSuppressionMs
+            broken.destroyedAt + cooldownMs
         );
     }
 }

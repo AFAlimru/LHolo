@@ -20,6 +20,7 @@ struct Settings {
     float correctionOutlineOpacity{1.0f};
     bool structureBoundsEnabled{true};
     int placementRadius{4};
+    int autoPlacementBreakCooldownSeconds{10};
     bool hudEnabled{true};
     bool hudShowFileName{true};
     bool hudShowLayer{true};

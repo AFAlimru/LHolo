@@ -509,6 +509,9 @@ void loadSettings() {
         place::setManualMode(false);
         place::setRangeEnabled(false);
         place::setPlacementRadius(std::clamp(settings.placementRadius, 1, 4));
+        place::setAutoPlacementBreakCooldownSeconds(
+            std::clamp(settings.autoPlacementBreakCooldownSeconds, 0, 60)
+        );
         uiState().setHotkey(
             kGuiHotkeyIndex,
             std::clamp(settings.guiHotkey, 0, 255),
@@ -573,6 +576,8 @@ void saveSettings() {
         settings.correctionOutlineOpacity = projection::getCorrectionOutlineOpacity();
         settings.structureBoundsEnabled = projection::getStructureBoundsEnabled();
         settings.placementRadius = place::getPlacementRadius();
+        settings.autoPlacementBreakCooldownSeconds
+            = place::getAutoPlacementBreakCooldownSeconds();
         settings.hudEnabled = hud.enabled;
         settings.hudShowFileName = hud.showFileName;
         settings.hudShowLayer = hud.showLayer;

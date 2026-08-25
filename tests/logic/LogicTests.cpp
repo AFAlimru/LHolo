@@ -131,6 +131,7 @@ void testSettingsStore() {
     settings.guiHotkey = 'L';
     settings.guiHotkeyModifiers = 1;
     settings.hudShowProjectedBlockName = false;
+    settings.autoPlacementBreakCooldownSeconds = 27;
     settings.moveHotkeys[4] = 0x57; // W
     settings.hasSavedProjection = true;
     settings.savedAnchorX = 12;
@@ -143,6 +144,7 @@ void testSettingsStore() {
     LHOLO_CHECK(loaded.guiHotkey == 'L');
     LHOLO_CHECK(loaded.guiHotkeyModifiers == 1);
     LHOLO_CHECK(!loaded.hudShowProjectedBlockName);
+    LHOLO_CHECK(loaded.autoPlacementBreakCooldownSeconds == 27);
     LHOLO_CHECK(loaded.moveHotkeys[4] == 0x57);
     LHOLO_CHECK(loaded.hasSavedProjection);
     LHOLO_CHECK(loaded.savedAnchorX == 12);
@@ -157,6 +159,7 @@ void testSettingsStore() {
     lholo::settings::Settings migrated;
     LHOLO_CHECK(lholo::settings::loadSettingsFile(path, migrated));
     LHOLO_CHECK(!migrated.hudShowProjectedBlockName);
+    LHOLO_CHECK(migrated.autoPlacementBreakCooldownSeconds == 10);
 
     lholo::settings::Settings missing;
     std::filesystem::remove(path, error);
@@ -249,6 +252,7 @@ void testPlacementState() {
     state.setRangeEnabled(true);
     state.setManualMode(true);
     state.setRadius(3);
+    state.setAutoPlacementBreakCooldownSeconds(12);
     state.setManualPressAt(100);
     state.setLastManualPlaceAt(80);
     state.setManualPlaceRequested(true);
@@ -260,6 +264,7 @@ void testPlacementState() {
     LHOLO_CHECK(state.rangeEnabled());
     LHOLO_CHECK(state.manualMode());
     LHOLO_CHECK(state.radius() == 3);
+    LHOLO_CHECK(state.autoPlacementBreakCooldownSeconds() == 12);
     LHOLO_CHECK(state.manualPressAt() == 100);
     LHOLO_CHECK(state.lastManualPlaceAt() == 80);
     LHOLO_CHECK(state.manualPlaceRequested());
@@ -300,6 +305,7 @@ void testPlacementState() {
     state.setRangeEnabled(false);
     state.setManualMode(false);
     state.setRadius(4);
+    state.setAutoPlacementBreakCooldownSeconds(10);
     state.setManualPressAt(0);
     state.setLastManualPlaceAt(0);
     state.setManualPlaceRequested(false);

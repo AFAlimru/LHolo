@@ -25,6 +25,13 @@ void PlacementState::setManualMode(bool manual) { mManualMode.store(manual, std:
 int PlacementState::radius() const { return mRadius.load(std::memory_order_relaxed); }
 void PlacementState::setRadius(int radius) { mRadius.store(radius, std::memory_order_release); }
 
+int PlacementState::autoPlacementBreakCooldownSeconds() const {
+    return mAutoPlacementBreakCooldownSeconds.load(std::memory_order_relaxed);
+}
+void PlacementState::setAutoPlacementBreakCooldownSeconds(int seconds) {
+    mAutoPlacementBreakCooldownSeconds.store(seconds, std::memory_order_release);
+}
+
 bool PlacementState::manualHeld() const { return mManualHeld.load(std::memory_order_acquire); }
 void PlacementState::setManualHeld(bool held) { mManualHeld.store(held, std::memory_order_release); }
 

@@ -182,6 +182,14 @@ int getPlacementRadius() {
     return placementState().radius();
 }
 
+void setAutoPlacementBreakCooldownSeconds(int seconds) {
+    placementState().setAutoPlacementBreakCooldownSeconds(std::clamp(seconds, 0, 60));
+}
+
+int getAutoPlacementBreakCooldownSeconds() {
+    return placementState().autoPlacementBreakCooldownSeconds();
+}
+
 void setManualMode(bool manual) {
     if (!manual) {
         // A release hook can be missed while menus or mode switches are active.

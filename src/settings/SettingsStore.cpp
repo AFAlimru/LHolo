@@ -23,6 +23,10 @@ bool loadSettingsFile(std::filesystem::path const& path, Settings& out) {
     out.correctionOutlineOpacity = json.value("correctionOutlineOpacity", out.correctionOutlineOpacity);
     out.structureBoundsEnabled = json.value("structureBoundsEnabled", out.structureBoundsEnabled);
     out.placementRadius = json.value("placementRadius", out.placementRadius);
+    out.autoPlacementBreakCooldownSeconds = json.value(
+        "autoPlacementBreakCooldownSeconds",
+        out.autoPlacementBreakCooldownSeconds
+    );
     out.hudEnabled = json.value("hudEnabled", out.hudEnabled);
     out.hudShowFileName = json.value("hudShowFileName", out.hudShowFileName);
     out.hudShowLayer = json.value("hudShowLayer", out.hudShowLayer);
@@ -88,7 +92,7 @@ void saveSettingsFile(std::filesystem::path const& path, Settings const& setting
     if (error) throw std::runtime_error(error.message());
 
     nlohmann::ordered_json const json{
-        {"version", 9},
+        {"version", 10},
         {"lastStructurePath", settings.lastStructurePath},
         {"uiScale", settings.uiScale},
         {"opacity", settings.opacity},
@@ -96,6 +100,7 @@ void saveSettingsFile(std::filesystem::path const& path, Settings const& setting
         {"correctionOutlineOpacity", settings.correctionOutlineOpacity},
         {"structureBoundsEnabled", settings.structureBoundsEnabled},
         {"placementRadius", settings.placementRadius},
+        {"autoPlacementBreakCooldownSeconds", settings.autoPlacementBreakCooldownSeconds},
         {"hudEnabled", settings.hudEnabled},
         {"hudShowFileName", settings.hudShowFileName},
         {"hudShowLayer", settings.hudShowLayer},

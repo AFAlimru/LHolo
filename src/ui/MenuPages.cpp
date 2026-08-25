@@ -277,6 +277,14 @@ void renderExperimentalPage(MenuModel& model, UiMetrics const& metrics) {
             ImGui::TextDisabled("辅助放置未开启");
         }
         renderSteppedInt("PlacementRadius", "放置半径（范围 1～4）", model.placementRadius, 1, 4, metrics);
+        renderSteppedInt(
+            "AutoPlacementBreakCooldown",
+            "投影方块被破坏自动放置冷却时长（范围 0～60 秒）",
+            model.autoPlacementBreakCooldownSeconds,
+            0,
+            60,
+            metrics
+        );
     });
 }
 

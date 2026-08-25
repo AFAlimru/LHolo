@@ -101,6 +101,7 @@ MenuModel buildStructureMenuModel(float effectiveUiScale) {
     model.manualPlace = place::isManualMode();
     model.rangeEnabled = place::isRangeEnabled();
     model.placementRadius = place::getPlacementRadius();
+    model.autoPlacementBreakCooldownSeconds = place::getAutoPlacementBreakCooldownSeconds();
     model.offsetX = sessionSnapshot.transform.offsetX;
     model.offsetY = sessionSnapshot.transform.offsetY;
     model.offsetZ = sessionSnapshot.transform.offsetZ;
@@ -159,6 +160,11 @@ void applyStructureMenuModel(MenuModel const& model, float effectiveUiScale) {
     auto const radius = std::clamp(model.placementRadius, 1, 4);
     if (place::getPlacementRadius() != radius) {
         place::setPlacementRadius(radius);
+        changed = true;
+    }
+    auto const breakCooldown = std::clamp(model.autoPlacementBreakCooldownSeconds, 0, 60);
+    if (place::getAutoPlacementBreakCooldownSeconds() != breakCooldown) {
+        place::setAutoPlacementBreakCooldownSeconds(breakCooldown);
         changed = true;
     }
     changed = session.setOffsetX(model.offsetX) || changed;
