@@ -10,6 +10,7 @@
 #include "settings/SettingsStore.h"
 #include "structure/StructureSession.h"
 #include "structure/StructureUiState.h"
+#include "structure/java_to_bedrock/JavaBlockEntityToBedrock.h"
 #include "ui/HotkeyFormat.h"
 
 #include <Windows.h>
@@ -392,6 +393,16 @@ void testHotkeyFormat() {
     LHOLO_CHECK(chord.size() > 7);
 }
 
+void testJavaTextComponents() {
+    using lholo::structure::detail::javaTextComponentToPlainText;
+    LHOLO_CHECK(javaTextComponentToPlainText(R"("Launch")") == "Launch");
+    LHOLO_CHECK(javaTextComponentToPlainText(R"({"text":"X","extra":[{"text":" count"}]})") == "X count");
+    LHOLO_CHECK(javaTextComponentToPlainText(R"(["A",{"text":"B"}])") == "AB");
+    LHOLO_CHECK(javaTextComponentToPlainText(R"({"translate":"block.minecraft.oak_sign"})")
+                == "block.minecraft.oak_sign");
+    LHOLO_CHECK(javaTextComponentToPlainText("not json") == "not json");
+}
+
 } // namespace
 
 int main() {
@@ -402,6 +413,7 @@ int main() {
     testPlacementState();
     testStructureUiState();
     testHotkeyFormat();
+    testJavaTextComponents();
     std::printf("LHoloLogicTests: %d checks, %d failures\n", gChecks, gFailures);
     return gFailures == 0 ? 0 : 1;
 }

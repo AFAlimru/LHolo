@@ -70,7 +70,7 @@ LHolo/
 │  │  ├─ capture/               客户端选区状态、原版结构捕获与 `.mcstructure` 导出
 │  │  ├─ formats/               结构格式解析与 generation 分配
 │  │  │  └─ StructureFormatLoaders.* `.mcstructure`/`.litematic` 解析为 LoadedStructure
-│  │  ├─ java_to_bedrock/       Chunker 生成映射及运行时解析模块
+│  │  ├─ java_to_bedrock/       Java 方块状态映射、文本组件与方块实体到 Bedrock 的转换
 │  │  ├─ StructurePaths.*       UTF-8 路径转换
 │  │  ├─ StructureSession.*    结构会话状态（已加载结构、变换/分层、恢复快照、状态文案）
 │  │  ├─ StructureUiState.*     UI 会话状态（GUI、热键、HUD、待处理动作、材料清单）
@@ -157,6 +157,8 @@ LHolo/
 - `structure/capture` 只维护会话选区、读取当前客户端世界并调用原版捕获/导出 API；不手工生成方块调色板、索引或实体 NBT。
 - `structure/formats` 只把 `.mcstructure`/`.litematic` 解析为 `LoadedStructure` 并分配 generation；不接触
   GUI、配置、投影状态或放置逻辑，也不依赖 `projection`、`ui`、`place`。
+- `structure/java_to_bedrock` 只负责 Java 数据到 Bedrock 运行时数据的边界转换：方块状态继续使用生成映射，
+  方块实体由独立转换器生成原生 Bedrock NBT；不得让 Java NBT 字段泄漏到 `projection`。
 - `settings/SettingsStore` 只负责 `config.json` 的读写与字段映射，不持有运行状态；应用到全局状态由
   `StructureLoader` 完成，配置默认值与钳制语义保持不变。
 - `structure/StructureUiState` 持有 UI/菜单会话状态：GUI 可见性、热键配置与按下状态、HUD 开关、
@@ -299,7 +301,7 @@ LHolo/
 - `paletteEntries`：调色板项数量。
 - `generation`：每次成功加载递增，用于通知投影替换结构。
 - `renderBlocks`：仅包含至少一个可解析实体方块或液体的坐标。
-- `RenderBlock{x,y,z,block,liquid,blockEntityNbt}`：归一化局部坐标、可空实体方块指针、可空液体指针和可选方块实体 NBT。同一坐标可同时具有实体与液体，用于含水方块；当前只有 `.mcstructure` 路径填充方块实体 NBT。
+- `RenderBlock{x,y,z,block,liquid,blockEntityNbt}`：归一化局部坐标、可空实体方块指针、可空液体指针和可选的原生 Bedrock 方块实体 NBT。同一坐标可同时具有实体与液体，用于含水方块；`.mcstructure` 直接保留原生 NBT，`.litematic` 仅为已有明确转换规则的方块实体生成 NBT。
 
 ### 4.2 `.mcstructure`
 
@@ -335,12 +337,14 @@ LHolo/
 1. 读取文件；检测 gzip 头 `1F 8B`，使用 zlib 解压，解压上限 1 GiB。
 2. 使用本项目只读 Java big-endian NBT 解析器读取根 Compound。
 3. 读取根 `MinecraftDataVersion`，用于选择与源文件版本对应的映射记录。
-4. 遍历 `Regions`，读取每个区域的 `Position`、有符号 `Size`、`BlockStatePalette` 和 `BlockStates`。
+4. 遍历 `Regions`，读取每个区域的 `Position`、有符号 `Size`、`BlockStatePalette`、`BlockStates` 和 `TileEntities`；区域自己的 `DataVersion` 优先于根 `MinecraftDataVersion`。
 5. 通过 `java_to_bedrock` 模块把完整 Java 名称和 Properties 转换成 Bedrock 1.26.20 名称与状态，再从当前游戏的 `BlockTypeRegistry` 解析实际 permutation；含水状态拆到 `RenderBlock::liquid` 第二层。
 6. 每项位宽为 `max(2, bit_width(paletteSize - 1))`，从 LongArray 解包 palette index。
 7. Litematica 的 `BlockStates` 容器始终从区域最小角按正 X/Y/Z 排列。有符号 `Size` 只记录 `Position` 是哪一个选区角，绝不能依据负号倒序读取方块数组，否则会镜像结构而不镜像方块状态。先由 `Position` 和 `Size` 求区域最小角，再加 `localX/localY/localZ`。
-8. 计算所有区域的全局最小/最大坐标，将多区域合并到从 `(0,0,0)` 开始的正坐标包围盒。
-9. 重叠坐标使用后处理区域覆盖先处理区域，最终按 `(x,y,z)` 排序。
+8. Litematica 源码在保存时使用 `方块实体局部坐标 = 世界坐标 - 区域最小角`，加载时也直接按容器 `(localX,localY,localZ)` 查表；因此 `TileEntities` 与方块数组使用同一局部坐标，不随负 `Size` 额外镜像。版本 2 及以后直接读取实体 Compound，版本 1 从 `TileNBT` 包装读取实际数据。
+9. 当前 Java 方块实体转换器支持普通告示牌和悬挂告示牌：现代 `front_text`/`back_text.messages` 与旧版 `Text1`～`Text4` 转为 Bedrock `FrontText`/`BackText`，四行 Java JSON 文本组件由 `nlohmann::json` 解析为纯文本，同时保留发光和蜡封状态。当前固定样本为黑色文字；其他染料色必须取得对应 Bedrock 导出样本后再增加映射，不猜测色值。
+10. 计算所有区域的全局最小/最大坐标，将多区域合并到从 `(0,0,0)` 开始的正坐标包围盒。方块和转换后的方块实体作为同一个 cell 原子覆盖，禁止分别合并，否则重叠区域可能留下旧方块实体。
+11. 重叠坐标使用后处理区域覆盖先处理区域，最终按 `(x,y,z)` 排序。
 
 Java→Bedrock 映射不再手工散落维护。`GeneratedChunkerMappings.inc` 由固定 Chunker commit 的 `JavaBlockIdentifierResolver` 和 `BedrockBlockIdentifierResolver` 枚举各 Java 数据版本的合法状态生成，目标固定为 Bedrock 1.26.20。缺少 `Properties` 的非标准 Litematic 使用 Chunker 的规范默认状态；无法映射或无法在当前游戏注册表解析的方块安全跳过，不猜测替代 API、状态名或枚举值。
 
@@ -859,6 +863,7 @@ D:\games\LeviLauncher\MC\versions\1.26.20.04\mods\LHolo
 - 小型 `.mcstructure`：草方块、石头、玻璃板、栅栏、楼梯、门、活塞、观察者、上下半砖、普通水、岩浆、不同液位、至少一个含水方块，以及带 NBT 的双箱/告示牌。放置单层半砖时，即使相邻支撑是同材质单层半砖，也不得把支撑误合并为双层；双箱必须显示为一个原版大箱子；水/岩浆样本同时验证贴图 proxy（顶层固定 8/9 高、同液体覆盖时满格、相邻同液体共享面剔除）与液位状态纠错；当前 proxy 不按流动深度改变视觉高度。
 - 多区域 `.litematic`：正/负 Size、区域重叠、不同 palette 位宽；负 Size 样本必须包含楼梯、门、活塞、观察者等方向明显的方块。
 - `主播公寓.litematic`：固定验证 X/Z 同时为负的区域不会被旋转 180°，建筑布局和楼梯朝向均与 Java 源文件一致。
+- `borgital-strike-cube-by-baonam7910.litematic`：固定验证 12 个橡木墙上告示牌的正面文字与发光状态，包含单行和四行文本。
 - 大型结构：至少 10 万方块。
 - 损坏/截断/超大文件。
 

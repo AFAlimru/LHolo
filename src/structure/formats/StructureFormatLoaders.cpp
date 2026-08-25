@@ -16,6 +16,7 @@
 
 #include "structure/formats/StructureFormatLoaders.h"
 #include "structure/StructureLoader.h"
+#include "structure/java_to_bedrock/JavaBlockEntityToBedrock.h"
 #include "structure/java_to_bedrock/JavaToBedrock.h"
 
 #include <algorithm>
@@ -47,6 +48,7 @@
 #include "mc/deps/nbt/IntTag.h"
 #include "mc/deps/nbt/ListTag.h"
 #include "mc/world/level/block/Block.h"
+#include "mc/world/level/block/actor/BlockActorType.h"
 #include "mc/world/level/block/registry/BlockTypeRegistry.h"
 #include "mc/world/level/material/Material.h"
 #include "mc/world/level/levelgen/structure/StructureBlockPalette.h"
@@ -282,6 +284,52 @@ bool readJavaVec3(JavaNbtTag::Compound const& parent, std::string_view name, int
     return true;
 }
 
+std::optional<bool> readJavaBoolean(JavaNbtTag::Compound const& parent, std::string_view name) {
+    if (auto const* value = javaValue<std::int8_t>(parent, name)) return *value != 0;
+    return std::nullopt;
+}
+
+bool readJavaSignSide(JavaNbtTag::Compound const& parent, std::string_view name, JavaSignSideData& output) {
+    auto const* side = javaValue<JavaNbtTag::Compound>(parent, name);
+    if (!side) return false;
+    if (auto const* messages = javaValue<JavaNbtTag::List>(*side, "messages")) {
+        auto const count = std::min(messages->size(), output.messages.size());
+        for (std::size_t line = 0; line < count; ++line) {
+            if (auto const* message = std::get_if<std::string>(&(*messages)[line].value)) {
+                output.messages[line] = *message;
+            }
+        }
+    }
+    if (auto const glowing = readJavaBoolean(*side, "has_glowing_text")) output.glowing = *glowing;
+    return true;
+}
+
+std::optional<JavaSignBlockEntityData> readJavaSignBlockEntity(JavaNbtTag::Compound const& entity) {
+    JavaSignBlockEntityData result;
+    bool const hasModernFront = readJavaSignSide(entity, "front_text", result.front);
+    bool const hasModernBack = readJavaSignSide(entity, "back_text", result.back);
+    bool       hasLegacyText{};
+    if (!hasModernFront) {
+        static constexpr std::array<std::string_view, 4> legacyLines{"Text1", "Text2", "Text3", "Text4"};
+        for (std::size_t line = 0; line < legacyLines.size(); ++line) {
+            if (auto const* message = javaValue<std::string>(entity, legacyLines[line])) {
+                result.front.messages[line] = *message;
+                hasLegacyText = true;
+            }
+        }
+        if (auto const glowing = readJavaBoolean(entity, "GlowingText")) result.front.glowing = *glowing;
+    }
+    if (auto const waxed = readJavaBoolean(entity, "is_waxed")) result.waxed = *waxed;
+    return hasModernFront || hasModernBack || hasLegacyText
+        ? std::optional<JavaSignBlockEntityData>{std::move(result)} : std::nullopt;
+}
+
+std::uint64_t localCellIndex(int x, int y, int z, int sizeY, int sizeZ) {
+    return (static_cast<std::uint64_t>(x) * static_cast<std::uint64_t>(sizeY)
+            + static_cast<std::uint64_t>(y))
+        * static_cast<std::uint64_t>(sizeZ) + static_cast<std::uint64_t>(z);
+}
+
 std::optional<std::string> inflateGzip(std::string_view compressed, std::string& error) {
     if (compressed.size() < 2 || static_cast<std::uint8_t>(compressed[0]) != 0x1f
         || static_cast<std::uint8_t>(compressed[1]) != 0x8b) {
@@ -501,6 +549,8 @@ std::shared_ptr<LoadedStructure> loadLitematic(std::filesystem::path const& path
     if (!bytes) return nullptr;
 
     auto root = JavaNbtReader{*bytes}.readRoot();
+    auto const* storedFormatVersion = javaValue<std::int32_t>(root, "Version");
+    int const litematicVersion = storedFormatVersion ? *storedFormatVersion : 0;
     auto const* storedDataVersion = javaValue<std::int32_t>(root, "MinecraftDataVersion");
     int const javaDataVersion = storedDataVersion ? *storedDataVersion : 0;
     auto const* regions = javaValue<JavaNbtTag::Compound>(root, "Regions");
@@ -515,6 +565,7 @@ std::shared_ptr<LoadedStructure> loadLitematic(std::filesystem::path const& path
         int sizeX{}, sizeY{}, sizeZ{};
         std::vector<ResolvedJavaBlock> palette;
         JavaNbtTag::LongArray const* states{};
+        std::unordered_map<std::uint64_t, JavaNbtTag::Compound const*> blockEntities;
     };
     std::vector<Region> parsedRegions;
     parsedRegions.reserve(regions->size());
@@ -542,6 +593,8 @@ std::shared_ptr<LoadedStructure> loadLitematic(std::filesystem::path const& path
         region.sizeX = std::abs(region.signedX);
         region.sizeY = std::abs(region.signedY);
         region.sizeZ = std::abs(region.signedZ);
+        auto const* storedRegionDataVersion = javaValue<std::int32_t>(*compound, "DataVersion");
+        int const regionDataVersion = storedRegionDataVersion ? *storedRegionDataVersion : javaDataVersion;
         auto const* palette = javaValue<JavaNbtTag::List>(*compound, "BlockStatePalette");
         region.states = javaValue<JavaNbtTag::LongArray>(*compound, "BlockStates");
         if (!palette || palette->empty() || !region.states || region.states->empty()) {
@@ -550,9 +603,30 @@ std::shared_ptr<LoadedStructure> loadLitematic(std::filesystem::path const& path
         }
         region.palette.reserve(palette->size());
         for (auto const& entry : *palette) {
-            region.palette.push_back(resolveJavaBlock(entry, javaDataVersion));
+            region.palette.push_back(resolveJavaBlock(entry, regionDataVersion));
         }
         paletteEntries += palette->size();
+
+        if (auto const* blockEntities = javaValue<JavaNbtTag::List>(*compound, "TileEntities")) {
+            region.blockEntities.reserve(blockEntities->size());
+            for (auto const& entry : *blockEntities) {
+                auto const* wrapper = std::get_if<JavaNbtTag::Compound>(&entry.value);
+                if (!wrapper) continue;
+                auto const* x = javaValue<std::int32_t>(*wrapper, "x");
+                auto const* y = javaValue<std::int32_t>(*wrapper, "y");
+                auto const* z = javaValue<std::int32_t>(*wrapper, "z");
+                if (!x || !y || !z || *x < 0 || *y < 0 || *z < 0
+                    || *x >= region.sizeX || *y >= region.sizeY || *z >= region.sizeZ) {
+                    continue;
+                }
+                auto const* entity = litematicVersion == 1
+                    ? javaValue<JavaNbtTag::Compound>(*wrapper, "TileNBT") : wrapper;
+                if (!entity || entity->empty()) continue;
+                region.blockEntities.insert_or_assign(
+                    localCellIndex(*x, *y, *z, region.sizeY, region.sizeZ), entity
+                );
+            }
+        }
 
         auto const endX = static_cast<std::int64_t>(region.posX)
             + (region.signedX < 0 ? -(static_cast<std::int64_t>(region.sizeX) - 1) : region.sizeX - 1);
@@ -591,7 +665,11 @@ std::shared_ptr<LoadedStructure> loadLitematic(std::filesystem::path const& path
     loaded->volume = static_cast<std::uint64_t>(extentX)
         * static_cast<std::uint64_t>(extentY) * static_cast<std::uint64_t>(extentZ);
     loaded->paletteEntries = paletteEntries;
-    std::unordered_map<std::uint64_t, ResolvedJavaBlock> mergedBlocks;
+    struct MergedJavaCell {
+        ResolvedJavaBlock                 block;
+        std::shared_ptr<CompoundTag const> blockEntityNbt;
+    };
+    std::unordered_map<std::uint64_t, MergedJavaCell> mergedBlocks;
 
     for (auto const& region : parsedRegions) {
         auto const regionVolume = static_cast<std::uint64_t>(region.sizeX)
@@ -632,12 +710,34 @@ std::shared_ptr<LoadedStructure> loadLitematic(std::filesystem::path const& path
             auto const z = static_cast<std::uint64_t>(worldZ - minZ);
             auto const mergedIndex = (x * static_cast<std::uint64_t>(loaded->sizeY) + y)
                 * static_cast<std::uint64_t>(loaded->sizeZ) + z;
-            mergedBlocks.insert_or_assign(mergedIndex, resolved);
+            std::shared_ptr<CompoundTag const> blockEntityNbt;
+            auto const blockEntity = region.blockEntities.find(
+                localCellIndex(
+                    static_cast<int>(localX), static_cast<int>(localY), static_cast<int>(localZ),
+                    region.sizeY, region.sizeZ
+                )
+            );
+            if (resolved.block && blockEntity != region.blockEntities.end()) {
+                auto const actorType = resolved.block->getBlockEntityType();
+                if (actorType == BlockActorType::Sign || actorType == BlockActorType::HangingSign) {
+                    if (auto const signData = readJavaSignBlockEntity(*blockEntity->second)) {
+                        blockEntityNbt = convertJavaSignBlockEntity(
+                            *signData,
+                            actorType == BlockActorType::HangingSign
+                                ? JavaSignBlockEntityKind::HangingSign : JavaSignBlockEntityKind::Sign,
+                            static_cast<int>(x), static_cast<int>(y), static_cast<int>(z)
+                        );
+                    }
+                }
+            }
+            mergedBlocks.insert_or_assign(
+                mergedIndex, MergedJavaCell{resolved, std::move(blockEntityNbt)}
+            );
         }
     }
     loaded->renderBlocks.reserve(mergedBlocks.size());
     auto const yz = static_cast<std::uint64_t>(loaded->sizeY) * loaded->sizeZ;
-    for (auto const& [index, resolved] : mergedBlocks) {
+    for (auto& [index, cell] : mergedBlocks) {
         auto const x = index / yz;
         auto const remainder = index % yz;
         auto const y = remainder / static_cast<std::uint64_t>(loaded->sizeZ);
@@ -647,7 +747,7 @@ std::shared_ptr<LoadedStructure> loadLitematic(std::filesystem::path const& path
         // carry), matching the two-layer semantics of the .mcstructure path.
         loaded->renderBlocks.push_back({
             static_cast<int>(x), static_cast<int>(y), static_cast<int>(z),
-            resolved.block, resolved.liquid
+            cell.block.block, cell.block.liquid, std::move(cell.blockEntityNbt)
         });
     }
     std::sort(loaded->renderBlocks.begin(), loaded->renderBlocks.end(), [](auto const& left, auto const& right) {
