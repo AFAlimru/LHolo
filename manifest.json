@@ -4,6 +4,6 @@
   "version": "${modVersion}",
   "type": "native",
   "platform": "${modPlatform}",
-  "description": "Client-side projection renderer for Minecraft Windows 1.26.20 with an injected Dear ImGui mcstructure and litematic loader.",
+  "description": "适用于 Minecraft Bedrock Windows 的客户端投影模组，支持 .mcstructure 和 .litematic。",
   "author": "Cat66"
 }
