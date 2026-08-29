@@ -76,6 +76,38 @@ void setStructureBoundsEnabled(bool enabled) {
     detail::ProjectionSession::getInstance().setStructureBoundsEnabled(enabled);
 }
 
+bool getCorrectionSeeThrough() {
+    return detail::ProjectionSession::getInstance().correctionSeeThrough();
+}
+
+void setCorrectionSeeThrough(bool enabled) {
+    detail::ProjectionSession::getInstance().setCorrectionSeeThrough(enabled);
+}
+
+bool getMissingSeeThrough() {
+    return detail::ProjectionSession::getInstance().missingSeeThrough();
+}
+
+void setMissingSeeThrough(bool enabled) {
+    detail::ProjectionSession::getInstance().setMissingSeeThrough(enabled);
+}
+
+bool getProjectionSeeThrough() {
+    return detail::ProjectionSession::getInstance().projectionSeeThrough();
+}
+
+void setProjectionSeeThrough(bool enabled) {
+    detail::ProjectionSession::getInstance().setProjectionSeeThrough(enabled);
+}
+
+bool getExtraBlocksEnabled() {
+    return detail::ProjectionSession::getInstance().extraBlocksEnabled();
+}
+
+void setExtraBlocksEnabled(bool enabled) {
+    detail::ProjectionSession::getInstance().setExtraBlocksEnabled(enabled);
+}
+
 void requestNextStructureAnchor(int x, int y, int z) {
     detail::ProjectionSession::getInstance().requestAnchor(x, y, z);
 }
