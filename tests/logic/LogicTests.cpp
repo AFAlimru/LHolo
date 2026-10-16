@@ -367,6 +367,64 @@ void testStructureSession() {
     session.clearLoaded(lholo::i18n::Message{lholo::i18n::TextKey::StatusProjectionClosed});
 }
 
+void testLayerHotkeyBounds() {
+    using lholo::structure::LayerAxis;
+    using lholo::structure::LayerDisplayMode;
+    using lholo::structure::detail::StructureSession;
+
+    auto& session = StructureSession::getInstance();
+    session.resetTransform();
+    auto loaded = std::make_shared<LoadedStructure>();
+    loaded->sizeX = 9;
+    loaded->sizeY = 7;
+    loaded->materialCount = 3;
+    session.replaceLoaded(loaded, "layers.mcstructure", {});
+
+    for (auto mode : {LayerDisplayMode::Single, LayerDisplayMode::UpToCurrent, LayerDisplayMode::FromCurrent}) {
+        session.setLayerDisplayMode(mode);
+        for (auto axis : {LayerAxis::Y, LayerAxis::X, LayerAxis::Material}) {
+            session.setLayerAxis(axis);
+            int const count = axis == LayerAxis::Y ? 7 : (axis == LayerAxis::X ? 9 : 3);
+            session.setDisplayLayer(0);
+            for (int layer = 1; layer < count; ++layer) {
+                LHOLO_CHECK(session.adjustDisplayLayer(1));
+                LHOLO_CHECK(session.transform().displayLayer == layer);
+            }
+            session.adjustDisplayLayer(1);
+            LHOLO_CHECK(session.transform().displayLayer == count - 1);
+            session.adjustDisplayLayer(-1);
+            LHOLO_CHECK(session.transform().displayLayer == count - 2);
+            session.adjustDisplayLayer(-100);
+            LHOLO_CHECK(session.transform().displayLayer == 0);
+            session.adjustDisplayLayer(100);
+            LHOLO_CHECK(session.transform().displayLayer == count - 1);
+        }
+    }
+
+    session.setLayerDisplayMode(LayerDisplayMode::All);
+    session.setDisplayLayer(1);
+    LHOLO_CHECK(!session.adjustDisplayLayer(1));
+    LHOLO_CHECK(session.transform().displayLayer == 1);
+
+    auto single = std::make_shared<LoadedStructure>();
+    single->sizeX = single->sizeY = 1;
+    single->materialCount = 1;
+    session.replaceLoaded(single, "single.mcstructure", {});
+    session.setLayerDisplayMode(LayerDisplayMode::Single);
+    for (auto axis : {LayerAxis::Y, LayerAxis::X, LayerAxis::Material}) {
+        session.setLayerAxis(axis);
+        session.setDisplayLayer(0);
+        session.adjustDisplayLayer(1);
+        LHOLO_CHECK(session.transform().displayLayer == 0);
+        session.adjustDisplayLayer(-1);
+        LHOLO_CHECK(session.transform().displayLayer == 0);
+    }
+    session.clearLoaded({});
+    session.adjustDisplayLayer(1);
+    LHOLO_CHECK(session.transform().displayLayer == 0);
+    session.resetTransform();
+}
+
 void testPlacementState() {
     using lholo::place::detail::FailedPlanKey;
     using lholo::place::detail::PlacementState;
@@ -926,6 +984,7 @@ int main() {
     testProgress();
     testSettingsStore();
     testStructureSession();
+    testLayerHotkeyBounds();
     testPlacementState();
     testStructureUiState();
     testHotkeyFormat();

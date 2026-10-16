@@ -129,6 +129,7 @@ private:
     std::atomic_int  mSavedLayerAxis{0};
 };
 
+// Maximum zero-based spatial layer index, not the number of layers (X/Y only).
 int maxLayerFor(LoadedStructure const& structure, LayerAxis axis);
 
 } // namespace lholo::structure::detail
