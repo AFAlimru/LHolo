@@ -20,7 +20,9 @@
 #include "mc/world/level/ActorBlockSyncMessage.h"
 #include "mc/world/level/BlockSource.h"
 #include "mc/world/level/block/Block.h"
+#include "mc/world/level/block/BlockType.h"
 #include "mc/world/level/block/BlockChangeContext.h"
+#include "mc/world/level/material/Material.h"
 #include "mc/world/level/block/actor/BlockActor.h"
 
 #include "ll/api/memory/Hook.h"
@@ -98,6 +100,68 @@ LL_TYPE_INSTANCE_HOOK(
 ) {
     if (auto const* actor = findTessellationBlockActor(position)) return actor;
     return origin(position);
+}
+
+// Material and solidity queries read the chunk storage directly instead of
+// going through getBlock, so during projection tessellation they still saw the
+// real (unbuilt) world. Redstone dust uses them to decide whether it climbs the
+// side of a neighbour, so wire running up projected blocks lost its vertical
+// side lines. Answer them from the projected block while tessellating.
+bool projectedSolidBlocking(Block const& block) {
+    auto const& material = block.getMaterial();
+    return material.mSolid && material.mBlocksMotion;
+}
+
+LL_TYPE_INSTANCE_HOOK(
+    BlockSourceGetMaterialHook,
+    ll::memory::HookPriority::Normal,
+    BlockSource,
+    static_cast<Material const& (BlockSource::*)(BlockPos const&) const>(&BlockSource::$getMaterial),
+    Material const&,
+    BlockPos const& position
+) {
+    if (auto const* block = findTessellationBlock(position)) return block->getMaterial();
+    return origin(position);
+}
+
+LL_TYPE_INSTANCE_HOOK(
+    BlockSourceGetMaterialXyzHook,
+    ll::memory::HookPriority::Normal,
+    BlockSource,
+    static_cast<Material const& (BlockSource::*)(int, int, int) const>(&BlockSource::$getMaterial),
+    Material const&,
+    int x,
+    int y,
+    int z
+) {
+    if (auto const* block = findTessellationBlock(BlockPos{x, y, z})) return block->getMaterial();
+    return origin(x, y, z);
+}
+
+LL_TYPE_INSTANCE_HOOK(
+    BlockSourceIsSolidBlockingHook,
+    ll::memory::HookPriority::Normal,
+    BlockSource,
+    static_cast<bool (BlockSource::*)(BlockPos const&) const>(&BlockSource::$isSolidBlockingBlock),
+    bool,
+    BlockPos const& position
+) {
+    if (auto const* block = findTessellationBlock(position)) return projectedSolidBlocking(*block);
+    return origin(position);
+}
+
+LL_TYPE_INSTANCE_HOOK(
+    BlockSourceIsSolidBlockingXyzHook,
+    ll::memory::HookPriority::Normal,
+    BlockSource,
+    static_cast<bool (BlockSource::*)(int, int, int) const>(&BlockSource::$isSolidBlockingBlock),
+    bool,
+    int x,
+    int y,
+    int z
+) {
+    if (auto const* block = findTessellationBlock(BlockPos{x, y, z})) return projectedSolidBlocking(*block);
+    return origin(x, y, z);
 }
 
 // BlockType::connectionUpdate recomputes flattened connection geometry
@@ -209,10 +273,20 @@ bool installProjectionGameHooks() {
         BlockSourceGetBlockHook::unhook();
         return false;
     }
+    // Neighbour-shape accuracy only (redstone side lines); the projection still
+    // works without them, so a failure here is a warning, not fatal.
+    if (BlockSourceGetMaterialHook::hook() < 0 || BlockSourceGetMaterialXyzHook::hook() < 0
+        || BlockSourceIsSolidBlockingHook::hook() < 0 || BlockSourceIsSolidBlockingXyzHook::hook() < 0) {
+        logger().warn("Could not install projection material hooks; redstone side lines may be missing");
+    }
     return true;
 }
 
 void uninstallProjectionGameHooks() {
+    BlockSourceIsSolidBlockingXyzHook::unhook();
+    BlockSourceIsSolidBlockingHook::unhook();
+    BlockSourceGetMaterialXyzHook::unhook();
+    BlockSourceGetMaterialHook::unhook();
     LoopbackPacketSenderSendHook::unhook();
     LoopbackPacketSenderSendToServerHook::unhook();
     BlockSourceSetBlockWithActorHook::unhook();
