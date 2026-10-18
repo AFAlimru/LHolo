@@ -20,7 +20,6 @@ struct Settings {
     // Runtime language indices are never persisted.
     std::string language{"zh_CN"};
     float uiScale{2.0f};
-    float opacity{1.0f};
     float correctionFillOpacity{0.15f};
     float correctionOutlineOpacity{1.0f};
     bool structureBoundsEnabled{true};

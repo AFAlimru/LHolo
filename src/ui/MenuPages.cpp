@@ -534,12 +534,6 @@ void renderTransformPage(MenuModel& model, UiMetrics const& metrics) {
 void renderRenderPage(MenuModel& model, MenuActions const& actions, UiMetrics const& metrics) {
     renderSection(
         "##ProjectionStyle", i18n::tr(i18n::TextKey::SectionProjectionStyle), metrics, [&] {
-        auto opacity = static_cast<int>(std::lround(model.opacity * 100.0f));
-        renderNumericValueRow(i18n::tr(i18n::TextKey::LabelOpacity), metrics, [&] {
-            if (ImGui::InputInt("##Opacity", &opacity, 0, 0)) {
-                model.opacity = static_cast<float>(std::clamp(opacity, 0, 100)) / 100.0f;
-            }
-        });
         renderCheckboxRow(
             "##RenderBounds",
             i18n::tr(i18n::TextKey::CheckboxRenderBounds),

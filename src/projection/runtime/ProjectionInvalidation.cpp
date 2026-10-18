@@ -47,17 +47,15 @@ ProjectionInvalidationResult reconcileProjectionInvalidation(
     result.layerChanged = state.cachedLayerDisplayMode != settings.layerDisplayMode
         || state.cachedDisplayLayer != settings.displayLayer
         || state.cachedLayerAxis != settings.layerAxis;
-    bool const opacityChanged
-        = std::abs(state.cachedOpacity - settings.structureOpacity) > 0.0001f;
     bool const correctionStyleChanged
         = std::abs(state.cachedCorrectionFillOpacity - settings.correctionFillOpacity) > 0.0001f
         || std::abs(state.cachedCorrectionOutlineOpacity - settings.correctionOutlineOpacity) > 0.0001f;
     if (!result.geometryTransformChanged && !result.placementMoved && !result.layerChanged
-        && !opacityChanged && !correctionStyleChanged) {
+        && !correctionStyleChanged) {
         return result;
     }
 
-    if (result.geometryTransformChanged || opacityChanged || correctionStyleChanged) {
+    if (result.geometryTransformChanged || correctionStyleChanged) {
         markAllSectionsDirty(state, false);
     }
     if (result.placementMoved && !result.geometryTransformChanged) {
@@ -113,7 +111,6 @@ ProjectionInvalidationResult reconcileProjectionInvalidation(
     state.cachedLayerDisplayMode = settings.layerDisplayMode;
     state.cachedDisplayLayer = settings.displayLayer;
     state.cachedLayerAxis = settings.layerAxis;
-    state.cachedOpacity = settings.structureOpacity;
     state.cachedCorrectionFillOpacity = settings.correctionFillOpacity;
     state.cachedCorrectionOutlineOpacity = settings.correctionOutlineOpacity;
 

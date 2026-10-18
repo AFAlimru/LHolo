@@ -12,14 +12,6 @@ ProjectionSession& ProjectionSession::getInstance() {
     return instance;
 }
 
-float ProjectionSession::opacity() const {
-    return mOpacity.load(std::memory_order_relaxed);
-}
-
-void ProjectionSession::setOpacity(float opacity) {
-    mOpacity.store(std::clamp(opacity, 0.0f, 1.0f), std::memory_order_relaxed);
-}
-
 float ProjectionSession::correctionFillOpacity() const {
     return mCorrectionFillOpacity.load(std::memory_order_relaxed);
 }

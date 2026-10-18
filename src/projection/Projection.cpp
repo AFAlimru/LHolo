@@ -50,14 +50,6 @@ void disable() {
     detail::projectionController().disableProjection();
 }
 
-float getOpacity() {
-    return detail::ProjectionSession::getInstance().opacity();
-}
-
-void setOpacity(float opacity) {
-    detail::ProjectionSession::getInstance().setOpacity(opacity);
-}
-
 float getCorrectionFillOpacity() {
     return detail::ProjectionSession::getInstance().correctionFillOpacity();
 }

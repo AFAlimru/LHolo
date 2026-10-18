@@ -26,7 +26,6 @@ bool loadSettingsFile(std::filesystem::path const& path, Settings& out) {
         out.language = "zh_CN";
     }
     out.uiScale = json.value("uiScale", out.uiScale);
-    out.opacity = json.value("opacity", out.opacity);
     out.correctionFillOpacity = json.value("correctionFillOpacity", out.correctionFillOpacity);
     out.correctionOutlineOpacity = json.value("correctionOutlineOpacity", out.correctionOutlineOpacity);
     out.structureBoundsEnabled = json.value("structureBoundsEnabled", out.structureBoundsEnabled);
@@ -143,7 +142,6 @@ void saveSettingsFile(std::filesystem::path const& path, Settings const& setting
         {"lastStructurePath", settings.lastStructurePath},
         {"language", settings.language},
         {"uiScale", settings.uiScale},
-        {"opacity", settings.opacity},
         {"correctionFillOpacity", settings.correctionFillOpacity},
         {"correctionOutlineOpacity", settings.correctionOutlineOpacity},
         {"structureBoundsEnabled", settings.structureBoundsEnabled},

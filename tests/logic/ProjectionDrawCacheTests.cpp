@@ -25,8 +25,7 @@ struct ReferenceDrawLists {
 // Rebuild from authoritative input every time. Unlike the cache this holds no
 // version history, so comparisons catch stale entries and missing invalidation.
 ReferenceDrawLists reference(std::vector<ProjectionDrawRecord> const& records,
-                             std::vector<unsigned char> const& visible, ProjectionDrawPosition eye,
-                             bool translucent) {
+                             std::vector<unsigned char> const& visible, ProjectionDrawPosition eye) {
     ReferenceDrawLists result;
     auto distance = [&](std::size_t index) {
         auto const& p = records[index].center;
@@ -46,7 +45,7 @@ ReferenceDrawLists reference(std::vector<ProjectionDrawRecord> const& records,
             if (!(mask & (1u << slot)))
                 continue;
             if (slot < 4) {
-                if (translucent || slot == 3)
+                if (slot == static_cast<std::size_t>(ProjectionDrawSlot::Blend))
                     result.terrain.push_back({index, slot});
                 else
                     result.lists[slot].push_back(index);
@@ -87,10 +86,9 @@ void testInvalidationAndLifetime() {
     std::uint64_t activation = 1, meshRevision = 1, visibilityRevision = 1;
     std::size_t reads{};
     ProjectionDrawPosition eye{17, 5, -3};
-    bool translucent = true;
     auto prepare = [&] {
         cache.prepare(
-            activation, meshRevision, visibilityRevision, records.size(), eye, translucent,
+            activation, meshRevision, visibilityRevision, records.size(), eye,
             [&](std::size_t i) {
                 ++reads;
                 return records[i];
@@ -98,7 +96,7 @@ void testInvalidationAndLifetime() {
             [&](std::size_t i) { return visible[i]; });
     };
     prepare();
-    compare(cache, reference(records, visible, eye, translucent));
+    compare(cache, reference(records, visible, eye));
     DRAW_CHECK(reads == records.size());
     DRAW_CHECK(cache.lists[static_cast<std::size_t>(ProjectionDrawSlot::Blend)].capacity() == 0);
     auto const* terrainStorage = cache.transparentTerrain.data();
@@ -113,7 +111,7 @@ void testInvalidationAndLifetime() {
             visible[i] = (i + frame * 13) % 7 < 3;
         ++visibilityRevision;
         prepare();
-        compare(cache, reference(records, visible, eye, translucent));
+        compare(cache, reference(records, visible, eye));
         DRAW_CHECK(cache.transparentTerrain.data() == terrainStorage);
         for (std::size_t i = 0; i < listStorage.size(); ++i)
             DRAW_CHECK(cache.lists[i].data() == listStorage[i]);
@@ -127,12 +125,8 @@ void testInvalidationAndLifetime() {
 
     eye.x += 100;
     prepare();
-    compare(cache, reference(records, visible, eye, translucent));
+    compare(cache, reference(records, visible, eye));
     DRAW_CHECK(cache.orderBuilds == 2 && cache.recordBuilds == 1);
-    translucent = false;
-    prepare();
-    compare(cache, reference(records, visible, eye, translucent));
-    DRAW_CHECK(cache.orderBuilds == 3 && cache.recordBuilds == 1);
 
     // Continuous movement and a narrow view use exact visible-only sorting.
     // The second render pass must neither allocate nor sort a second time.
@@ -143,7 +137,7 @@ void testInvalidationAndLifetime() {
         for (std::size_t i = 0; i < visible.size(); ++i)
             visible[i] = (i + frame) % 31 == 0;
         prepare();
-        compare(cache, reference(records, visible, eye, translucent));
+        compare(cache, reference(records, visible, eye));
         auto const orders = cache.orderBuilds;
         prepare();
         DRAW_CHECK(cache.orderBuilds == orders);
@@ -156,7 +150,7 @@ void testInvalidationAndLifetime() {
         for (std::size_t i = 0; i < visible.size(); ++i)
             visible[i] = (i + frame * 7) % 5 < 2;
         prepare();
-        compare(cache, reference(records, visible, eye, translucent));
+        compare(cache, reference(records, visible, eye));
     }
     DRAW_CHECK(cache.orderBuilds == beforeTurns + 1);
 
@@ -167,13 +161,13 @@ void testInvalidationAndLifetime() {
     records[2].center = {50000, -200, 4};
     ++meshRevision;
     prepare();
-    compare(cache, reference(records, visible, eye, translucent));
+    compare(cache, reference(records, visible, eye));
     DRAW_CHECK(cache.recordBuilds == 2);
 
     records.push_back({records.size(), {-100, 2, 3}, 1023});
     visible.push_back(1);
     prepare();
-    compare(cache, reference(records, visible, eye, translucent));
+    compare(cache, reference(records, visible, eye));
     DRAW_CHECK(cache.recordBuilds == 3); // new correction section
 
     // New world/dimension/activation: same numeric IDs and revision, different
@@ -181,13 +175,13 @@ void testInvalidationAndLifetime() {
     ++activation;
     records[3].slots = 1023;
     prepare();
-    compare(cache, reference(records, visible, eye, translucent));
+    compare(cache, reference(records, visible, eye));
     // Exercise generation invalidation independently of section-count changes.
     ++activation;
     records = makeRecords(4);
     visible.assign(4, 1);
     prepare();
-    compare(cache, reference(records, visible, eye, translucent));
+    compare(cache, reference(records, visible, eye));
     for (auto& record : records)
         record.slots = 0;
     ++meshRevision;
@@ -206,6 +200,29 @@ void testInvalidationAndLifetime() {
     DRAW_CHECK(cache.residentCount() == 0);
 }
 
+void testMaterialPassRouting() {
+    std::vector<ProjectionDrawRecord> records{
+        {0, {100, 0, 0}, projectionDrawBit(ProjectionDrawSlot::Opaque)},
+        {1, {200, 0, 0}, projectionDrawBit(ProjectionDrawSlot::Alpha)},
+        {2, {300, 0, 0}, projectionDrawBit(ProjectionDrawSlot::AlphaOneSided)},
+        {3, {1, 0, 0}, projectionDrawBit(ProjectionDrawSlot::Blend)},
+        {4, {2, 0, 0}, projectionDrawBit(ProjectionDrawSlot::Liquid)},
+        {5, {3, 0, 0}, projectionDrawBit(ProjectionDrawSlot::Blend)},
+    };
+    ProjectionDrawCache cache;
+    cache.prepare(1, 1, 1, records.size(), {},
+        [&](std::size_t i) { return records[i]; }, [](std::size_t) { return true; });
+    // Far opaque/cutout meshes must stay in their own passes. Only blend
+    // terrain and liquids need distance ordering, each in its existing list.
+    for (std::size_t slot = 0; slot < 3; ++slot) {
+        DRAW_CHECK(cache.lists[slot] == std::vector<std::size_t>{slot});
+    }
+    std::vector<ProjectionTerrainDraw> const terrain{{5, 3}, {3, 3}};
+    DRAW_CHECK(cache.transparentTerrain == terrain);
+    DRAW_CHECK(cache.lists[static_cast<std::size_t>(ProjectionDrawSlot::Liquid)]
+        == std::vector<std::size_t>{4});
+}
+
 void testBadDistancesAndViewKeys() {
     ProjectionDrawCache cache;
     std::vector<ProjectionDrawRecord> records{{0, {1, 0, 0}, 8},
@@ -214,9 +231,9 @@ void testBadDistancesAndViewKeys() {
                                               {3, {-1, 0, 0}, 8}};
     std::vector<unsigned char> visible(4, 1);
     cache.prepare(
-        1, 1, 1, records.size(), {}, true, [&](std::size_t i) { return records[i]; },
+        1, 1, 1, records.size(), {}, [&](std::size_t i) { return records[i]; },
         [](std::size_t) { return true; });
-    compare(cache, reference(records, visible, {}, true));
+    compare(cache, reference(records, visible, {}));
     ProjectionViewKey key;
     auto changed = key;
     DRAW_CHECK(changed == key);
@@ -249,9 +266,9 @@ void testProgressivePublishing() {
     for (std::size_t uploaded = 0; uploaded < records.size(); ++uploaded) {
         records[uploaded].slots = 1023;
         cache.prepare(
-            1, uploaded + 1, uploaded + 1, records.size(), {}, true,
+            1, uploaded + 1, uploaded + 1, records.size(), {},
             [&](std::size_t i) { return records[i]; }, [](std::size_t) { return true; });
-        compare(cache, reference(records, visible, {}, true));
+        compare(cache, reference(records, visible, {}));
         if (cache.transparentTerrain.capacity() != lastCapacity)
             ++capacityChanges;
         lastCapacity = cache.transparentTerrain.capacity();
@@ -262,7 +279,7 @@ void testProgressivePublishing() {
     for (auto& record : records)
         record.slots = 0;
     cache.prepare(
-        1, 1000, 1000, records.size(), {}, true, [&](std::size_t i) { return records[i]; },
+        1, 1000, 1000, records.size(), {}, [&](std::size_t i) { return records[i]; },
         [](std::size_t) { return true; });
     DRAW_CHECK(cache.transparentTerrain.empty());
     DRAW_CHECK(cache.transparentTerrain.capacity() == capacity);
@@ -271,6 +288,7 @@ void testProgressivePublishing() {
 
 int runProjectionDrawCacheTests() {
     testInvalidationAndLifetime();
+    testMaterialPassRouting();
     testBadDistancesAndViewKeys();
     testProgressivePublishing();
     std::printf("ProjectionDrawCacheTests: %d checks, %d failures\n", checks, failures);
@@ -303,7 +321,7 @@ void benchmarkProjectionDrawCache() {
         auto started = std::chrono::steady_clock::now();
         for (std::size_t frame = 0; frame < frames; ++frame) {
             updateView(frame);
-            auto lists = reference(records, visible, position(frame), true);
+            auto lists = reference(records, visible, position(frame));
             checksum += lists.terrain.size();
         }
         auto const baseline = std::chrono::steady_clock::now() - started;
@@ -312,11 +330,11 @@ void benchmarkProjectionDrawCache() {
         for (std::size_t frame = 0; frame < frames; ++frame) {
             updateView(frame);
             cache.prepare(
-                1, 1, frame, count, position(frame), true, [&](std::size_t i) { return records[i]; },
+                1, 1, frame, count, position(frame), [&](std::size_t i) { return records[i]; },
                 [&](std::size_t i) { return visible[i]; });
             // Model both engine passes, which must share the prepared lists.
             cache.prepare(
-                1, 1, frame, count, position(frame), true, [&](std::size_t i) { return records[i]; },
+                1, 1, frame, count, position(frame), [&](std::size_t i) { return records[i]; },
                 [&](std::size_t i) { return visible[i]; });
             checksum += cache.transparentTerrain.size();
         }

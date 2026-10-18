@@ -33,7 +33,6 @@ struct ProjectionSectionBuildSettings {
     int      offsetX{};
     int      offsetY{};
     int      offsetZ{};
-    float    structureOpacity{};
     float    correctionFillOpacity{};
     float    correctionOutlineOpacity{};
     bool     identityTransform{};

@@ -31,8 +31,6 @@ bool installHook();
 void uninstallHook();
 
 void disable();
-float getOpacity();
-void setOpacity(float opacity);
 float getCorrectionFillOpacity();
 void setCorrectionFillOpacity(float opacity);
 float getCorrectionOutlineOpacity();

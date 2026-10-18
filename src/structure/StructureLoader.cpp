@@ -770,7 +770,6 @@ void loadSettings() {
         }
         session.setLastPath(settings.lastStructurePath);
         uiState().setUiScale(std::clamp(settings.uiScale, 0.0f, 5.0f));
-        projection::setOpacity(settings.opacity);
         projection::setCorrectionFillOpacity(settings.correctionFillOpacity);
         projection::setCorrectionOutlineOpacity(settings.correctionOutlineOpacity);
         projection::setStructureBoundsEnabled(settings.structureBoundsEnabled);
@@ -874,7 +873,6 @@ void saveSettings() {
         settings.lastStructurePath = sessionSnapshot.lastPath;
         settings.language = std::string{i18n::languageCode(i18n::language())};
         settings.uiScale = hud.uiScale;
-        settings.opacity = projection::getOpacity();
         settings.correctionFillOpacity = projection::getCorrectionFillOpacity();
         settings.correctionOutlineOpacity = projection::getCorrectionOutlineOpacity();
         settings.structureBoundsEnabled = projection::getStructureBoundsEnabled();

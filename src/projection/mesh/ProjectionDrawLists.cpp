@@ -8,8 +8,7 @@
 
 namespace lholo::projection::detail {
 
-std::uint64_t prepareProjectionDrawLists(ProjectionState& state, Vec3 const& camera, BlockPos const& origin,
-                                         float opacity) {
+std::uint64_t prepareProjectionDrawLists(ProjectionState& state, Vec3 const& camera, BlockPos const& origin) {
     auto const started = std::chrono::steady_clock::now();
     static_assert(static_cast<unsigned>(RenderBucket::Count) == 4);
     static_assert(static_cast<unsigned>(RenderBucket::Opaque) ==
@@ -24,7 +23,6 @@ std::uint64_t prepareProjectionDrawLists(ProjectionState& state, Vec3 const& cam
         state.activationGeneration, state.drawMeshRevision, state.visibilityRevision, state.sections.size(),
         {camera.x - static_cast<float>(origin.x), camera.y - static_cast<float>(origin.y),
          camera.z - static_cast<float>(origin.z)},
-        opacity < 0.999f,
         [&](std::size_t index) {
             auto const& section = state.sections[index];
             ProjectionDrawRecord record{index, {section.center.x, section.center.y, section.center.z}, 0};

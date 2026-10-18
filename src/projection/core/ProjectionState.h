@@ -105,7 +105,6 @@ struct ProjectionState {
     std::optional<structure::LayerDisplayMode> cachedLayerDisplayMode;
     int                             cachedDisplayLayer{-1};
     std::optional<structure::LayerAxis> cachedLayerAxis;
-    float                           cachedOpacity{-1.0f};
     float                           cachedCorrectionFillOpacity{-1.0f};
     float                           cachedCorrectionOutlineOpacity{-1.0f};
     std::vector<std::vector<std::size_t>> sectionBlockIndices;

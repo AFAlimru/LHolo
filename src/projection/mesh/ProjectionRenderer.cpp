@@ -150,7 +150,6 @@ void submitProjectionMeshPass(
     IClientInstance&        client,
     BlockPos const&         renderOrigin,
     Vec3 const&             camera,
-    float                   structureOpacity,
     bool                    renderAlphaLayer,
     bool                    structureBoundsEnabled,
     bool                    correctionSeeThrough,
@@ -179,7 +178,7 @@ void submitProjectionMeshPass(
         );
     }
 
-    drawTimer.prepareMicros = prepareProjectionDrawLists(state, camera, renderOrigin, structureOpacity);
+    drawTimer.prepareMicros = prepareProjectionDrawLists(state, camera, renderOrigin);
     auto const& cache = state.drawCache;
     auto list = [&](ProjectionDrawSlot slot) -> std::vector<std::size_t> const& {
         return cache.lists[static_cast<std::size_t>(slot)];
@@ -196,7 +195,7 @@ void submitProjectionMeshPass(
         for (auto const section : list(slot)) renderTerrainMesh(section, static_cast<std::size_t>(slot), material);
     };
 
-    if (!renderAlphaLayer && structureOpacity >= 0.999f) {
+    if (!renderAlphaLayer) {
         // Colored materials preserve biome tint. Only resolve and submit the
         // three solid/cutout buckets in their actual render pass.
         auto const& opaqueMaterial = materialExists(itemRenderer.mMatOpaqueBlockColor.get())
@@ -211,9 +210,8 @@ void submitProjectionMeshPass(
             materialExists(alphaMaterial) ? alphaMaterial : blendMaterial);
         renderSolidBucket(ProjectionDrawSlot::AlphaOneSided, materialExists(oneSidedMaterial)
             ? oneSidedMaterial : materialExists(alphaMaterial) ? alphaMaterial : blendMaterial);
-    } else if (renderAlphaLayer) {
-        // Terrain buckets share one cached back-to-front section order when
-        // translucent; opaque mode includes only the vanilla blend bucket.
+    } else {
+        // Only the vanilla blend bucket uses the cached back-to-front section order.
         for (auto const& draw : cache.transparentTerrain) renderTerrainMesh(draw.section, draw.bucket, blendMaterial);
     }
 

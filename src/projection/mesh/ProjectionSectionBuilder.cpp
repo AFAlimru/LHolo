@@ -194,7 +194,6 @@ void buildProjectionSection(
     auto const offsetX                  = sectionBuildSettings.offsetX;
     auto const offsetY                  = sectionBuildSettings.offsetY;
     auto const offsetZ                  = sectionBuildSettings.offsetZ;
-    auto const structureOpacity         = sectionBuildSettings.structureOpacity;
     auto const identityTransform        = sectionBuildSettings.identityTransform;
     LegacyStructureSettings sectionTransformSettings{
         mirror,
@@ -242,10 +241,10 @@ void buildProjectionSection(
                 || typeName == VanillaBlockTypeIds::StickyPistonArmCollision().getString()) {
                 return;
             }
-            // Preserve translucent projection semantics: ghost neighbors are
-            // not solid occluders. Partial blocks retain vanilla tessellation.
+            // Only opaque full blocks can use the enclosed-cell shortcut.
+            // Partial blocks retain vanilla tessellation.
             if (state.expectedWorldBlocks && projectionSolidCellEnclosed(
-                    structureOpacity >= 0.999f && transformedBlock->getBlockType().mIsOpaqueFullBlock,
+                    transformedBlock->getBlockType().mIsOpaqueFullBlock,
                     [&](int dx, int dy, int dz) {
                         auto const found = state.expectedWorldBlocks->find(
                             std::tuple{position.x + dx, position.y + dy, position.z + dz}
@@ -381,9 +380,6 @@ void buildProjectionSection(
                 continue;
             }
             auto& colors = tessellator.mMeshData->mColors.get();
-            auto const alpha = static_cast<uint>(std::lround(
-                std::clamp(structureOpacity, 0.05f, 1.0f) * 255.0f
-            ));
             if (foliageTint) {
                 for (std::size_t colorIndex = firstColor; colorIndex < colors.size(); ++colorIndex) {
                     colors[colorIndex] = modulateAbgr(colors[colorIndex], *foliageTint);
@@ -391,9 +387,9 @@ void buildProjectionSection(
             }
             ProjectionTintQuadObserver grassFaces;
             for (std::size_t colorIndex = firstColor; colorIndex < colors.size(); ++colorIndex) {
-                // Observe while applying opacity: no additional vertex pass.
+                // Preserve full projection alpha and observe grass faces in the same pass.
                 if (tintMethod == TintMethod::Grass) grassFaces.observe(colors[colorIndex]);
-                colors[colorIndex] = (colors[colorIndex] & 0x00FFFFFFU) | (alpha << 24U);
+                colors[colorIndex] |= 0xFF000000U;
             }
             // A black face is a symptom, not proof of missing lighting/biomes.
             // Its independent diagnostic flag permits only one auto refresh.
@@ -470,7 +466,6 @@ void buildLiquidProxySectionMesh(
     auto const offsetX           = settings.offsetX;
     auto const offsetY           = settings.offsetY;
     auto const offsetZ           = settings.offsetZ;
-    auto const structureOpacity  = settings.structureOpacity;
     auto const identityTransform = settings.identityTransform;
     LegacyStructureSettings sectionTransformSettings{
         settings.mirror,
@@ -508,9 +503,8 @@ void buildLiquidProxySectionMesh(
             // Lava uses fiery molten orange (#FF8010), ensuring grayscale flowing lava tiles
             // and fallback tiles display rich, warm molten color rather than rendering white.
             auto const baseRgb = isLava ? LiquidLavaTintAbgrRgb : LiquidWaterTintAbgrRgb;
-            float const effectiveAlpha = isLava
-                ? std::clamp(structureOpacity * 0.85f, 0.25f, 0.95f)
-                : std::clamp(structureOpacity * 0.65f, 0.15f, 0.85f);
+            // Preserve the liquid appearance used at full projection opacity.
+            float const effectiveAlpha = isLava ? 0.85f : 0.65f;
             auto const alphaByte = static_cast<std::uint32_t>(std::lround(effectiveAlpha * 255.0f));
 
             // Directional shading preserves 3D volume perception in transparent mode.
@@ -682,7 +676,6 @@ void buildBlockEntityPlaceholderSectionMesh(
 ) {
     auto const mirrorMode        = settings.mirrorMode;
     auto const rotationTurns     = settings.rotationTurns;
-    auto const structureOpacity  = settings.structureOpacity;
     auto const identityTransform = settings.identityTransform;
     LegacyStructureSettings sectionTransformSettings{
         settings.mirror,
@@ -707,10 +700,7 @@ void buildBlockEntityPlaceholderSectionMesh(
             static_cast<int>(blockEntityIndices.size() * 24),
             false
         );
-        auto const alpha = static_cast<uint>(std::lround(
-            std::clamp(structureOpacity, 0.05f, 1.0f) * 255.0f
-        ));
-        auto const tint = 0x00FFFFFFU | (alpha << 24U);
+        constexpr auto tint = 0xFFFFFFFFU;
         for (auto const index : blockEntityIndices) {
             auto const& entry = state.structure->renderBlocks[index];
             auto const* expectedBlock = transformExpectedBlock(entry.block, sectionTransformSettings, identityTransform);
@@ -747,7 +737,7 @@ void buildBlockEntityPlaceholderSectionMesh(
             float const u1 = uvSet ? uvSet->_u1 : 0.0f;
             float const v1 = uvSet ? uvSet->_v1 : 0.0f;
             auto const frontColor = tint;
-            auto const dimColor = (0x00888888U & 0x00FFFFFFU) | (alpha << 24U);
+            constexpr auto dimColor = 0xFF888888U;
             auto addFace = [&](
                 Vec3 const& a, Vec3 const& b, Vec3 const& c, Vec3 const& d, bool isFront
             ) {

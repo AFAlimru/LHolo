@@ -21,7 +21,6 @@ struct ProjectionInvalidationSettings {
     structure::LayerDisplayMode layerDisplayMode{structure::LayerDisplayMode::All};
     int   displayLayer{};
     structure::LayerAxis layerAxis{structure::LayerAxis::Y};
-    float structureOpacity{};
     float correctionFillOpacity{};
     float correctionOutlineOpacity{};
 };

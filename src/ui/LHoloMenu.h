@@ -102,7 +102,6 @@ struct MenuModel {
     int rotation{};
     int mirror{};
 
-    float opacity{1.0f};
     float correctionFillOpacity{0.15f};
     float correctionOutlineOpacity{1.0f};
     int layerAxis{};

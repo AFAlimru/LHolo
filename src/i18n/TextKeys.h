@@ -77,7 +77,6 @@
                                                                                                          \
     /* Rendering page */                                                                                 \
     LHOLO_TEXT_KEY("section.projectionStyle", SectionProjectionStyle, "")                                \
-    LHOLO_TEXT_KEY("label.opacity", LabelOpacity, "")                                                    \
     LHOLO_TEXT_KEY("checkbox.renderBounds", CheckboxRenderBounds, "")                                    \
     LHOLO_TEXT_KEY("section.layerSettings", SectionLayerSettings, "")                                    \
     LHOLO_TEXT_KEY("label.layerAxis", LabelLayerAxis, "")                                                \

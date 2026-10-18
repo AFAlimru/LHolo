@@ -59,7 +59,7 @@ class ProjectionDrawCache {
     // IsVisible reads this frame's classification. Neither callback is retained.
     template <class ReadRecord, class IsVisible>
     void prepare(std::uint64_t activation, std::uint64_t meshRevision, std::uint64_t visibilityRevision,
-                 std::size_t sectionCount, ProjectionDrawPosition eyeLocal, bool translucent,
+                 std::size_t sectionCount, ProjectionDrawPosition eyeLocal,
                  ReadRecord&& read, IsVisible&& visible) {
         bool const resourcesChanged = !mResourcesValid || mActivation != activation ||
                                       mMeshRevision != meshRevision || mSectionCount != sectionCount;
@@ -76,7 +76,7 @@ class ProjectionDrawCache {
                 for (std::size_t slot = 0; slot < counts.size(); ++slot) {
                     if (record.slots & (1u << slot)) {
                         ++counts[slot];
-                        if (slot < 4)
+                        if (slot == static_cast<std::size_t>(ProjectionDrawSlot::Blend))
                             ++terrainCount;
                     }
                 }
@@ -113,11 +113,11 @@ class ProjectionDrawCache {
         // The second pass of the same view must not upgrade/re-sort that order.
         bool const globalOrder = !eyeChanged && (mGlobalOrder || visibilityChanged);
         bool const orderChanged =
-            !mOrderValid || eyeChanged || mTranslucent != translucent || mGlobalOrder != globalOrder;
+            !mOrderValid || eyeChanged || mGlobalOrder != globalOrder;
         if (orderChanged) {
             mDistanceOrder.clear();
-            auto const normalMask = translucent ? 15u : projectionDrawBit(ProjectionDrawSlot::Blend);
-            auto const sortedMask = normalMask | projectionDrawBit(ProjectionDrawSlot::Liquid);
+            auto const sortedMask = projectionDrawBit(ProjectionDrawSlot::Blend)
+                | projectionDrawBit(ProjectionDrawSlot::Liquid);
             for (std::size_t index = 0; index < mResidents.size(); ++index) {
                 auto const& record = mResidents[index];
                 if (!(record.slots & sortedMask))
@@ -140,7 +140,6 @@ class ProjectionDrawCache {
             mEye = eyeLocal;
             mHaveEye = true;
             mGlobalOrder = globalOrder;
-            mTranslucent = translucent;
             mOrderValid = true;
             mListsValid = false;
             ++orderBuilds;
@@ -155,14 +154,12 @@ class ProjectionDrawCache {
             auto const& record = mResidents[index];
             if (!mVisible[index])
                 continue;
-            if (!translucent) {
-                for (std::size_t slot = 0; slot < 3; ++slot) {
-                    if (record.slots & (1u << slot))
-                        lists[slot].push_back(record.section);
-                }
+            for (std::size_t slot = 0; slot < 3; ++slot) {
+                if (record.slots & (1u << slot))
+                    lists[slot].push_back(record.section);
             }
             // Placeholders and correction meshes keep their existing section
-            // order. Liquids and translucent terrain use the distance order.
+            // order. Liquids and blend terrain use the distance order.
             for (std::size_t slot = static_cast<std::size_t>(ProjectionDrawSlot::Placeholder);
                  slot < lists.size(); ++slot) {
                 if (record.slots & (1u << slot))
@@ -173,9 +170,9 @@ class ProjectionDrawCache {
             if (!mVisible[entry.resident])
                 continue;
             auto const& record = mResidents[entry.resident];
-            for (std::size_t bucket = translucent ? 0 : 3; bucket < 4; ++bucket) {
-                if (record.slots & (1u << bucket))
-                    transparentTerrain.push_back({record.section, bucket});
+            if (record.slots & projectionDrawBit(ProjectionDrawSlot::Blend)) {
+                transparentTerrain.push_back(
+                    {record.section, static_cast<std::size_t>(ProjectionDrawSlot::Blend)});
             }
             if (record.slots & projectionDrawBit(ProjectionDrawSlot::Liquid)) {
                 lists[static_cast<std::size_t>(ProjectionDrawSlot::Liquid)].push_back(record.section);
@@ -204,7 +201,7 @@ class ProjectionDrawCache {
     ProjectionDrawPosition mEye;
     std::uint64_t mActivation{}, mMeshRevision{}, mVisibilityRevision{};
     std::size_t mSectionCount{};
-    bool mResourcesValid{}, mOrderValid{}, mListsValid{}, mTranslucent{}, mHaveEye{}, mGlobalOrder{};
+    bool mResourcesValid{}, mOrderValid{}, mListsValid{}, mHaveEye{}, mGlobalOrder{};
 };
 
 struct ProjectionDrawTimings {

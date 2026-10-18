@@ -57,8 +57,6 @@ public:
         );
     }
 
-    [[nodiscard]] float opacity() const;
-    void setOpacity(float opacity);
     [[nodiscard]] float correctionFillOpacity() const;
     void setCorrectionFillOpacity(float opacity);
     [[nodiscard]] float correctionOutlineOpacity() const;
@@ -90,7 +88,6 @@ public:
 private:
     ProjectionSession() = default;
 
-    std::atomic<float> mOpacity{1.0f};
     std::atomic<float> mCorrectionFillOpacity{0.15f};
     std::atomic<float> mCorrectionOutlineOpacity{1.0f};
     std::atomic_bool   mStructureBoundsEnabled{true};

@@ -115,7 +115,6 @@ MenuModel buildStructureMenuModel(float effectiveUiScale) {
     model.offsetZ = sessionSnapshot.transform.offsetZ;
     model.rotation = std::clamp(sessionSnapshot.transform.rotation, 0, 3);
     model.mirror = std::clamp(sessionSnapshot.transform.mirror, 0, 2);
-    model.opacity = projection::getOpacity();
     model.correctionFillOpacity = projection::getCorrectionFillOpacity();
     model.correctionOutlineOpacity = projection::getCorrectionOutlineOpacity();
     model.layerDisplayMode = structure::toInt(sessionSnapshot.transform.layerDisplayMode);
@@ -211,11 +210,6 @@ void applyStructureMenuModel(MenuModel const& model, float effectiveUiScale) {
     changed = session.setRotation(std::clamp(model.rotation, 0, 3)) || changed;
     changed = session.setMirror(std::clamp(model.mirror, 0, 2)) || changed;
 
-    auto const opacity = std::clamp(model.opacity, 0.0f, 1.0f);
-    if (std::abs(projection::getOpacity() - opacity) > 0.0001f) {
-        projection::setOpacity(opacity);
-        changed = true;
-    }
     auto const fill = std::clamp(model.correctionFillOpacity, 0.0f, 1.0f);
     if (std::abs(projection::getCorrectionFillOpacity() - fill) > 0.0001f) {
         projection::setCorrectionFillOpacity(fill);

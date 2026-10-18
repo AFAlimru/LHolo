@@ -289,6 +289,31 @@ void testSettingsStore() {
     LHOLO_CHECK(lholo::settings::loadSettingsFile(path, invalid));
     LHOLO_CHECK(invalid.language == "zh_CN");
 
+    // Retired projection opacity must not affect other preferences, even
+    // when an old file stores a value that is no longer a valid float.
+    for (auto const* legacyOpacity : {"0", "0.5", "1", "null", "\"obsolete\""}) {
+        {
+            std::ofstream legacy(path, std::ios::trunc);
+            legacy << R"({"opacity":)" << legacyOpacity
+                   << R"(,"correctionFillOpacity":0.3,"correctionOutlineOpacity":0.7,"savedAnchorX":42})";
+        }
+        lholo::settings::Settings retired;
+        LHOLO_CHECK(lholo::settings::loadSettingsFile(path, retired));
+        LHOLO_CHECK(retired.correctionFillOpacity == 0.3f);
+        LHOLO_CHECK(retired.correctionOutlineOpacity == 0.7f);
+        LHOLO_CHECK(retired.savedAnchorX == 42);
+        lholo::settings::saveSettingsFile(path, retired);
+        std::ifstream saved(path);
+        std::ostringstream contents;
+        contents << saved.rdbuf();
+        LHOLO_CHECK(contents.str().find("\"opacity\"") == std::string::npos);
+        lholo::settings::Settings reloaded;
+        LHOLO_CHECK(lholo::settings::loadSettingsFile(path, reloaded));
+        LHOLO_CHECK(reloaded.correctionFillOpacity == 0.3f);
+        LHOLO_CHECK(reloaded.correctionOutlineOpacity == 0.7f);
+        LHOLO_CHECK(reloaded.savedAnchorX == 42);
+    }
+
     lholo::settings::Settings missing;
     std::filesystem::remove(path, error);
     LHOLO_CHECK(!lholo::settings::loadSettingsFile(path, missing));

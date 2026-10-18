@@ -43,7 +43,6 @@
   "label.offsetY": "Y 軸偏移",
   "label.offsetZ": "Z 軸偏移",
   "section.projectionStyle": "投影顯示設定",
-  "label.opacity": "投影透明度（範圍 0～100）",
   "checkbox.renderBounds": "顯示整體結構邊界",
   "section.layerSettings": "分層顯示設定",
   "label.layerAxis": "分層軸",

@@ -30,7 +30,6 @@ void submitProjectionMeshPass(
     IClientInstance&        client,
     BlockPos const&         renderOrigin,
     Vec3 const&             camera,
-    float                   structureOpacity,
     bool                    renderAlphaLayer,
     bool                    structureBoundsEnabled,
     bool                    correctionSeeThrough,

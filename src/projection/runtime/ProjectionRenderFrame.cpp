@@ -185,7 +185,6 @@ void renderProjection(
             structure::getDisplayLayer(), 0, maxLayer
         );
         auto& session = ProjectionSession::getInstance();
-        auto const structureOpacity = session.opacity();
         auto const correctionFillOpacity = session.correctionFillOpacity();
         auto const correctionOutlineOpacity = session.correctionOutlineOpacity();
         auto const invalidation = reconcileProjectionInvalidation(
@@ -199,7 +198,6 @@ void renderProjection(
                 .layerDisplayMode         = layerDisplayMode,
                 .displayLayer             = displayLayer,
                 .layerAxis                = layerAxis,
-                .structureOpacity         = structureOpacity,
                 .correctionFillOpacity    = correctionFillOpacity,
                 .correctionOutlineOpacity = correctionOutlineOpacity
             }
@@ -231,7 +229,6 @@ void renderProjection(
             .offsetX                  = offsetX,
             .offsetY                  = offsetY,
             .offsetZ                  = offsetZ,
-            .structureOpacity         = structureOpacity,
             .correctionFillOpacity    = correctionFillOpacity,
             .correctionOutlineOpacity = correctionOutlineOpacity,
             .identityTransform        = identityTransform
@@ -258,7 +255,6 @@ void renderProjection(
         state.anchor.y + structure::getOffsetY(),
         state.anchor.z + structure::getOffsetZ()
     };
-    auto const structureOpacity = ProjectionSession::getInstance().opacity();
 
     submitProjectedBlockActorPass(
         state,
@@ -291,7 +287,6 @@ void renderProjection(
             client,
             renderOrigin,
             camera,
-            structureOpacity,
             renderAlphaLayer,
             ProjectionSession::getInstance().structureBoundsEnabled(),
             ProjectionSession::getInstance().correctionSeeThrough(),
