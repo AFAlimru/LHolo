@@ -15,6 +15,8 @@
 #include <optional>
 #include <vector>
 
+#include <gsl/util>
+
 #include "mc/client/game/IClientInstance.h"
 #include "mc/client/gui/screens/ScreenContext.h"
 #include "mc/client/player/LocalPlayer.h"
@@ -32,6 +34,7 @@
 #include "mc/deps/minecraft_renderer/resources/ClientTexture.h"
 #include "mc/deps/minecraft_renderer/resources/ServerTexture.h"
 #include "mc/deps/renderer/hal/interface/DepthStencilStateDescription.h"
+#include "mc/deps/renderer/ShaderColor.h"
 #include "mc/world/level/block/actor/BlockActor.h"
 #include "mc/world/level/block/actor/component/IVanillaRenderBlockActorComponent.h"
 
@@ -281,9 +284,29 @@ void submitProjectionMeshPass(
             nullptr
         );
     }
+    // The draw cache already excludes invisible/absent correction meshes.
+    // Bounds above render independently; an empty correction pass needs no
+    // shader-color or material-state changes.
+    if (list(ProjectionDrawSlot::MissingFill).empty() && list(ProjectionDrawSlot::WrongFill).empty()
+        && list(ProjectionDrawSlot::MissingOutline).empty() && list(ProjectionDrawSlot::WrongOutline).empty()) return;
+
     auto const& warningMaterial = levelRenderer
         ? levelRenderer->mLevelRendererPlayer->selectionBlockEntityOverlayColorMaterial.get()
         : itemRenderer.mMatBlendBlockNoColor.get();
+
+    // Isolate correction rendering from the caller's tint, preserving the
+    // existing vertex colors, opacity, and material blending.
+    auto& shaderColor = renderContext.mScreenContext.currentShaderColor;
+    auto const savedShaderColor = shaderColor.color.get();
+    auto restoreShaderColor = gsl::finally([&] {
+        shaderColor.color = savedShaderColor;
+        // The next draw must synchronize the restored value, even if the
+        // original CPU color was clean before this correction pass.
+        shaderColor.dirty = true;
+    });
+    shaderColor.color = mce::Color{1.0f, 1.0f, 1.0f, 1.0f};
+    shaderColor.dirty = true;
+
     // seeThroughMeshes is passed per call so the "missing" correction meshes stay
     // depth-tested while only the "wrong" ones honor the X-ray toggle.
     auto renderOverlayMeshes = [&] (
