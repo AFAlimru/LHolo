@@ -400,8 +400,10 @@ LevelListener，即使首个投影尚未激活，世界销毁回调也先清空�
 - `connectionUpdate()` 会把重算结果写进传入的区域，直接调用曾把可选中、有碰撞的幽灵栅栏写进真实世界（重进世界才消失）。因此调用必须包在 `ScopedRegionWriteSuppression` 内（`ProjectionVirtualWorld`），`ProjectionGameHooks` 里的两个 `BlockSource::setBlock` 钩子在抑制期间吞掉写入并返回成功，只取更新的返回值；不要在抑制作用域外做任何依赖写入生效的操作。
 - 所有投影方块实体创建完成后，使用 `BlockActor::isType()` 识别箱子，并在同一虚拟世界作用域内调用原版 `ChestBlockActor::_tryToPairWith()` 配对。必须先建立完整的虚拟方块和方块实体表，再执行配对；结构 NBT 中的 `pairx`/`pairz` 是原世界绝对坐标，不能直接作为投影配对坐标使用。
 - 水和岩浆使用贴图 proxy 单元壳，完全由 LHolo 自绘，不与原版世界或区块管线交互：仅 Missing（未放置）状态的液体格绘制半透明截顶外壳，最上层液体格顶面固定为原版源液体高度 8/9（`getHeightFromDepth()` 在 1.26 上对源液体的返回值不可靠，不再使用；逐格流动深度不参与视觉，只参与纠错比较），上方有同液体时侧壁满格；相邻同种液体剔除共享面；UV 取自 `BlockGraphics::getForBlock(liquid)->getTexture(0, 0)` 的 terrain atlas 水/岩浆贴图；水顶点色为原版蓝 #3F76E4（atlas 水贴图无色），岩浆顶点色为熔岩橙 #FF8010（0x001080FF，与原版岩浆色谱一致，避免侧面流动贴图及无色材质渲染发白）；alpha 跟随投影透明度；经 `liquidProxySectionMeshes` 独立网格在 alpha pass 用 `mMatBlendBlock` + terrain atlas 提交（与玻璃同路径），按 section 距离排序。静态贴图无波浪动画是已知限制。纯液体格的 Missing 不再叠加蓝色纠错面/描边（proxy 本身即提示），WrongType/WrongState 仍保留红/黄纠错面。`.litematic` 加载时液体路由到 `RenderBlock::liquid` 字段，与 `.mcstructure` 语义一致。
-- `.litematic` 加载时把 `getMaterial().isLiquid()` 的方块路由到 `RenderBlock::liquid` 字段，与 `.mcstructure` 语义一致。
-- 纠错分别比较 `BlockSource::getBlock()` 与 `getLiquidBlock()`。缺少液体判为“未放置”，液体类型错误判为“类型错误”，液体深度等状态不同判为“状态错误”。
+- 气泡柱必须保留独立的实体/液体语义：`RenderBlock::block` 是气泡柱本体，`liquid` 只保留原版加载器实际解析出的另一层液体。无水气泡柱不补造水；含水气泡柱保留气泡本体与独立水体绘制。不能仅凭原始文件的索引层数判断含水，格式升级由原版 StructureTemplate 负责；Java 映射仍依据其来源格式的映射规则处理水层。
+- 气泡柱保留通用 `tessellateInWorld` 的世界/缓存设置；若该入口未追加顶点，调用实际 SDK 提供的 `tessellateBubbleColumnInWorld` 一次。2026-10-19 无水与含水样本实测中，通用入口均追加 0 个顶点（graphics shape=-1），专用入口追加 32/36 个顶点；其返回值为 false 时也可能有 36 个顶点，因此仍以网格增量判断几何。无几何的气泡柱跳过通用方块实体占位壳，避免白色立方体。原版资源提供气泡柱动画 atlas，水体仍走独立液体网格。本修复不修改分层数据、纠错、世界或任务生命周期，不新增刷新/重试队列。
+- 用户已确认无水样本 `D:/temp/气泡柱.mcstructure` 和含水样本均显示通过。临时诊断日志、原子计数、同步 flush 和仅供诊断的日志依赖已移除；保留实测有效调用顺序，不在本轮清理中推断专用入口可绕过通用前置设置。
+- 纠错分别比较 `BlockSource::getBlock()` 与 `getLiquidBlock()`；气泡柱使用 `getExtraBlock()` 取得实际副层，避免把气泡柱本体误认作副层水。只对结构实际要求的液体检查缺失、类型和状态，不因无水样本缺少副层水而误报。
 - 材料轴的完整视图仍显示没有材料索引的 Extra 世界方块；选择具体材料或材料范围时，Extra 因无法归属某项材料而隐藏。
 - 投影进度仍以结构坐标计数，而不是把同一坐标的实体层和液体层重复计数。
 

@@ -208,6 +208,7 @@ void buildProjectionSection(
         BlockRenderLayer              layer{BlockRenderLayer::RenderlayerOpaque};
         RenderBucket bucket{RenderBucket::Opaque};
         std::size_t                   structureIndex{};
+        bool                          bubbleColumn{};
     };
     // Blocks whose model produced no geometry during tessellation
     // (block-entity blocks such as chests and signs) get a placeholder.
@@ -259,7 +260,8 @@ void buildProjectionSection(
                 : (transformedBlock->getBlockType().mIsOpaqueFullBlock
                     ? BlockRenderLayer::RenderlayerOpaque
                     : BlockRenderLayer::RenderlayerAlphatest);
-            layeredBlocks.push_back({transformedBlock, position, layer, renderBucketFor(layer), index});
+            layeredBlocks.push_back({transformedBlock, position, layer, renderBucketFor(layer), index,
+                typeName == "minecraft:bubble_column"});
             ++bucketCounts[static_cast<std::size_t>(layeredBlocks.back().bucket)];
         };
         appendBlock(entry.block);
@@ -355,18 +357,27 @@ void buildProjectionSection(
             );
             auto const firstPosition = tessellator.mMeshData->mPositions.get().size();
             auto const firstColor = tessellator.mMeshData->mColors.get().size();
-            auto const rendered = blockTessellator.tessellateInWorld(
+            auto rendered = blockTessellator.tessellateInWorld(
                 tessellator, renderBlock, layered.position, true
             );
+            if (layered.bubbleColumn && tessellator.mMeshData->mPositions.get().size() == firstPosition) {
+                // Keep the normal world/cache setup, then use the native bubble
+                // builder when generic shape dispatch emits nothing. This is
+                // one call per build, not a queued refresh or retry loop.
+                rendered = blockTessellator.tessellateBubbleColumnInWorld(
+                    tessellator, renderBlock, layered.position);
+            }
             // Several legacy shape tessellators (notably doors) return
             // false after successfully appending vertices. The return
             // value describes the dispatch path, not mesh production.
             // Trust the actual mesh delta so those models are retained.
             auto const geometryAdded =
                 tessellator.mMeshData->mPositions.get().size() > firstPosition;
-            if (!rendered && !geometryAdded) {
+            if (!geometryAdded && (!rendered || layered.bubbleColumn)) {
                 // No terrain-atlas model: needs a placeholder hull.
-                failedTessellationIndices.push_back(layered.structureIndex);
+                // Bubble columns are not block entities; a generic cube is not
+                // a valid substitute for an intentionally empty native result.
+                if (!layered.bubbleColumn) failedTessellationIndices.push_back(layered.structureIndex);
                 continue;
             }
             auto& colors = tessellator.mMeshData->mColors.get();

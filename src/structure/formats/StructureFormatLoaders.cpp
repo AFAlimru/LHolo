@@ -617,6 +617,8 @@ std::shared_ptr<LoadedStructure> loadMcstructure(std::filesystem::path const& pa
         };
         assign(primary);
         assign(secondary);
+        // Bubble columns remain the body even when their material is liquid.
+        // Preserve a separately decoded liquid only; dry columns must stay dry.
         if (primary && primary->getTypeName() == "minecraft:bubble_column") {
             block = primary;
             liquid = (secondary && secondary->getBlockType().mMaterial.mLiquid) ? secondary : nullptr;
