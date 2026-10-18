@@ -10,12 +10,8 @@
 #include "projection/runtime/ProjectionVisibility.h"
 #include "projection/core/ProjectionState.h"
 #include "structure/StructureLoader.h"
+#include "render/BoxWireframeMesh.h"
 
-#include <cstdint>
-#include <memory>
-
-#include "mc/client/renderer/SupplementaryFieldAutoGenerationMode.h"
-#include "mc/client/renderer/Tessellator.h"
 #include "mc/client/renderer/block/BlockTessellator.h"
 #include "mc/world/level/BlockSource.h"
 #include "mc/world/level/levelgen/structure/LegacyStructureSettings.h"
@@ -23,23 +19,14 @@
 namespace lholo::projection::detail {
 namespace {
 
-void setColorAbgr(Tessellator& tessellator, std::uint32_t colorAbgr) {
-    tessellator.color(
-        static_cast<float>((colorAbgr >> 0) & 0xFFU) / 255.0f,
-        static_cast<float>((colorAbgr >> 8) & 0xFFU) / 255.0f,
-        static_cast<float>((colorAbgr >> 16) & 0xFFU) / 255.0f,
-        static_cast<float>((colorAbgr >> 24) & 0xFFU) / 255.0f
-    );
-}
-
 void ensureStructureBoundsMesh(
     ProjectionState& state,
     Tessellator&     tessellator,
     int              rotationTurns
 ) {
     // The bounds are only 24 line vertices and are intentionally generated
-    // once on the render thread; section BlockTessellator work stays async.
-    if (!state.asyncMeshBuildingEnabled || state.structureBoundsMesh) return;
+    // once on the render thread, independently of the section worker mode.
+    if (state.structureBoundsMesh) return;
 
     auto const rotated = rotationTurns == 1 || rotationTurns == 3;
     auto const width = static_cast<float>(
@@ -49,28 +36,8 @@ void ensureStructureBoundsMesh(
     auto const depth = static_cast<float>(
         rotated ? state.structure->sizeX : state.structure->sizeZ
     );
-    constexpr float expansion = 0.01f;
-    float const x0 = -expansion, y0 = -expansion, z0 = -expansion;
-    float const x1 = width + expansion, y1 = height + expansion, z1 = depth + expansion;
-    tessellator.begin(
-        Tessellator::DebugContextCallback{}, mce::PrimitiveMode::LineList, 24, false
-    );
-    setColorAbgr(tessellator, 0xFFFFD633U);
-    auto addBoundsEdge = [&](Vec3 const& first, Vec3 const& second) {
-        tessellator.vertex(first.x, first.y, first.z);
-        tessellator.vertex(second.x, second.y, second.z);
-    };
-    addBoundsEdge({x0,y0,z0},{x1,y0,z0}); addBoundsEdge({x1,y0,z0},{x1,y1,z0});
-    addBoundsEdge({x1,y1,z0},{x0,y1,z0}); addBoundsEdge({x0,y1,z0},{x0,y0,z0});
-    addBoundsEdge({x0,y0,z1},{x1,y0,z1}); addBoundsEdge({x1,y0,z1},{x1,y1,z1});
-    addBoundsEdge({x1,y1,z1},{x0,y1,z1}); addBoundsEdge({x0,y1,z1},{x0,y0,z1});
-    addBoundsEdge({x0,y0,z0},{x0,y0,z1}); addBoundsEdge({x1,y0,z0},{x1,y0,z1});
-    addBoundsEdge({x1,y1,z0},{x1,y1,z1}); addBoundsEdge({x0,y1,z0},{x0,y1,z1});
-    state.structureBoundsMesh = std::make_unique<mce::Mesh>(tessellator.end(
-        Tessellator::UploadMode::Buffered,
-        "LHoloStructureBounds",
-        SupplementaryFieldAutoGenerationMode{0}
-    ));
+    state.structureBoundsMesh = render::buildBoxWireframeMesh(tessellator,
+        {0,0,0}, {width,height,depth}, "LHoloStructureBounds");
 }
 
 } // namespace

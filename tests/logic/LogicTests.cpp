@@ -26,6 +26,7 @@ int runProjectionCullingTests();
 int runProjectionDrawCacheTests();
 int runProjectionBiomeRefreshTests();
 int runStructureLoadOriginTests();
+int runOverlayRenderingTests();
 void benchmarkProjectionDrawCache();
 
 namespace {
@@ -1042,6 +1043,7 @@ int main(int argc, char** argv) {
     LHOLO_CHECK(runProjectionDrawCacheTests() == 0);
     LHOLO_CHECK(runProjectionBiomeRefreshTests() == 0);
     LHOLO_CHECK(runStructureLoadOriginTests() == 0);
+    LHOLO_CHECK(runOverlayRenderingTests() == 0);
     testLayoutRules();
     testProgress();
     testSettingsStore();

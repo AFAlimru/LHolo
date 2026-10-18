@@ -78,7 +78,9 @@ LHolo/
 │  │  ├─ ImGuiOverlay.h
 │  │  └─ BoundsWireframe.*      创建结构选区的红色整体线框
 │  ├─ render/
-│  │  └─ OverlayMaterials.h    结构外框/抓取线框共享的 glow_sign_text 材质与白纹理查找
+│  │  ├─ OverlayMaterials.h    纠错/整体边框/创建选区共享的原版材质与白纹理查找
+│  │  ├─ ScopedShaderColor.h   绘制颜色的作用域设置与恢复，不持有跨帧状态
+│  │  └─ BoxWireframeMesh.*    局部空间方框的 24 顶点生成与网格构建
 │  ├─ structure/
 │  │  ├─ capture/               客户端选区状态、原版结构捕获与 `.mcstructure` 导出
 │  │  ├─ formats/               结构格式解析与 generation 分配
@@ -594,10 +596,24 @@ LHolo 不自制草方块、楼梯等材质模型。它使用：
 - 默认透明度 100%，范围 0～100%。
 - 使用原版 outline selection material，保证普通和灵动视效路径可见。
 - 整体结构边框是独立网格，不受纠错描边透明度控制。
-- 整体结构边框与创建结构选区的红色线框使用 `glow_sign_text` 材质（读顶点色、
-  自发光、原生深度偏置）加原版 2×2 纯白纹理绘制，使线框显示写入的顶点色而非
-  引擎 uniform 色；材质缺失时回退原版 outline selection material。共享查找在
-  `render/OverlayMaterials.h`。
+- 整体结构边框、创建选区与纠错描边共用 `render/OverlayMaterials.h` 取得当前
+  LevelRendererPlayer 的原版 outline selection material；不再扫描材质组或缓存发光告示牌材质。
+- `render/ScopedShaderColor.h` 在一次绘制作用域内设置并恢复颜色，恢复后强制 dirty，
+  保证后续原版绘制同步回原颜色。纠错沿用已验证的中性白色；整体边框显式传青色
+  `#33D6FF`，创建选区显式传其自身颜色（默认红色）。方框顶点使用中性白色，避免
+  uniform 与顶点重复着色。原版 BlockSelectionOutline 着色器分析显示其输出取颜色常量，
+  但各画质路径仍须实机确认最终常量绑定与颜色。
+- `render/BoxWireframeMesh.*` 仅生成局部坐标十二条边、24 个顶点和白纹理中心 UV；
+  调用方决定范围和调试名，并独立持有缓存与坐标变换。整体边框统一在不透明帧阶段
+  创建，与分区 Worker 的启用/降级状态无关；分区构建器不再包含边框生成入口。
+  整体边框和创建选区均在渲染线程使用 Buffered 上传并贴齐真实边界，不做几何外扩。
+  用户已实测此材质在无外扩时不闪烁。创建选区仅颜色改变
+  时更新绘制参数，无需重建网格。公共 render 层不读取投影会话、玩家、配置或创建状态。
+- 方框每次显示仍一次网格提交，颜色作用域只复制数值，不进行堆分配或世界查询；转头
+  与移动不触发网格生成。网格仍在原来的不透明阶段生成、透明阶段提交，生命周期不变。
+- LevelRenderer 缺失时跳过叠加阶段，不再拿方块材质代替选框材质；白纹理查找接收已校验
+  的 LevelRenderer 引用。资源尚未就绪时的材质/纹理/Mesh 有效性检查，以及颜色恢复后的
+  dirty 更新仍保留，不能作为“兜底”删除。
 
 ### 7.5 准心选中闪烁修复
 

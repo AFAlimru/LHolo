@@ -15,8 +15,6 @@
 #include <optional>
 #include <vector>
 
-#include <gsl/util>
-
 #include "mc/client/game/IClientInstance.h"
 #include "mc/client/gui/screens/ScreenContext.h"
 #include "mc/client/player/LocalPlayer.h"
@@ -34,11 +32,11 @@
 #include "mc/deps/minecraft_renderer/resources/ClientTexture.h"
 #include "mc/deps/minecraft_renderer/resources/ServerTexture.h"
 #include "mc/deps/renderer/hal/interface/DepthStencilStateDescription.h"
-#include "mc/deps/renderer/ShaderColor.h"
 #include "mc/world/level/block/actor/BlockActor.h"
 #include "mc/world/level/block/actor/component/IVanillaRenderBlockActorComponent.h"
 
 #include "render/OverlayMaterials.h"
+#include "render/ScopedShaderColor.h"
 
 namespace lholo::projection::detail {
 
@@ -58,9 +56,7 @@ struct ProjectionDrawPassTimer {
     }
 };
 
-bool materialExists(mce::MaterialPtr const& material) {
-    return material.mRenderMaterialInfoPtr.get() != nullptr;
-}
+using render::materialExists;
 
 mce::RenderMaterial* tryRenderMaterial(mce::MaterialPtr const& material) {
     auto* info = material.mRenderMaterialInfoPtr.get();
@@ -262,21 +258,16 @@ void submitProjectionMeshPass(
     if (!renderAlphaLayer) return;
 
     auto* levelRenderer = client.getLevelRenderer();
-    auto const& outlineMaterial = levelRenderer
-        ? levelRenderer->mLevelRendererPlayer->mOutlineSelectionMaterial.get()
-        : itemRenderer.mMatBlendBlock.get();
-    auto const overlayTexture = render::resolveWhiteTextureVariant(levelRenderer);
-    // Prefer the glow sign text material for the bounds box: its shader reads
-    // the vertex color the builder wrote (bright cyan) instead of the
-    // engine-driven uniform color of the selection outline family.
-    auto const* glowMaterial = render::resolveGlowSignMaterial();
-    auto const& boundsMaterial = glowMaterial ? *glowMaterial : outlineMaterial;
-    if (materialExists(boundsMaterial) && structureBoundsEnabled
+    if (!levelRenderer) return;
+    auto const& outlineMaterial = render::selectionOutlineMaterial(*levelRenderer);
+    auto const overlayTexture = render::resolveWhiteTextureVariant(*levelRenderer);
+    if (materialExists(outlineMaterial) && structureBoundsEnabled
         && state.structureBoundsMesh && state.structureBoundsMesh->isValid()) {
+        render::ScopedShaderColor boundsColor{renderContext.mScreenContext.currentShaderColor, 0xFFFFD633U};
         ++drawTimer.draws;
         state.structureBoundsMesh->renderMesh(
             renderContext.mScreenContext,
-            boundsMaterial,
+            outlineMaterial,
             overlayTexture,
             0,
             state.structureBoundsMesh->mVertexCount.get().value_or(0u),
@@ -290,22 +281,11 @@ void submitProjectionMeshPass(
     if (list(ProjectionDrawSlot::MissingFill).empty() && list(ProjectionDrawSlot::WrongFill).empty()
         && list(ProjectionDrawSlot::MissingOutline).empty() && list(ProjectionDrawSlot::WrongOutline).empty()) return;
 
-    auto const& warningMaterial = levelRenderer
-        ? levelRenderer->mLevelRendererPlayer->selectionBlockEntityOverlayColorMaterial.get()
-        : itemRenderer.mMatBlendBlockNoColor.get();
+    auto const& warningMaterial = levelRenderer->mLevelRendererPlayer->selectionBlockEntityOverlayColorMaterial.get();
 
     // Isolate correction rendering from the caller's tint, preserving the
     // existing vertex colors, opacity, and material blending.
-    auto& shaderColor = renderContext.mScreenContext.currentShaderColor;
-    auto const savedShaderColor = shaderColor.color.get();
-    auto restoreShaderColor = gsl::finally([&] {
-        shaderColor.color = savedShaderColor;
-        // The next draw must synchronize the restored value, even if the
-        // original CPU color was clean before this correction pass.
-        shaderColor.dirty = true;
-    });
-    shaderColor.color = mce::Color{1.0f, 1.0f, 1.0f, 1.0f};
-    shaderColor.dirty = true;
+    render::ScopedShaderColor correctionColor{renderContext.mScreenContext.currentShaderColor};
 
     // seeThroughMeshes is passed per call so the "missing" correction meshes stay
     // depth-tested while only the "wrong" ones honor the X-ray toggle.
@@ -374,7 +354,7 @@ void submitProjectionMeshPass(
     } else if (materialExists(warningMaterial)) {
         // Vanilla selection overlay has the required depth bias. Temporarily
         // borrow SourceAlpha/OneMinusSourceAlpha from blend-block material.
-        auto* renderMaterial = levelRenderer ? tryRenderMaterial(warningMaterial) : nullptr;
+        auto* renderMaterial = tryRenderMaterial(warningMaterial);
         MaterialStateRestore restore;
         auto* blendRenderMaterial = tryRenderMaterial(blendMaterial);
         if (renderMaterial && blendRenderMaterial) {

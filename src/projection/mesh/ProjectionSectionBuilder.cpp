@@ -177,13 +177,6 @@ void buildBlockEntityPlaceholderSectionMesh(
     std::span<std::size_t const>
 );
 
-void buildStructureBoundsMesh(
-    ProjectionState&,
-    Tessellator&,
-    Tessellator::UploadMode,
-    ProjectionSectionBuildSettings const&
-);
-
 void buildProjectionSection(
     ProjectionState&                      state,
     Tessellator&                          tessellator,
@@ -431,9 +424,6 @@ void buildProjectionSection(
     );
     detail::buildCorrectionSectionMeshes(
         state, tessellator, section, uploadMode, sectionBuildSettings
-    );
-    detail::buildStructureBoundsMesh(
-        state, tessellator, uploadMode, sectionBuildSettings
     );
     auto& bounds = state.sections[section].meshBounds;
     bool completeBounds = true;
@@ -885,46 +875,6 @@ void buildCorrectionSectionMeshes(
     state.wrongOutlineSectionMeshes[section] = buildShell(shells[1], true);
     state.warningFillSectionMeshes[section] = buildShell(shells[0], false);
     state.wrongFillSectionMeshes[section] = buildShell(shells[1], false);
-}
-
-void buildStructureBoundsMesh(
-    ProjectionState&                      state,
-    Tessellator&                          tessellator,
-    Tessellator::UploadMode               uploadMode,
-    ProjectionSectionBuildSettings const& settings
-) {
-    if (uploadMode == Tessellator::UploadMode::Never || state.structureBoundsMesh) return;
-    auto const rotated = settings.rotationTurns == 1 || settings.rotationTurns == 3;
-    auto const width = static_cast<float>(rotated ? state.structure->sizeZ : state.structure->sizeX);
-    auto const height = static_cast<float>(state.structure->sizeY);
-    auto const depth = static_cast<float>(rotated ? state.structure->sizeX : state.structure->sizeZ);
-    // The wireframe wraps the structure extent exactly, with no outward
-    // expansion.
-    float const x0 = 0.0f, y0 = 0.0f, z0 = 0.0f;
-    float const x1 = width;
-    float const y1 = height;
-    float const z1 = depth;
-    tessellator.begin(
-        Tessellator::DebugContextCallback{}, mce::PrimitiveMode::LineList, 24, false
-    );
-    setColorAbgr(tessellator, 0xFFFFD633U);
-    auto addBoundsEdge = [&](Vec3 const& a, Vec3 const& b) {
-        // Center of the pure-white texture: the overlay material's alpha test
-        // samples it and never discards.
-        tessellator.tex2({0.5f, 0.5f}); tessellator.vertex(a.x, a.y, a.z);
-        tessellator.tex2({0.5f, 0.5f}); tessellator.vertex(b.x, b.y, b.z);
-    };
-    addBoundsEdge({x0,y0,z0},{x1,y0,z0}); addBoundsEdge({x1,y0,z0},{x1,y1,z0});
-    addBoundsEdge({x1,y1,z0},{x0,y1,z0}); addBoundsEdge({x0,y1,z0},{x0,y0,z0});
-    addBoundsEdge({x0,y0,z1},{x1,y0,z1}); addBoundsEdge({x1,y0,z1},{x1,y1,z1});
-    addBoundsEdge({x1,y1,z1},{x0,y1,z1}); addBoundsEdge({x0,y1,z1},{x0,y0,z1});
-    addBoundsEdge({x0,y0,z0},{x0,y0,z1}); addBoundsEdge({x1,y0,z0},{x1,y0,z1});
-    addBoundsEdge({x1,y1,z0},{x1,y1,z1}); addBoundsEdge({x0,y1,z0},{x0,y1,z1});
-    state.structureBoundsMesh = std::make_unique<mce::Mesh>(tessellator.end(
-        uploadMode,
-        "LHoloStructureBounds",
-        SupplementaryFieldAutoGenerationMode{0}
-    ));
 }
 
 } // namespace lholo::projection::detail

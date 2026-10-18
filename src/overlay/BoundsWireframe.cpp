@@ -1,14 +1,13 @@
 #include "overlay/BoundsWireframe.h"
 
 #include "render/OverlayMaterials.h"
+#include "render/BoxWireframeMesh.h"
+#include "render/ScopedShaderColor.h"
 
 #include "mc/client/game/IClientInstance.h"
 #include "mc/client/gui/screens/ScreenContext.h"
 #include "mc/client/renderer/BaseActorRenderContext.h"
-#include "mc/client/renderer/SupplementaryFieldAutoGenerationMode.h"
-#include "mc/client/renderer/Tessellator.h"
 #include "mc/client/renderer/game/LevelRenderer.h"
-#include "mc/client/renderer/game/LevelRendererPlayer.h"
 #include "mc/deps/minecraft_renderer/framebuilder/dragon/RenderMetadata.h"
 #include "mc/deps/minecraft_renderer/renderer/Mesh.h"
 #include "mc/deps/renderer/Camera.h"
@@ -31,24 +30,15 @@ OffscreenCaptureDescription const& emptyOffscreenCaptureDescription() {
     return empty.get();
 }
 
-void setColorAbgr(Tessellator& tessellator, std::uint32_t colorAbgr) {
-    tessellator.color(
-        static_cast<float>((colorAbgr >> 0) & 0xFF) / 255.0f,
-        static_cast<float>((colorAbgr >> 8) & 0xFF) / 255.0f,
-        static_cast<float>((colorAbgr >> 16) & 0xFF) / 255.0f,
-        static_cast<float>((colorAbgr >> 24) & 0xFF) / 255.0f
-    );
-}
-
 } // namespace
 
 BoundsWireframe::~BoundsWireframe() = default;
 
 void BoundsWireframe::setBounds(BlockPos const& min, BlockPos const& max, std::uint32_t color) {
-    if (mHasBounds && mMin == min && mMax == max && mColor == color) return;
+    mColor = color;
+    if (mHasBounds && mMin == min && mMax == max) return;
     mMin = min;
     mMax = max;
-    mColor = color;
     mHasBounds = true;
     mMesh.reset();
 }
@@ -62,39 +52,13 @@ void BoundsWireframe::render(BaseActorRenderContext& renderContext, bool renderA
     if (!mHasBounds) return;
 
     if (!renderAlphaLayer && !mMesh) {
-        constexpr float expansion = 0.01f;
-        float const x0 = -expansion;
-        float const y0 = -expansion;
-        float const z0 = -expansion;
-        float const x1 = static_cast<float>(mMax.x - mMin.x + 1) + expansion;
-        float const y1 = static_cast<float>(mMax.y - mMin.y + 1) + expansion;
-        float const z1 = static_cast<float>(mMax.z - mMin.z + 1) + expansion;
+        // Inclusive block coordinates become exact cell boundaries.
+        float const x1 = static_cast<float>(mMax.x - mMin.x + 1);
+        float const y1 = static_cast<float>(mMax.y - mMin.y + 1);
+        float const z1 = static_cast<float>(mMax.z - mMin.z + 1);
 
-        auto& tessellator = renderContext.mScreenContext.tessellator;
-        tessellator.begin(
-            Tessellator::DebugContextCallback{},
-            mce::PrimitiveMode::LineList,
-            24,
-            false
-        );
-        setColorAbgr(tessellator, mColor);
-        auto const addEdge = [&](Vec3 const& a, Vec3 const& b) {
-            // Center of the pure-white texture: the overlay material's alpha
-            // test samples it and never discards.
-            tessellator.tex2({0.5f, 0.5f}); tessellator.vertex(a.x, a.y, a.z);
-            tessellator.tex2({0.5f, 0.5f}); tessellator.vertex(b.x, b.y, b.z);
-        };
-        addEdge({x0,y0,z0},{x1,y0,z0}); addEdge({x1,y0,z0},{x1,y1,z0});
-        addEdge({x1,y1,z0},{x0,y1,z0}); addEdge({x0,y1,z0},{x0,y0,z0});
-        addEdge({x0,y0,z1},{x1,y0,z1}); addEdge({x1,y0,z1},{x1,y1,z1});
-        addEdge({x1,y1,z1},{x0,y1,z1}); addEdge({x0,y1,z1},{x0,y0,z1});
-        addEdge({x0,y0,z0},{x0,y0,z1}); addEdge({x1,y0,z0},{x1,y0,z1});
-        addEdge({x1,y1,z0},{x1,y1,z1}); addEdge({x0,y1,z0},{x0,y1,z1});
-        mMesh = std::make_unique<mce::Mesh>(tessellator.end(
-            Tessellator::UploadMode::Buffered,
-            "LHoloSelectionBounds",
-            SupplementaryFieldAutoGenerationMode{0}
-        ));
+        mMesh = render::buildBoxWireframeMesh(renderContext.mScreenContext.tessellator,
+            {0,0,0}, {x1,y1,z1}, "LHoloSelectionBounds");
         return;
     }
 
@@ -102,15 +66,9 @@ void BoundsWireframe::render(BaseActorRenderContext& renderContext, bool renderA
     auto& client = renderContext.mClientInstance;
     auto* levelRenderer = client.getLevelRenderer();
     if (!levelRenderer) return;
-    // The box color lives in vertex data; prefer the glow sign text material
-    // whose shader outputs it as-is, keeping the vanilla selection outline
-    // (uniform-driven color) as fallback.
-    auto const* glowMaterial = render::resolveGlowSignMaterial();
-    auto const& material = glowMaterial
-        ? *glowMaterial
-        : levelRenderer->mLevelRendererPlayer->mOutlineSelectionMaterial.get();
-    if (material.mRenderMaterialInfoPtr.get() == nullptr) return;
-    auto const texture = render::resolveWhiteTextureVariant(levelRenderer);
+    auto const& material = render::selectionOutlineMaterial(*levelRenderer);
+    if (!render::materialExists(material)) return;
+    auto const texture = render::resolveWhiteTextureVariant(*levelRenderer);
 
     Vec3 const camera = renderCameraPosition(renderContext);
     auto matrix = renderContext.mScreenContext.camera.worldMatrixStack.get().push(false);
@@ -119,6 +77,7 @@ void BoundsWireframe::render(BaseActorRenderContext& renderContext, bool renderA
         static_cast<float>(mMin.y) - camera.y,
         static_cast<float>(mMin.z) - camera.z
     );
+    render::ScopedShaderColor boxColor{renderContext.mScreenContext.currentShaderColor, mColor};
     mMesh->renderMesh(
         renderContext.mScreenContext,
         material,
