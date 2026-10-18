@@ -226,6 +226,7 @@
     LHOLO_TEXT_KEY("dialog.filterAll", DialogFilterAll, "")                                              \
                                                                                                          \
     /* Session status messages (stored as i18n::Message, rendered at the boundary) */                    \
+    LHOLO_TEXT_KEY("status.loading", StatusLoading, "")                                                  \
     LHOLO_TEXT_KEY("status.pathEmpty", StatusPathEmpty, "")                                              \
     LHOLO_TEXT_KEY("status.loadFailed", StatusLoadFailed, "")                                            \
     LHOLO_TEXT_KEY("status.restoreFailed", StatusRestoreFailed, "")                                      \

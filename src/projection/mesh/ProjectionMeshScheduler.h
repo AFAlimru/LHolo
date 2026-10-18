@@ -31,6 +31,7 @@ void buildNextProjectionSectionSynchronously(
     Tessellator&                          tessellator,
     BlockTessellator&                     blockTessellator,
     BlockSource&                          region,
+    Vec3 const&                           cameraPosition,
     ProjectionSectionBuildSettings const& settings
 );
 

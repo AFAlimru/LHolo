@@ -169,6 +169,7 @@
   "dialog.filterBedrock": "Структуры Bedrock (*.mcstructure)",
   "dialog.filterLitematica": "Структуры Litematica (*.litematic)",
   "dialog.filterAll": "Все файлы (*.*)",
+  "status.loading": "Загрузка файла структуры в фоновом режиме, пожалуйста, подождите...",
   "status.pathEmpty": "Выберите или введите путь к .mcstructure / .litematic",
   "status.loadFailed": "Не удалось загрузить: %s",
   "status.restoreFailed": "Не удалось восстановить: %s",

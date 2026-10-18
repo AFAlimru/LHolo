@@ -169,6 +169,7 @@
   "dialog.filterBedrock": "Bedrock 结构 (*.mcstructure)",
   "dialog.filterLitematica": "Litematica 结构 (*.litematic)",
   "dialog.filterAll": "所有文件 (*.*)",
+  "status.loading": "正在后台加载结构文件，请稍候...",
   "status.pathEmpty": "请选择或输入 .mcstructure / .litematic 文件路径",
   "status.loadFailed": "加载失败：%s",
   "status.restoreFailed": "恢复失败：%s",

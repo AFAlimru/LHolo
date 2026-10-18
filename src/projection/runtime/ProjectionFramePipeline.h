@@ -10,6 +10,7 @@
 #include "structure/LayerDisplayTypes.h"
 
 class BlockSource;
+class BaseActorRenderContext;
 class LegacyStructureSettings;
 class Tessellator;
 class Vec3;
@@ -20,6 +21,7 @@ struct ProjectionState;
 
 void processProjectionOpaqueFrame(
     ProjectionState&                      state,
+    BaseActorRenderContext&               renderContext,
     Tessellator&                          tessellator,
     BlockSource&                          region,
     Vec3 const&                           cameraPosition,

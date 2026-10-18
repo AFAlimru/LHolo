@@ -8,6 +8,7 @@
 
 #include "projection/core/ProjectionInternalTypes.h"
 #include "projection/ProjectionTypes.h"
+#include "projection/core/ProjectionVisibilityRules.h"
 
 #include <array>
 #include <cstddef>
@@ -41,6 +42,11 @@ using TextureVariant =
 
 struct SectionState {
     Vec3    center{};
+    ProjectionBounds buildBounds;
+    ProjectionBounds meshBounds;
+    bool renderVisible{true};
+    bool buildVisible{true};
+    bool prefetchVisible{true};
     bool    dirty{};
     bool    incrementalDirty{};
     bool    buildInFlight{};
@@ -62,7 +68,9 @@ struct ProjectionState {
     std::uint64_t                   structureGeneration{};
     std::uint64_t                   activationGeneration{};
     std::unique_ptr<BlockTessellator> blockTessellator;
-    std::vector<CorrectionState>    correctionStates;
+    std::shared_ptr<std::vector<CorrectionState>> correctionStates{
+        std::make_shared<std::vector<CorrectionState>>()
+    };
     // One byte per structure block. This is updated by the existing bounded
     // correction scan, so the HUD never performs its own world-block queries.
     std::vector<uchar>              progressCorrect;
@@ -73,7 +81,9 @@ struct ProjectionState {
     // 0 = no placement error, 1 = wrong block type, 2 = wrong state/direction.
     // Updating one byte and two counters keeps the HUD O(1) per frame.
     std::vector<uchar>              progressErrorKind;
-    std::vector<uchar>              blockActorRendererAvailable;
+    std::shared_ptr<std::vector<uchar>> blockActorRendererAvailable{
+        std::make_shared<std::vector<uchar>>()
+    };
     std::uint64_t                   progressCorrectCount{};
     std::uint64_t                   progressVisibleCorrectCount{};
     std::uint64_t                   progressWrongTypeCount{};
@@ -99,7 +109,7 @@ struct ProjectionState {
     // Extra blocks occupy cells that have no render-block index. The detected
     // set covers the whole source region for HUD counting; the render set and
     // per-section sets contain only the current visible range. All stay sparse.
-    std::map<SubChunkKey, std::size_t>    localSectionIndices;
+    std::unordered_map<SubChunkKey, std::size_t, SubChunkKeyHash> localSectionIndices;
     std::vector<SubChunkKey>              localSectionKeys;
     std::set<SubChunkKey>                 detectedExtraBlockPositions;
     std::set<SubChunkKey>                 extraBlockPositions;
@@ -118,10 +128,13 @@ struct ProjectionState {
     std::vector<SectionState>               sections;
     std::vector<std::size_t>                blockToSection;
     std::size_t                             dirtySectionCursor{};
+    std::uint64_t                           meshBuildSelections{};
+    std::size_t                             visibleSectionCount{};
     std::uint64_t                           meshWorkerGeneration{};
     int                                     consecutiveMeshWorkerFailures{};
     bool                                    asyncMeshBuildingEnabled{true};
     std::uint64_t                           meshWorkerUploadedSections{};
+    std::uint64_t                           meshWorkerDiscardedBuilds{};
     std::uint64_t                           meshWorkerSnapshotMicros{};
     std::uint64_t                           meshWorkerSnapshotDataMicros{};
     std::uint64_t                           meshWorkerChunkViewMicros{};

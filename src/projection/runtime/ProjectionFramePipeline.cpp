@@ -7,6 +7,7 @@
 #include "projection/mesh/ProjectionMeshScheduler.h"
 #include "projection/mesh/ProjectionMeshUpload.h"
 #include "projection/runtime/ProjectionProgress.h"
+#include "projection/runtime/ProjectionVisibility.h"
 #include "projection/core/ProjectionState.h"
 #include "structure/StructureLoader.h"
 
@@ -76,6 +77,7 @@ void ensureStructureBoundsMesh(
 
 void processProjectionOpaqueFrame(
     ProjectionState&                      state,
+    BaseActorRenderContext&               renderContext,
     Tessellator&                          tessellator,
     BlockSource&                          region,
     Vec3 const&                           cameraPosition,
@@ -117,13 +119,19 @@ void processProjectionOpaqueFrame(
 
     // Consume completed CPU data only in the opaque render pass.
     uploadCompletedProjectionMeshes(state, tessellator);
+    // Correction scanning may append sections; upload may replace their mesh
+    // bounds. Classify once after both, before scheduling and drawing.
+    updateProjectionVisibility(state, renderContext, cameraPosition);
     ensureStructureBoundsMesh(state, tessellator, buildSettings.rotationTurns);
     scheduleProjectionMeshBuild(
         state, tessellator, region, cameraPosition, buildSettings
     );
     buildNextProjectionSectionSynchronously(
-        state, tessellator, blockTessellator, region, buildSettings
+        state, tessellator, blockTessellator, region, cameraPosition, buildSettings
     );
+    if (!state.asyncMeshBuildingEnabled) {
+        updateProjectionVisibility(state, renderContext, cameraPosition);
+    }
 }
 
 } // namespace lholo::projection::detail

@@ -81,6 +81,7 @@ void uploadCompletedProjectionMeshes(ProjectionState& state, Tessellator& tessel
                 continue;
             }
             if (result.revision != state.sections[section].requestedRevision) {
+                ++state.meshWorkerDiscardedBuilds;
                 state.sections[section].dirty = true;
                 continue;
             }
@@ -124,6 +125,7 @@ void uploadCompletedProjectionMeshes(ProjectionState& state, Tessellator& tessel
                 state.liquidProxySectionMeshes[section] = std::move(liquidProxy);
                 state.blockEntityPlaceholderSectionMeshes[section] = std::move(blockEntityPlaceholder);
                 state.sections[section].uploadedRevision = result.revision;
+                state.sections[section].meshBounds = result.meshBounds;
                 state.sections[section].incrementalDirty = false;
                 state.sections[section].dirty = false;
                 state.consecutiveMeshWorkerFailures = 0;
@@ -157,7 +159,7 @@ void uploadCompletedProjectionMeshes(ProjectionState& state, Tessellator& tessel
                 if (state.meshWorkerUploadedSections % 64 == 0) {
                     auto const count = state.meshWorkerUploadedSections;
                     logger().debug(
-                        "Projection mesh worker: {} sections; snapshot {}/{} us (data {}/{}, chunkView {}/{}), build {}/{} us, upload {}/{} us",
+                        "Projection mesh worker: {} sections; snapshot {}/{} us (data {}/{}, chunkView {}/{}), build {}/{} us, upload {}/{} us; visible {}/{}, discarded {}",
                         count,
                         state.meshWorkerSnapshotMicros / count,
                         state.meshWorkerPeakSnapshotMicros,
@@ -168,7 +170,10 @@ void uploadCompletedProjectionMeshes(ProjectionState& state, Tessellator& tessel
                         state.meshWorkerBuildMicros / count,
                         state.meshWorkerPeakBuildMicros,
                         state.meshWorkerUploadMicros / count,
-                        state.meshWorkerPeakUploadMicros
+                        state.meshWorkerPeakUploadMicros,
+                        state.visibleSectionCount,
+                        state.sections.size(),
+                        state.meshWorkerDiscardedBuilds
                     );
                 }
             } catch (std::exception const& exception) {

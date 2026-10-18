@@ -65,6 +65,9 @@ std::size_t ensureCorrectionSection(
     state.sectionBlockIndices.emplace_back();
     state.sectionExtraBlockPositions.emplace_back();
     SectionState sectionState;
+    sectionState.buildBounds = projectionSectionBounds(
+        key, *state.structure, state.cachedMirror, state.cachedRotation
+    );
     sectionState.center = Vec3{
         static_cast<float>(transformedPosition.x) + 0.5f,
         static_cast<float>(transformedPosition.y) + 0.5f,
@@ -186,8 +189,11 @@ CorrectionProgressChanges updateCorrectionTracker(
         // still checked above, but their correction/model meshes remain
         // suppressed by the layer renderer.
         if (!visible) return;
-        if (state.correctionStates[index] != nextState) {
-            state.correctionStates[index] = nextState;
+        if ((*state.correctionStates)[index] != nextState) {
+            if (state.correctionStates.use_count() > 1) {
+                state.correctionStates = std::make_shared<std::vector<CorrectionState>>(*state.correctionStates);
+            }
+            (*state.correctionStates)[index] = nextState;
             markSectionDirty(state, state.blockToSection[index]);
             // A missing-cell shell omits faces shared with adjacent missing
             // cells. If either side changes, both section meshes may need an

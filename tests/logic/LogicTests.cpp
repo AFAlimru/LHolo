@@ -22,6 +22,8 @@
 
 #include <Windows.h>
 
+int runProjectionCullingTests();
+
 namespace {
 
 int gChecks = 0;
@@ -736,6 +738,42 @@ void testStructureUiState() {
     state.applyHud(HudStateSnapshot{});
 }
 
+void testLoadingActionHint() {
+    auto& state = lholo::structure::detail::StructureUiState::getInstance();
+    state.setActionHint({}, 0);
+    state.clearLoadingHint();
+    LHOLO_CHECK(!state.actionHintActive(100));
+    auto const first = state.beginLoadingHint();
+    auto hint = state.actionHint(1000000);
+    LHOLO_CHECK(hint.persistent);
+    LHOLO_CHECK(hint.text == lholo::i18n::format(lholo::i18n::Message{lholo::i18n::TextKey::StatusLoading}));
+    LHOLO_CHECK(state.actionHintActive(1000000)); // no fixed timeout
+    state.setActionHint(lholo::i18n::Message{lholo::i18n::TextKey::StatusProjectionClosed}, 300);
+    hint = state.actionHint(200);
+    LHOLO_CHECK(!hint.persistent && hint.expiry == 300);
+    LHOLO_CHECK(state.actionHint(300).persistent); // loading resumes after transient hint
+    state.finishLoadingHint(first);
+    LHOLO_CHECK(!state.actionHintActive(300));
+    LHOLO_CHECK(state.actionHint(300).text.empty());
+
+    auto const old = state.beginLoadingHint();
+    state.resetWorldSession();
+    LHOLO_CHECK(!state.actionHintActive(100));
+    auto const current = state.beginLoadingHint();
+    state.finishLoadingHint(old); // old world cannot clear a later load
+    LHOLO_CHECK(state.actionHint(100).persistent);
+    state.clearLoadingHint(); // close projection removes loading presentation
+    LHOLO_CHECK(!state.actionHintActive(100));
+    state.finishLoadingHint(current);
+
+    auto const final = state.beginLoadingHint();
+    state.setActionHint(lholo::i18n::Message{lholo::i18n::TextKey::StatusProjectionClosed}, 500);
+    state.finishLoadingHint(final);
+    LHOLO_CHECK(state.actionHintActive(400)); // finishing leaves unrelated hints intact
+    LHOLO_CHECK(!state.actionHint(400).persistent);
+    state.setActionHint({}, 0);
+}
+
 void testHotkeyFormat() {
     LHOLO_CHECK(lholo::ui::isModifierKey(VK_CONTROL));
     LHOLO_CHECK(lholo::ui::isModifierKey(VK_MENU));
@@ -980,6 +1018,7 @@ void testI18n() {
 } // namespace
 
 int main() {
+    LHOLO_CHECK(runProjectionCullingTests() == 0);
     testLayoutRules();
     testProgress();
     testSettingsStore();
@@ -987,6 +1026,7 @@ int main() {
     testLayerHotkeyBounds();
     testPlacementState();
     testStructureUiState();
+    testLoadingActionHint();
     testHotkeyFormat();
     testViewMoveBasis();
     testBlockPlacementRules();

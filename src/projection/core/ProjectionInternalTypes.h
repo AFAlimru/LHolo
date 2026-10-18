@@ -8,9 +8,9 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <map>
 #include <memory>
 #include <tuple>
+#include <unordered_map>
 
 #include "mc/world/level/BlockPos.h"
 
@@ -20,6 +20,21 @@ class BlockActor;
 namespace lholo::projection::detail {
 
 using SubChunkKey = std::tuple<int, int, int>;
+
+struct SubChunkKeyHash {
+    [[nodiscard]] std::size_t operator()(SubChunkKey const& key) const noexcept {
+        auto const [x, y, z] = key;
+        std::uint64_t h = static_cast<std::uint64_t>(static_cast<std::uint32_t>(x)) * 73856093ULL;
+        h ^= static_cast<std::uint64_t>(static_cast<std::uint32_t>(y)) * 19349663ULL;
+        h ^= static_cast<std::uint64_t>(static_cast<std::uint32_t>(z)) * 83492791ULL;
+        h ^= h >> 16;
+        h *= 0x85ebca6bULL;
+        h ^= h >> 13;
+        h *= 0xc2b2ae35ULL;
+        h ^= h >> 16;
+        return static_cast<std::size_t>(h);
+    }
+};
 
 enum class CorrectionState : std::uint8_t { Unknown, Missing, Correct, WrongType, WrongState };
 enum class RenderBucket : std::uint8_t { Opaque, Alpha, AlphaOneSided, Blend, Count };
@@ -31,8 +46,8 @@ struct ProjectedBlockActor {
     std::size_t  structureIndex{};
 };
 
-using ExpectedBlockMap      = std::map<SubChunkKey, Block const*>;
-using ExpectedBlockActorMap = std::map<SubChunkKey, std::shared_ptr<BlockActor>>;
-using ExpectedBlockIndexMap = std::map<SubChunkKey, std::size_t>;
+using ExpectedBlockMap      = std::unordered_map<SubChunkKey, Block const*, SubChunkKeyHash>;
+using ExpectedBlockActorMap = std::unordered_map<SubChunkKey, std::shared_ptr<BlockActor>, SubChunkKeyHash>;
+using ExpectedBlockIndexMap = std::unordered_map<SubChunkKey, std::size_t, SubChunkKeyHash>;
 
 } // namespace lholo::projection::detail

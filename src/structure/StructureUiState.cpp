@@ -363,10 +363,8 @@ void StructureUiState::setMaterialHudPosition(int position) {
 }
 
 void StructureUiState::setActionHint(i18n::Message message, std::uint64_t expiry) {
-    {
-        std::lock_guard lock(mActionHintMutex);
-        mActionHintMessage = std::move(message);
-    }
+    std::lock_guard lock(mActionHintMutex);
+    mActionHintMessage = std::move(message);
     mActionHintExpiry.store(expiry, std::memory_order_release);
 }
 
@@ -374,13 +372,38 @@ std::uint64_t StructureUiState::actionHintExpiry() const {
     return mActionHintExpiry.load(std::memory_order_acquire);
 }
 
-ActionHintSnapshot StructureUiState::actionHint() const {
-    auto const expiry = mActionHintExpiry.load(std::memory_order_acquire);
+ActionHintSnapshot StructureUiState::actionHint(std::uint64_t now) const {
     std::lock_guard lock(mActionHintMutex);
-    // A cleared hint carries no message, so the default key must never be
-    // rendered as text.
-    if (expiry == 0) return {std::string{}, 0};
-    return {i18n::format(mActionHintMessage), expiry};
+    auto const expiry = mActionHintExpiry.load(std::memory_order_acquire);
+    if (expiry > now) return {i18n::format(mActionHintMessage), expiry};
+    if (mLoadingHintToken.load(std::memory_order_acquire) != 0) {
+        return {i18n::format(i18n::Message{i18n::TextKey::StatusLoading}), 0, true};
+    }
+    return {};
+}
+
+bool StructureUiState::actionHintActive(std::uint64_t now) const {
+    return mActionHintExpiry.load(std::memory_order_acquire) > now
+        || mLoadingHintToken.load(std::memory_order_acquire) != 0;
+}
+
+std::uint64_t StructureUiState::beginLoadingHint() {
+    std::lock_guard lock(mActionHintMutex);
+    auto const token = ++mLoadingHintSequence;
+    mLoadingHintToken.store(token, std::memory_order_release);
+    return token;
+}
+
+void StructureUiState::finishLoadingHint(std::uint64_t token) {
+    std::lock_guard lock(mActionHintMutex);
+    if (mLoadingHintToken.load(std::memory_order_acquire) == token) {
+        mLoadingHintToken.store(0, std::memory_order_release);
+    }
+}
+
+void StructureUiState::clearLoadingHint() {
+    std::lock_guard lock(mActionHintMutex);
+    mLoadingHintToken.store(0, std::memory_order_release);
 }
 
 void StructureUiState::requestMaterialList() {
@@ -464,6 +487,7 @@ void StructureUiState::resetWorldSession() {
     stopHotkeyCapture();
     resetHotkeyState();
     setActionHint(i18n::Message{}, 0);
+    clearLoadingHint();
     clearMaterials();
 }
 

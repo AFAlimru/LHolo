@@ -28,6 +28,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 
 #include <Windows.h>
 
@@ -44,6 +45,11 @@ auto& logger() {
 auto& uiState() {
     return structure::detail::StructureUiState::getInstance();
 }
+
+struct LoadingHintCompletion {
+    std::uint64_t token;
+    ~LoadingHintCompletion() { uiState().finishLoadingHint(token); }
+};
 
 std::array<char, 2048> gPathBuffer{};
 bool                   gPathInitialized{};
@@ -293,44 +299,59 @@ MenuActions buildStructureMenuActions(bool& refreshModel) {
         return selected ? std::optional<std::string>{structure::detail::pathToUtf8(*selected)}
                         : std::nullopt;
     };
+    static std::atomic<bool> sIsLoadingStructure{false};
     actions.loadStructure = [&refreshModel](std::string_view pathValue) {
+        if (sIsLoadingStructure.exchange(true)) {
+            return;
+        }
         auto& session = structure::detail::StructureSession::getInstance();
         auto const pathText = std::string{pathValue};
         if (pathText.empty()) {
             session.setStatus(i18n::Message{i18n::TextKey::StatusPathEmpty});
+            sIsLoadingStructure.store(false);
             return;
         }
-        std::string error;
-        auto loaded = structure::detail::loadStructureFile(
-            structure::detail::pathFromUtf8(pathText), error
-        );
-        if (!loaded) {
-            session.setStatus(i18n::Message{i18n::TextKey::StatusLoadFailed, {error}});
-            logger().error("Could not load structure {}: {}", pathText, error);
-            return;
-        }
-        auto const renderBlocks = loaded->renderBlocks.size();
-        auto const status = structure::makeLoadedStatusMessage(*loaded);
-        // A normal file load is a new user intent. Do not let an unconsumed
-        // restore request from an earlier failed/pending activation move it,
-        // and do not inherit the previous structure's manual transform —
-        // without this reset the new file lands where the old projection was
-        // moved to instead of at the player's feet. Restore-last-projection
-        // re-applies its saved transform explicitly, so it is unaffected.
-        projection::cancelNextStructureAnchorRequest();
-        session.resetTransform();
-        session.replaceLoaded(std::move(loaded), pathText, status);
-        structure::detail::invalidateMaterialList();
-        structure::saveSettings();
+        session.setStatus(i18n::Message{i18n::TextKey::StatusLoading});
         refreshModel = true;
-        logger().info("Loaded structure {}: {} renderable blocks", pathText, renderBlocks);
+        auto const loadingHint = uiState().beginLoadingHint();
+        std::thread([pathText, loadingHint]() {
+            LoadingHintCompletion const completion{loadingHint};
+            std::string error;
+            auto loaded = structure::detail::loadStructureFile(
+                structure::detail::pathFromUtf8(pathText), error
+            );
+            auto& session = structure::detail::StructureSession::getInstance();
+            if (!loaded) {
+                session.setStatus(i18n::Message{i18n::TextKey::StatusLoadFailed, {error}});
+                logger().error("Could not load structure {}: {}", pathText, error);
+                sIsLoadingStructure.store(false);
+                return;
+            }
+            auto const renderBlocks = loaded->renderBlocks.size();
+            auto const status = structure::makeLoadedStatusMessage(*loaded);
+            projection::cancelNextStructureAnchorRequest();
+            session.resetTransform();
+            session.replaceLoaded(std::move(loaded), pathText, status);
+            structure::detail::invalidateMaterialList();
+            structure::saveSettings();
+            logger().info("Loaded structure {}: {} renderable blocks", pathText, renderBlocks);
+            sIsLoadingStructure.store(false);
+        }).detach();
     };
     actions.restoreProjection = [&refreshModel] {
-        structure::restoreSavedProjection();
-        auto const savedPath =
-            structure::detail::StructureSession::getInstance().savedProjection().structurePath;
-        std::snprintf(gPathBuffer.data(), gPathBuffer.size(), "%s", savedPath.c_str());
+        if (sIsLoadingStructure.exchange(true)) {
+            return;
+        }
         refreshModel = true;
+        auto const loadingHint = uiState().beginLoadingHint();
+        std::thread([loadingHint]() {
+            LoadingHintCompletion const completion{loadingHint};
+            structure::restoreSavedProjection();
+            auto const savedPath =
+                structure::detail::StructureSession::getInstance().savedProjection().structurePath;
+            std::snprintf(gPathBuffer.data(), gPathBuffer.size(), "%s", savedPath.c_str());
+            sIsLoadingStructure.store(false);
+        }).detach();
     };
     actions.closeProjection = [&refreshModel] {
         structure::clear();

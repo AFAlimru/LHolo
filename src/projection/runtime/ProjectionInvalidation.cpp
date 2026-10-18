@@ -99,8 +99,11 @@ ProjectionInvalidationResult reconcileProjectionInvalidation(
             auto const visible = layerIsVisible(entry);
             if (oldLayerVisible(entry) == visible) continue;
             markSectionDirty(state, state.blockToSection[index], false);
-            state.correctionStates[index] = visible
-                ? CorrectionState::Unknown
+            if (state.correctionStates.use_count() > 1) {
+                state.correctionStates = std::make_shared<std::vector<CorrectionState>>(*state.correctionStates);
+            }
+            (*state.correctionStates)[index] = visible
+                ? CorrectionState::Missing
                 : CorrectionState::Correct;
         }
     }
@@ -135,11 +138,18 @@ ProjectionInvalidationResult reconcileProjectionInvalidation(
     // Rotation/mirror alter local block models, so only those require throwing
     // away every GPU mesh. XYZ movement stays represented by the world matrix.
     if (result.geometryTransformChanged) {
-        std::fill(
-            state.correctionStates.begin(),
-            state.correctionStates.end(),
-            CorrectionState::Unknown
-        );
+        if (state.correctionStates.use_count() > 1) {
+            state.correctionStates = std::make_shared<std::vector<CorrectionState>>(
+                state.structure ? state.structure->renderBlocks.size() : 0,
+                CorrectionState::Missing
+            );
+        } else {
+            std::fill(
+                state.correctionStates->begin(),
+                state.correctionStates->end(),
+                CorrectionState::Missing
+            );
+        }
         for (auto& sectionState : state.sections) {
             for (auto& mesh : sectionState.meshes) mesh.reset();
         }

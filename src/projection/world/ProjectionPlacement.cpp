@@ -88,15 +88,16 @@ void rebuildProjectionPlacement(
 
     // Publish a new immutable virtual-world version. In-flight workers keep
     // the previous maps alive without observing a partially rebuilt placement.
+    auto const totalBlocks = state.structure->renderBlocks.size();
     state.expectedWorldBlocks = std::make_shared<ExpectedBlockMap>();
+    state.expectedWorldBlocks->reserve(totalBlocks);
     state.expectedWorldBlockActors = std::make_shared<ExpectedBlockActorMap>();
     state.projectedBlockActors.clear();
-    std::fill(
-        state.blockActorRendererAvailable.begin(),
-        state.blockActorRendererAvailable.end(),
-        0
-    );
+    // Workers retain the previous immutable availability version while layout
+    // changes publish a fresh one, just like the virtual-world maps above.
+    state.blockActorRendererAvailable = std::make_shared<std::vector<uchar>>(totalBlocks, 0);
     state.expectedWorldBlockIndices = std::make_shared<ExpectedBlockIndexMap>();
+    state.expectedWorldBlockIndices->reserve(totalBlocks);
     std::vector<Vec3> centerSums(state.sections.size(), Vec3{});
     std::vector<std::size_t> centerCounts(state.sections.size(), 0);
 
@@ -112,7 +113,12 @@ void rebuildProjectionPlacement(
             )) {
             // Hidden layers behave like completed cells for mesh generation,
             // but are excluded from the world lookup below.
-            state.correctionStates[index] = CorrectionState::Correct;
+            if ((*state.correctionStates)[index] != CorrectionState::Correct) {
+                if (state.correctionStates.use_count() > 1) {
+                    state.correctionStates = std::make_shared<std::vector<CorrectionState>>(*state.correctionStates);
+                }
+                (*state.correctionStates)[index] = CorrectionState::Correct;
+            }
             continue;
         }
         auto const transformed = transformStructurePosition(
@@ -148,7 +154,7 @@ void rebuildProjectionPlacement(
                         state.projectedBlockActors.push_back({
                             worldPosition, transformedBlock, actor, index
                         });
-                        state.blockActorRendererAvailable[index] = 1;
+                        (*state.blockActorRendererAvailable)[index] = 1;
                     }
                 }
             }
@@ -174,6 +180,9 @@ void rebuildProjectionPlacement(
 
     pairProjectedChests(region, state);
     for (std::size_t section = 0; section < state.sections.size(); ++section) {
+        state.sections[section].buildBounds = projectionSectionBounds(
+            state.localSectionKeys[section], *state.structure, settings.mirrorMode, settings.rotationTurns
+        );
         if (centerCounts[section] != 0) {
             state.sections[section].center
                 = centerSums[section] / static_cast<float>(centerCounts[section]);

@@ -39,6 +39,7 @@ struct MaterialRequirement {
 struct ActionHintSnapshot {
     std::string   text;
     std::uint64_t expiry{};
+    bool          persistent{};
 };
 
 // Current-layer missing requirements plus matching inventory counts, copied
@@ -154,7 +155,13 @@ public:
     // language switch like every other interface string.
     void setActionHint(i18n::Message message, std::uint64_t expiry);
     [[nodiscard]] std::uint64_t actionHintExpiry() const;
-    [[nodiscard]] ActionHintSnapshot actionHint() const;
+    [[nodiscard]] ActionHintSnapshot actionHint(std::uint64_t now = 0) const;
+    [[nodiscard]] bool actionHintActive(std::uint64_t now) const;
+    // Loading shares the existing hint bar, but does not expire or overwrite
+    // transient hints. Completion tokens cannot clear a later loading hint.
+    [[nodiscard]] std::uint64_t beginLoadingHint();
+    void finishLoadingHint(std::uint64_t token);
+    void clearLoadingHint();
 
     void requestMaterialList();
     [[nodiscard]] bool consumeMaterialListRequest();
@@ -228,6 +235,8 @@ private:
     mutable std::mutex mActionHintMutex;
     i18n::Message      mActionHintMessage;
     std::atomic_uint64_t mActionHintExpiry{};
+    std::uint64_t       mLoadingHintSequence{}; // protected by mActionHintMutex
+    std::atomic_uint64_t mLoadingHintToken{};
 
     mutable std::mutex                mMaterialMutex;
     std::atomic_bool                  mMaterialListRequested{false};

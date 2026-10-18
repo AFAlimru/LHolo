@@ -50,28 +50,15 @@ std::optional<std::size_t> selectNextDirtySection(
     Vec3 const&            cameraPosition,
     ProjectionSectionBuildSettings const& settings
 ) {
-    std::optional<std::size_t> selected;
-    bool                       selectedIncremental{};
-    float                      selectedDistance = std::numeric_limits<float>::max();
-    for (std::size_t section = 0; section < state.sections.size(); ++section) {
-        auto const& sectionState = state.sections[section];
-        if (!sectionState.dirty || sectionState.buildInFlight) continue;
-        auto const incremental = sectionState.incrementalDirty;
-        auto const center = sectionState.center + Vec3{
-            static_cast<float>(state.anchor.x + settings.offsetX),
-            static_cast<float>(state.anchor.y + settings.offsetY),
-            static_cast<float>(state.anchor.z + settings.offsetZ)
-        };
-        auto const delta = center - cameraPosition;
-        auto const distance = delta.x * delta.x + delta.y * delta.y + delta.z * delta.z;
-        if (!selected || (incremental && !selectedIncremental)
-            || (incremental == selectedIncremental && distance < selectedDistance)) {
-            selected = section;
-            selectedIncremental = incremental;
-            selectedDistance = distance;
-        }
-    }
-    return selected;
+    return selectProjectionBuild(state.sections.size(), state.meshBuildSelections,
+        state.dirtySectionCursor, [&](std::size_t index) {
+            auto const& section = state.sections[index];
+            auto const dx = section.center.x + static_cast<float>(state.anchor.x + settings.offsetX) - cameraPosition.x;
+            auto const dy = section.center.y + static_cast<float>(state.anchor.y + settings.offsetY) - cameraPosition.y;
+            auto const dz = section.center.z + static_cast<float>(state.anchor.z + settings.offsetZ) - cameraPosition.z;
+            return ProjectionBuildCandidate{section.dirty, section.buildInFlight,
+                section.buildVisible, section.prefetchVisible, section.incrementalDirty, dx*dx+dy*dy+dz*dz};
+        });
 }
 
 bool validateMeshData(
@@ -189,7 +176,8 @@ void scheduleProjectionMeshBuild(
     snapshot->structureGeneration = state.structureGeneration;
     snapshot->anchor = state.anchor;
     // Structure data and the virtual projected world are immutable for one
-    // placement generation. Only correction bytes need a task-local copy.
+    // placement generation. Correction bytes and block actor availability use
+    // zero-copy std::shared_ptr snapshots (with copy-on-write when mutated).
     snapshot->structure = state.structure;
     snapshot->correctionStates = state.correctionStates;
     snapshot->blockActorRendererAvailable = state.blockActorRendererAvailable;
@@ -307,6 +295,7 @@ void scheduleProjectionMeshBuild(
                 for (std::size_t bucket = 0; bucket < result.sectionMeshes.size(); ++bucket) {
                     result.sectionMeshes[bucket] = std::move(snapshot->sections[0].meshes[bucket]);
                 }
+                result.meshBounds = snapshot->sections[0].meshBounds;
                 result.warningFillMesh = std::move(snapshot->warningFillSectionMeshes[0]);
                 result.correctionOutlineMesh = std::move(snapshot->correctionOutlineSectionMeshes[0]);
                 result.wrongFillMesh = std::move(snapshot->wrongFillSectionMeshes[0]);
@@ -355,6 +344,8 @@ void scheduleProjectionMeshBuild(
         }
     );
     if (submitted) {
+        ++state.meshBuildSelections;
+        state.dirtySectionCursor = section + 1;
         state.sections[section].buildInFlight = true;
         state.sections[section].dirty = false;
     } else if (++state.consecutiveMeshWorkerFailures >= 3) {
@@ -372,30 +363,23 @@ void buildNextProjectionSectionSynchronously(
     Tessellator&                          tessellator,
     BlockTessellator&                     blockTessellator,
     BlockSource&                          region,
+    Vec3 const&                           cameraPosition,
     ProjectionSectionBuildSettings const& settings
 ) {
     if (state.asyncMeshBuildingEnabled) return;
 
-    // Compatibility path: preserve one synchronous section per frame when
-    // worker creation or three consecutive worker operations fail.
-    for (std::size_t attempt = 0; attempt < state.sections.size(); ++attempt) {
-        auto const section = state.dirtySectionCursor++ % state.sections.size();
-        if (!state.sections[section].dirty) continue;
-        state.sections[section].dirty = false;
-        buildProjectionSection(
-            state,
-            tessellator,
-            blockTessellator,
-            region,
-            section,
-            Tessellator::UploadMode::Buffered,
-            settings
-        );
-        state.sections[section].uploadedRevision = state.sections[section].requestedRevision;
-        state.sections[section].incrementalDirty = false;
-        state.meshPreflightDone = false;
-        break;
-    }
+    // Keep the same visibility ordering and fairness as the async path.
+    auto const selected = selectNextDirtySection(state, cameraPosition, settings);
+    if (!selected) return;
+    auto const section = *selected;
+    ++state.meshBuildSelections;
+    state.dirtySectionCursor = section + 1;
+    buildProjectionSection(state, tessellator, blockTessellator, region, section,
+        Tessellator::UploadMode::Buffered, settings);
+    state.sections[section].dirty = false;
+    state.sections[section].uploadedRevision = state.sections[section].requestedRevision;
+    state.sections[section].incrementalDirty = false;
+    state.meshPreflightDone = false;
 }
 
 } // namespace lholo::projection::detail

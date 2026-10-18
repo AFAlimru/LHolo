@@ -169,6 +169,7 @@
   "dialog.filterBedrock": "Bedrock structures (*.mcstructure)",
   "dialog.filterLitematica": "Litematica structures (*.litematic)",
   "dialog.filterAll": "All files (*.*)",
+  "status.loading": "Loading structure file in background, please wait...",
   "status.pathEmpty": "Choose or type a .mcstructure / .litematic path",
   "status.loadFailed": "Load failed: %s",
   "status.restoreFailed": "Restore failed: %s",

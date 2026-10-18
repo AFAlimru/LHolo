@@ -242,6 +242,7 @@ void renderProjection(
         };
         processProjectionOpaqueFrame(
             state,
+            renderContext,
             tessellator,
             player->getDimensionBlockSource(),
             camera,
@@ -345,7 +346,7 @@ bool shouldSuppressProjectionHitSelect(BlockPos const& pos) {
                     std::tuple{pos.x, pos.y, pos.z}
                 );
                 if (found != state.expectedWorldBlockIndices->end()) {
-                    auto const correctionState = state.correctionStates[found->second];
+                    auto const correctionState = (*state.correctionStates)[found->second];
                     if (correctionState == CorrectionState::WrongType
                         || correctionState == CorrectionState::WrongState) {
                         // LHolo already renders a complete red/yellow hull and

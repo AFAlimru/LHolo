@@ -407,18 +407,18 @@ i18n::Message makeLoadedStatusMessage(LoadedStructure const& loaded) {
 }
 
 bool actionHintActive() {
-    return GetTickCount64() < uiState().actionHintExpiry();
+    return uiState().actionHintActive(GetTickCount64());
 }
 
 void renderActionHint() {
     auto const now = GetTickCount64();
-    auto const hint = uiState().actionHint();
+    auto const hint = uiState().actionHint(now);
     auto const expiry = hint.expiry;
-    if (now >= expiry) return;
+    if (!hint.persistent && now >= expiry) return;
     if (hint.text.empty()) return;
 
-    auto const remaining = expiry - now;
-    float const alpha = remaining < 300 ? static_cast<float>(remaining) / 300.0f : 1.0f;
+    float const alpha = !hint.persistent && expiry - now < 300
+        ? static_cast<float>(expiry - now) / 300.0f : 1.0f;
     auto const displaySize = ImGui::GetIO().DisplaySize;
     float const uiScale = std::clamp(
         std::min(displaySize.x / 1920.0f, displaySize.y / 1080.0f), 1.0f, 5.0f
@@ -1029,6 +1029,7 @@ void resetWorldSession() {
 
 void clear() {
     clearProjectionSession(i18n::Message{i18n::TextKey::StatusProjectionClosed});
+    uiState().clearLoadingHint();
     uiState().clearMaterials();
 }
 

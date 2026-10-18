@@ -106,7 +106,7 @@ void submitProjectedBlockActorPass(
         *state.expectedWorldBlockActors
     );
     for (auto const& projected : state.projectedBlockActors) {
-        auto const correctionState = state.correctionStates[projected.structureIndex];
+        auto const correctionState = (*state.correctionStates)[projected.structureIndex];
         auto* renderComponent = projected.actor->_getRenderComponent();
         if (correctionState == CorrectionState::Correct
             || correctionState == CorrectionState::WrongType
@@ -163,6 +163,10 @@ void submitProjectionMeshPass(
         );
     }
 
+    auto isSectionVisible = [&](std::size_t section) {
+        return section >= state.sections.size() || state.sections[section].renderVisible;
+    };
+
     struct VisibleMesh {
         std::size_t bucket;
         std::size_t section;
@@ -205,6 +209,7 @@ void submitProjectionMeshPass(
         std::vector<VisibleMesh> result;
         result.reserve(state.sections.size());
         for (std::size_t section = 0; section < state.sections.size(); ++section) {
+            if (!isSectionVisible(section)) continue;
             auto const& mesh = state.sections[section].meshes[bucket];
             if (mesh && mesh->isValid()) {
                 result.push_back({bucket, section});
@@ -217,6 +222,7 @@ void submitProjectionMeshPass(
     auto const alphaBucket = static_cast<std::size_t>(RenderBucket::Alpha);
     auto const alphaOneSidedBucket = static_cast<std::size_t>(RenderBucket::AlphaOneSided);
     auto const blendBucket = static_cast<std::size_t>(RenderBucket::Blend);
+
     if (structureOpacity >= 0.999f) {
         auto opaqueMeshes = collectBucket(opaqueBucket);
         auto alphaMeshes = collectBucket(alphaBucket);
@@ -279,6 +285,7 @@ void submitProjectionMeshPass(
         for (std::size_t liquidSection = 0;
              liquidSection < state.liquidProxySectionMeshes.size();
              ++liquidSection) {
+            if (!isSectionVisible(liquidSection)) continue;
             auto const& mesh = state.liquidProxySectionMeshes[liquidSection];
             if (mesh && mesh->isValid()) liquidSections.push_back(liquidSection);
         }
@@ -303,7 +310,11 @@ void submitProjectionMeshPass(
         }
 
         // Textured placeholder hulls for block-entity blocks.
-        for (auto const& placeholder : state.blockEntityPlaceholderSectionMeshes) {
+        for (std::size_t section = 0;
+             section < state.blockEntityPlaceholderSectionMeshes.size();
+             ++section) {
+            if (!isSectionVisible(section)) continue;
+            auto const& placeholder = state.blockEntityPlaceholderSectionMeshes[section];
             if (!placeholder || !placeholder->isValid()) continue;
             placeholder->renderMesh(
                 renderContext.mScreenContext,
@@ -353,7 +364,9 @@ void submitProjectionMeshPass(
     ) {
         if (!materialExists(material)) return;
         ScopedNoDepthTest seeThrough(material, seeThroughMeshes);
-        for (auto const& overlay : meshes) {
+        for (std::size_t section = 0; section < meshes.size(); ++section) {
+            if (!isSectionVisible(section)) continue;
+            auto const& overlay = meshes[section];
             if (!overlay || !overlay->isValid()) continue;
             overlay->renderMesh(
                 renderContext.mScreenContext,

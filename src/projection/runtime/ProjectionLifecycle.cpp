@@ -84,12 +84,14 @@ bool prepareProjectionState(
     state.blockTessellator = std::make_unique<BlockTessellator>(
         &player->getDimensionBlockSource()
     );
-    state.correctionStates.resize(
-        state.structure->renderBlocks.size(), CorrectionState::Unknown
+    state.correctionStates = std::make_shared<std::vector<CorrectionState>>(
+        state.structure->renderBlocks.size(), CorrectionState::Missing
     );
     state.progressCorrect.resize(state.structure->renderBlocks.size(), 0);
     state.progressErrorKind.resize(state.structure->renderBlocks.size(), 0);
-    state.blockActorRendererAvailable.resize(state.structure->renderBlocks.size(), 0);
+    state.blockActorRendererAvailable = std::make_shared<std::vector<uchar>>(
+        state.structure->renderBlocks.size(), 0
+    );
     // Force the first render pass to build the transformed virtual-world lookup.
     state.cachedRotation = -1;
     state.cachedMirror = -1;
