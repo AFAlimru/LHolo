@@ -8,6 +8,7 @@
 
 #include "projection/core/ProjectionInternalTypes.h"
 #include "projection/core/ProjectionVisibilityRules.h"
+#include "projection/core/ProjectionBiomeRefresh.h"
 
 #include <array>
 #include <cstddef>
@@ -31,6 +32,7 @@ struct AsyncSectionBuildResult {
     std::uint64_t workerBuildMicros{};
     std::size_t   section{};
     ProjectionBounds meshBounds;
+    ProjectionBiomeRefresh biomeRefresh;
     bool          success{};
     std::string   failureReason;
     std::uint64_t expectedVertexCount{};

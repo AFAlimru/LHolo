@@ -27,9 +27,9 @@
 #include "plugin/LHolo.h"
 #include "structure/capture/StructureCapture.h"
 #include "structure/StructureLoader.h"
+#include "structure/StructureSession.h"
 
 #include <algorithm>
-#include <cmath>
 #include <cstddef>
 #include <exception>
 #include <memory>
@@ -85,23 +85,19 @@ auto& logger() {
 bool enableStructureProjection(
     ProjectionState& state,
     BaseActorRenderContext& renderContext,
-    std::shared_ptr<structure::LoadedStructure const> loaded
+    std::shared_ptr<structure::LoadedStructure const> loaded,
+    structure::detail::StructureLoadOrigin const& loadOrigin,
+    bool resumingDimension
 ) {
     ProjectionState next;
     if (!prepareProjectionState(next, renderContext, std::move(loaded))) return false;
     auto& client = renderContext.mClientInstance;
     auto* player = client.getLocalPlayer();
-    if (auto const anchor = ProjectionSession::getInstance().consumeAnchor()) {
+    auto const anchor = ProjectionSession::getInstance().consumeAnchor();
+    if (resumingDimension && anchor) {
         next.anchor = BlockPos{anchor->x, anchor->y, anchor->z};
     } else {
-        auto const& position = player->getPosition();
-        // Player position is the feet/air cell. Default a newly loaded
-        // structure to the supporting ground cell directly below it.
-        next.anchor = BlockPos(
-            std::floor(position.x),
-            std::floor(position.y) - 1,
-            std::floor(position.z)
-        );
+        next.anchor = BlockPos{loadOrigin.x, loadOrigin.y, loadOrigin.z};
     }
     state = std::move(next);
     state.enabled = true;
@@ -288,30 +284,6 @@ void renderProjection(
         return;
     }
 
-    if (!state.meshPreflightDone) {
-        auto const countValid = [](auto const& meshes) {
-            return std::count_if(meshes.begin(), meshes.end(), [](auto const& mesh) {
-                return mesh && mesh->isValid();
-            });
-        };
-        std::size_t normalMeshes{};
-        for (auto const& sectionState : state.sections) {
-            for (auto const& mesh : sectionState.meshes) {
-                if (mesh && mesh->isValid()) ++normalMeshes;
-            }
-        }
-        auto const warningMeshes = countValid(state.warningFillSectionMeshes);
-        auto const outlineMeshes = countValid(state.correctionOutlineSectionMeshes);
-        auto const wrongFillMeshes = countValid(state.wrongFillSectionMeshes);
-        auto const wrongOutlineMeshes = countValid(state.wrongOutlineSectionMeshes);
-        auto const liquidMeshes = countValid(state.liquidProxySectionMeshes);
-        auto const placeholderMeshes = countValid(state.blockEntityPlaceholderSectionMeshes);
-        if (normalMeshes + warningMeshes + outlineMeshes + wrongFillMeshes
-            + wrongOutlineMeshes + liquidMeshes + placeholderMeshes != 0) {
-            state.meshPreflightDone = true;
-        }
-    }
-
     try {
         submitProjectionMeshPass(
             state,
@@ -406,9 +378,14 @@ void renderProjectionFrame(BaseActorRenderContext& renderContext, bool renderAlp
                 return;
             }
 
-            if (auto loaded = structure::getLoaded(); loaded && loaded->generation != state.structureGeneration) {
-                auto& client = renderContext.mClientInstance;
-                auto* player = client.getLocalPlayer();
+            auto const activation = structure::detail::StructureSession::getInstance().activation();
+            auto* activationPlayer = renderContext.mClientInstance.getLocalPlayer();
+            bool const originDimensionReady = activation.origin && (!activation.origin->dimensionId
+                || (activationPlayer
+                    && *activation.origin->dimensionId == static_cast<int>(activationPlayer->getDimensionId())));
+            if (auto loaded = activation.loaded; loaded && loaded->generation != state.structureGeneration
+                && originDimensionReady) {
+                auto* player = activationPlayer;
                 if (!player) return;
                 auto& session = ProjectionSession::getInstance();
                 auto const activationStatus = session.prepareDimensionActivation(
@@ -431,7 +408,9 @@ void renderProjectionFrame(BaseActorRenderContext& renderContext, bool renderAlp
                         activated = enableStructureProjection(
                             state,
                             renderContext,
-                            std::move(loaded)
+                            std::move(loaded),
+                            *activation.origin,
+                            activationStatus == DimensionActivationStatus::Resuming
                         );
                     }
                 }

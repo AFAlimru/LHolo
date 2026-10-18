@@ -20,6 +20,7 @@ namespace {
 void markSectionDirty(ProjectionState& state, std::size_t section, bool incremental) {
     if (section >= state.sections.size()) return;
     auto& sectionState = state.sections[section];
+    sectionState.biomeRefresh = {}; // user settings/content invalidation, not a tint timer
     sectionState.dirty = true;
     sectionState.incrementalDirty = sectionState.incrementalDirty || incremental;
     ++sectionState.requestedRevision;
@@ -56,10 +57,6 @@ ProjectionInvalidationResult reconcileProjectionInvalidation(
         return result;
     }
 
-    if (result.geometryTransformChanged || result.layerChanged
-        || opacityChanged || correctionStyleChanged) {
-        state.meshPreflightDone = false;
-    }
     if (result.geometryTransformChanged || opacityChanged || correctionStyleChanged) {
         markAllSectionsDirty(state, false);
     }
@@ -138,6 +135,7 @@ ProjectionInvalidationResult reconcileProjectionInvalidation(
     // Rotation/mirror alter local block models, so only those require throwing
     // away every GPU mesh. XYZ movement stays represented by the world matrix.
     if (result.geometryTransformChanged) {
+        ++state.drawMeshRevision;
         if (state.correctionStates.use_count() > 1) {
             state.correctionStates = std::make_shared<std::vector<CorrectionState>>(
                 state.structure ? state.structure->renderBlocks.size() : 0,

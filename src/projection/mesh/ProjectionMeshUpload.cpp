@@ -60,6 +60,13 @@ void uploadCompletedProjectionMeshes(ProjectionState& state, Tessellator& tessel
     
             auto const section = result.section;
             state.sections[section].buildInFlight = false;
+            // Obsolete work cannot report a failure for the current placement
+            // or contribute to disabling its asynchronous worker.
+            if (result.revision != state.sections[section].requestedRevision) {
+                ++state.meshWorkerDiscardedBuilds;
+                state.sections[section].dirty = true;
+                continue;
+            }
             if (!result.success) {
                 markSectionDirty(state, section, true);
                 logger().warn(
@@ -78,11 +85,6 @@ void uploadCompletedProjectionMeshes(ProjectionState& state, Tessellator& tessel
                     stopMeshWorker();
                     logger().warn("Projection mesh worker failed three times; using synchronous fallback for this session");
                 }
-                continue;
-            }
-            if (result.revision != state.sections[section].requestedRevision) {
-                ++state.meshWorkerDiscardedBuilds;
-                state.sections[section].dirty = true;
                 continue;
             }
     
@@ -126,10 +128,23 @@ void uploadCompletedProjectionMeshes(ProjectionState& state, Tessellator& tessel
                 state.blockEntityPlaceholderSectionMeshes[section] = std::move(blockEntityPlaceholder);
                 state.sections[section].uploadedRevision = result.revision;
                 state.sections[section].meshBounds = result.meshBounds;
+                state.sections[section].biomeRefresh = result.biomeRefresh;
+                auto const delay = armProjectionBiomeRefresh(
+                    state.sections[section].biomeRefresh, state.biomeRefreshFrame);
+                if (result.biomeRefresh.sampleFailed || result.biomeRefresh.blackGrassFace) {
+                    auto const retries = ++state.biomeSampleRetryCount;
+                    if ((retries & (retries - 1)) == 0) {
+                        logger().debug(
+                            "Projection tint diagnostics: {} affected builds; section {}, rejected sample {}, black face {}, auto refresh {}/{}, pending {}, delay {} frames",
+                            retries, section, result.biomeRefresh.sampleFailed, result.biomeRefresh.blackGrassFace,
+                            result.biomeRefresh.automaticRefreshes, kMaxProjectionBiomeAutoRefreshes,
+                            result.biomeRefresh.pending, delay);
+                    }
+                }
+                ++state.drawMeshRevision;
                 state.sections[section].incrementalDirty = false;
                 state.sections[section].dirty = false;
                 state.consecutiveMeshWorkerFailures = 0;
-                state.meshPreflightDone = false;
                 auto const uploadMicros = static_cast<std::uint64_t>(
                     std::chrono::duration_cast<std::chrono::microseconds>(
                         std::chrono::steady_clock::now() - sectionUploadStarted

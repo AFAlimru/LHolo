@@ -985,18 +985,9 @@ void restoreSavedProjection() {
         logger().error("Could not restore structure {}: {}", savedPath, error);
         return;
     }
-    session.setRotation(saved.transform.rotation);
-    session.setMirror(std::clamp(saved.transform.mirror, 0, 2));
-    session.setOffsetX(saved.transform.offsetX);
-    session.setOffsetY(saved.transform.offsetY);
-    session.setOffsetZ(saved.transform.offsetZ);
-    session.setLayerDisplayMode(saved.transform.layerDisplayMode);
-    session.setDisplayLayer(saved.transform.displayLayer);
-    session.setLayerAxis(saved.transform.layerAxis);
-    projection::requestNextStructureAnchor(saved.anchorX, saved.anchorY, saved.anchorZ);
-    session.replaceLoaded(
+    session.restoreLoaded(
         std::move(loaded),
-        savedPath,
+        saved,
         i18n::Message{i18n::TextKey::StatusRestoredPending}
     );
     detail::invalidateMaterialList();

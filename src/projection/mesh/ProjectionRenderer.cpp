@@ -2,12 +2,14 @@
 // Copyright (C) 2026  MarmieQi
 
 #include "projection/mesh/ProjectionRenderer.h"
+#include "projection/mesh/ProjectionDrawLists.h"
 
 #include "projection/core/ProjectionInternalTypes.h"
 #include "projection/core/ProjectionState.h"
 #include "projection/world/ProjectionVirtualWorld.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <memory>
 #include <optional>
@@ -38,6 +40,20 @@
 namespace lholo::projection::detail {
 
 namespace {
+
+struct ProjectionDrawPassTimer {
+    ProjectionState& state;
+    bool alpha;
+    std::uint64_t prepareMicros{};
+    std::size_t draws{};
+    std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
+    ~ProjectionDrawPassTimer() {
+        auto const elapsed = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - started).count());
+        // Diagnostic logging must not throw while a render scope unwinds.
+        try { recordProjectionDrawPass(state, alpha, elapsed, prepareMicros, draws); } catch (...) {}
+    }
+};
 
 bool materialExists(mce::MaterialPtr const& material) {
     return material.mRenderMaterialInfoPtr.get() != nullptr;
@@ -141,6 +157,7 @@ void submitProjectionMeshPass(
     bool                    correctionSeeThrough,
     bool                    missingSeeThrough
 ) {
+    ProjectionDrawPassTimer drawTimer{state, renderAlphaLayer};
     auto& itemRenderer = renderContext.mItemInHandRenderer;
     auto const& blendMaterial = itemRenderer.mMatBlendBlock.get();
 
@@ -163,141 +180,53 @@ void submitProjectionMeshPass(
         );
     }
 
-    auto isSectionVisible = [&](std::size_t section) {
-        return section >= state.sections.size() || state.sections[section].renderVisible;
+    drawTimer.prepareMicros = prepareProjectionDrawLists(state, camera, renderOrigin, structureOpacity);
+    auto const& cache = state.drawCache;
+    auto list = [&](ProjectionDrawSlot slot) -> std::vector<std::size_t> const& {
+        return cache.lists[static_cast<std::size_t>(slot)];
+    };
+    auto renderTerrainMesh = [&](std::size_t section, std::size_t bucket, mce::MaterialPtr const& material) {
+        if (section >= state.sections.size() || !materialExists(material)) return;
+        auto const& mesh = state.sections[section].meshes[bucket];
+        if (!mesh || !mesh->isValid()) return;
+        ++drawTimer.draws;
+        mesh->renderMesh(renderContext.mScreenContext, material, *state.terrainTextureVariant,
+            0, mesh->mVertexCount.get().value_or(0u), emptyOffscreenCaptureDescription(), nullptr);
+    };
+    auto renderSolidBucket = [&](ProjectionDrawSlot slot, mce::MaterialPtr const& material) {
+        for (auto const section : list(slot)) renderTerrainMesh(section, static_cast<std::size_t>(slot), material);
     };
 
-    struct VisibleMesh {
-        std::size_t bucket;
-        std::size_t section;
-    };
-    auto worldCenter = [&](std::size_t section) {
-        return Vec3{
-            static_cast<float>(renderOrigin.x) + state.sections[section].center.x,
-            static_cast<float>(renderOrigin.y) + state.sections[section].center.y,
-            static_cast<float>(renderOrigin.z) + state.sections[section].center.z
-        };
-    };
-    auto distanceSquared = [&](Vec3 const& point) {
-        auto const dx = point.x - camera.x;
-        auto const dy = point.y - camera.y;
-        auto const dz = point.z - camera.z;
-        return dx * dx + dy * dy + dz * dz;
-    };
-    auto sortBackToFront = [&](std::vector<VisibleMesh>& meshes) {
-        std::sort(meshes.begin(), meshes.end(), [&](VisibleMesh const& lhs, VisibleMesh const& rhs) {
-            return distanceSquared(worldCenter(lhs.section))
-                > distanceSquared(worldCenter(rhs.section));
-        });
-    };
-    auto renderMeshes = [&](std::vector<VisibleMesh> const& meshes, mce::MaterialPtr const& material) {
-        if (!materialExists(material)) return;
-        for (auto const& visible : meshes) {
-            auto& mesh = *state.sections[visible.section].meshes[visible.bucket];
-            mesh.renderMesh(
-                renderContext.mScreenContext,
-                material,
-                *state.terrainTextureVariant,
-                0,
-                mesh.mVertexCount.get().value_or(0u),
-                emptyOffscreenCaptureDescription(),
-                nullptr
-            );
-        }
-    };
-    auto collectBucket = [&](std::size_t bucket) {
-        std::vector<VisibleMesh> result;
-        result.reserve(state.sections.size());
-        for (std::size_t section = 0; section < state.sections.size(); ++section) {
-            if (!isSectionVisible(section)) continue;
-            auto const& mesh = state.sections[section].meshes[bucket];
-            if (mesh && mesh->isValid()) {
-                result.push_back({bucket, section});
-            }
-        }
-        return result;
-    };
-
-    auto const opaqueBucket = static_cast<std::size_t>(RenderBucket::Opaque);
-    auto const alphaBucket = static_cast<std::size_t>(RenderBucket::Alpha);
-    auto const alphaOneSidedBucket = static_cast<std::size_t>(RenderBucket::AlphaOneSided);
-    auto const blendBucket = static_cast<std::size_t>(RenderBucket::Blend);
-
-    if (structureOpacity >= 0.999f) {
-        auto opaqueMeshes = collectBucket(opaqueBucket);
-        auto alphaMeshes = collectBucket(alphaBucket);
-        auto alphaOneSidedMeshes = collectBucket(alphaOneSidedBucket);
-        auto transparentMeshes = collectBucket(blendBucket);
-        sortBackToFront(transparentMeshes);
-
-        // Biome-tinted blocks (leaves, grass tops) carry their color in vertex
-        // data, but the plain block materials' shaders have no COLOR input on
-        // 26.40, which rendered leaves as the raw grayscale texture (white).
-        // The engine's Colored block materials read COLOR0 and keep the tint;
-        // fall back to the plain ones if unavailable.
+    if (!renderAlphaLayer && structureOpacity >= 0.999f) {
+        // Colored materials preserve biome tint. Only resolve and submit the
+        // three solid/cutout buckets in their actual render pass.
         auto const& opaqueMaterial = materialExists(itemRenderer.mMatOpaqueBlockColor.get())
-            ? itemRenderer.mMatOpaqueBlockColor.get()
-            : itemRenderer.mMatOpaqueBlock.get();
+            ? itemRenderer.mMatOpaqueBlockColor.get() : itemRenderer.mMatOpaqueBlock.get();
         auto const& alphaMaterial = materialExists(itemRenderer.mMatAlphaColoredBlock.get())
-            ? itemRenderer.mMatAlphaColoredBlock.get()
-            : itemRenderer.mMatAlphaBlock.get();
-        auto const& alphaOneSidedMaterial = materialExists(itemRenderer.mMatAlphaOneSidedColoredBlock.get())
-            ? itemRenderer.mMatAlphaOneSidedColoredBlock.get()
-            : itemRenderer.mMatAlphaOneSidedBlock.get();
-        if (!renderAlphaLayer) {
-            renderMeshes(
-                opaqueMeshes,
-                materialExists(opaqueMaterial) ? opaqueMaterial : blendMaterial
-            );
-            renderMeshes(
-                alphaMeshes,
-                materialExists(alphaMaterial) ? alphaMaterial : blendMaterial
-            );
-            renderMeshes(
-                alphaOneSidedMeshes,
-                materialExists(alphaOneSidedMaterial)
-                    ? alphaOneSidedMaterial
-                    : (materialExists(alphaMaterial) ? alphaMaterial : blendMaterial)
-            );
-        } else {
-            renderMeshes(transparentMeshes, blendMaterial);
-        }
+            ? itemRenderer.mMatAlphaColoredBlock.get() : itemRenderer.mMatAlphaBlock.get();
+        auto const& oneSidedMaterial = materialExists(itemRenderer.mMatAlphaOneSidedColoredBlock.get())
+            ? itemRenderer.mMatAlphaOneSidedColoredBlock.get() : itemRenderer.mMatAlphaOneSidedBlock.get();
+        renderSolidBucket(ProjectionDrawSlot::Opaque,
+            materialExists(opaqueMaterial) ? opaqueMaterial : blendMaterial);
+        renderSolidBucket(ProjectionDrawSlot::Alpha,
+            materialExists(alphaMaterial) ? alphaMaterial : blendMaterial);
+        renderSolidBucket(ProjectionDrawSlot::AlphaOneSided, materialExists(oneSidedMaterial)
+            ? oneSidedMaterial : materialExists(alphaMaterial) ? alphaMaterial : blendMaterial);
     } else if (renderAlphaLayer) {
-        // True projection transparency needs a blending material even for
-        // normally opaque/cutout blocks. Sort every bucket together.
-        std::vector<VisibleMesh> transparentMeshes;
-        for (std::size_t bucket = 0;
-             bucket < static_cast<std::size_t>(RenderBucket::Count);
-             ++bucket) {
-            auto bucketMeshes = collectBucket(bucket);
-            transparentMeshes.insert(
-                transparentMeshes.end(), bucketMeshes.begin(), bucketMeshes.end()
-            );
-        }
-        sortBackToFront(transparentMeshes);
-        renderMeshes(transparentMeshes, blendMaterial);
+        // Terrain buckets share one cached back-to-front section order when
+        // translucent; opaque mode includes only the vanilla blend bucket.
+        for (auto const& draw : cache.transparentTerrain) renderTerrainMesh(draw.section, draw.bucket, blendMaterial);
     }
 
     // Textured liquid hulls travel the proven glass path: blend-block material
     // plus the terrain atlas, sorted back to front by section.
     if (renderAlphaLayer) {
-        std::vector<std::size_t> liquidSections;
-        for (std::size_t liquidSection = 0;
-             liquidSection < state.liquidProxySectionMeshes.size();
-             ++liquidSection) {
-            if (!isSectionVisible(liquidSection)) continue;
-            auto const& mesh = state.liquidProxySectionMeshes[liquidSection];
-            if (mesh && mesh->isValid()) liquidSections.push_back(liquidSection);
-        }
-        std::sort(
-            liquidSections.begin(),
-            liquidSections.end(),
-            [&](std::size_t lhs, std::size_t rhs) {
-                return distanceSquared(worldCenter(lhs)) > distanceSquared(worldCenter(rhs));
-            }
-        );
-        for (auto const liquidSection : liquidSections) {
+        for (auto const liquidSection : list(ProjectionDrawSlot::Liquid)) {
+            if (liquidSection >= state.liquidProxySectionMeshes.size()) continue;
+            auto const& candidate = state.liquidProxySectionMeshes[liquidSection];
+            if (!candidate || !candidate->isValid()) continue;
             auto& mesh = *state.liquidProxySectionMeshes[liquidSection];
+            ++drawTimer.draws;
             mesh.renderMesh(
                 renderContext.mScreenContext,
                 blendMaterial,
@@ -310,12 +239,11 @@ void submitProjectionMeshPass(
         }
 
         // Textured placeholder hulls for block-entity blocks.
-        for (std::size_t section = 0;
-             section < state.blockEntityPlaceholderSectionMeshes.size();
-             ++section) {
-            if (!isSectionVisible(section)) continue;
+        for (auto const section : list(ProjectionDrawSlot::Placeholder)) {
+            if (section >= state.blockEntityPlaceholderSectionMeshes.size()) continue;
             auto const& placeholder = state.blockEntityPlaceholderSectionMeshes[section];
             if (!placeholder || !placeholder->isValid()) continue;
+            ++drawTimer.draws;
             placeholder->renderMesh(
                 renderContext.mScreenContext,
                 blendMaterial,
@@ -342,6 +270,7 @@ void submitProjectionMeshPass(
     auto const& boundsMaterial = glowMaterial ? *glowMaterial : outlineMaterial;
     if (materialExists(boundsMaterial) && structureBoundsEnabled
         && state.structureBoundsMesh && state.structureBoundsMesh->isValid()) {
+        ++drawTimer.draws;
         state.structureBoundsMesh->renderMesh(
             renderContext.mScreenContext,
             boundsMaterial,
@@ -359,15 +288,17 @@ void submitProjectionMeshPass(
     // depth-tested while only the "wrong" ones honor the X-ray toggle.
     auto renderOverlayMeshes = [&] (
         std::vector<std::unique_ptr<mce::Mesh>> const& meshes,
+        ProjectionDrawSlot slot,
         mce::MaterialPtr const& material,
         bool seeThroughMeshes
     ) {
         if (!materialExists(material)) return;
         ScopedNoDepthTest seeThrough(material, seeThroughMeshes);
-        for (std::size_t section = 0; section < meshes.size(); ++section) {
-            if (!isSectionVisible(section)) continue;
+        for (auto const section : list(slot)) {
+            if (section >= meshes.size()) continue;
             auto const& overlay = meshes[section];
             if (!overlay || !overlay->isValid()) continue;
+            ++drawTimer.draws;
             overlay->renderMesh(
                 renderContext.mScreenContext,
                 material,
@@ -414,8 +345,8 @@ void submitProjectionMeshPass(
                 = blendRenderMaterial->blendStateDescription.get();
             renderMaterial->mDepthBias = 100.0f;
             renderMaterial->mSlopeScaledDepthBias = 15.0f;
-            renderOverlayMeshes(state.warningFillSectionMeshes, outlineMaterial, missingSeeThrough);
-            renderOverlayMeshes(state.wrongFillSectionMeshes, outlineMaterial, correctionSeeThrough);
+            renderOverlayMeshes(state.warningFillSectionMeshes, ProjectionDrawSlot::MissingFill, outlineMaterial, missingSeeThrough);
+            renderOverlayMeshes(state.wrongFillSectionMeshes, ProjectionDrawSlot::WrongFill, outlineMaterial, correctionSeeThrough);
         }
     } else if (materialExists(warningMaterial)) {
         // Vanilla selection overlay has the required depth bias. Temporarily
@@ -433,12 +364,12 @@ void submitProjectionMeshPass(
             renderMaterial->mDepthBias = 100.0f;
             renderMaterial->mSlopeScaledDepthBias = 15.0f;
         }
-        renderOverlayMeshes(state.warningFillSectionMeshes, warningMaterial, missingSeeThrough);
-        renderOverlayMeshes(state.wrongFillSectionMeshes, warningMaterial, correctionSeeThrough);
+        renderOverlayMeshes(state.warningFillSectionMeshes, ProjectionDrawSlot::MissingFill, warningMaterial, missingSeeThrough);
+        renderOverlayMeshes(state.wrongFillSectionMeshes, ProjectionDrawSlot::WrongFill, warningMaterial, correctionSeeThrough);
     }
     if (materialExists(outlineMaterial)) {
-        renderOverlayMeshes(state.correctionOutlineSectionMeshes, outlineMaterial, missingSeeThrough);
-        renderOverlayMeshes(state.wrongOutlineSectionMeshes, outlineMaterial, correctionSeeThrough);
+        renderOverlayMeshes(state.correctionOutlineSectionMeshes, ProjectionDrawSlot::MissingOutline, outlineMaterial, missingSeeThrough);
+        renderOverlayMeshes(state.wrongOutlineSectionMeshes, ProjectionDrawSlot::WrongOutline, outlineMaterial, correctionSeeThrough);
     }
 }
 

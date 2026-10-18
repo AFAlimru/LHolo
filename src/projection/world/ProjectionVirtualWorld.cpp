@@ -19,6 +19,7 @@ namespace {
 thread_local ExpectedBlockMap const*      gTessellationBlocks{};
 thread_local ExpectedBlockActorMap const* gTessellationBlockActors{};
 thread_local bool                         gSuppressRegionWrites{};
+thread_local bool                         gBiomeSampleFailed{};
 
 } // namespace
 
@@ -38,11 +39,21 @@ ScopedTessellationBlocks::ScopedTessellationBlocks(
     ExpectedBlockActorMap const& blockActors
 )
 : mPreviousBlocks(std::exchange(gTessellationBlocks, &blocks)),
-  mPreviousBlockActors(std::exchange(gTessellationBlockActors, &blockActors)) {}
+  mPreviousBlockActors(std::exchange(gTessellationBlockActors, &blockActors)),
+  mPreviousBiomeSampleFailed(std::exchange(gBiomeSampleFailed, false)) {}
 
 ScopedTessellationBlocks::~ScopedTessellationBlocks() {
     gTessellationBlocks      = mPreviousBlocks;
     gTessellationBlockActors = mPreviousBlockActors;
+    gBiomeSampleFailed = mPreviousBiomeSampleFailed;
+}
+
+bool ScopedTessellationBlocks::biomeSampleFailed() const {
+    return gBiomeSampleFailed;
+}
+
+void markTessellationBiomeSampleFailed() {
+    if (gTessellationBlocks) gBiomeSampleFailed = true;
 }
 
 Block const* findTessellationBlock(BlockPos const& position) {

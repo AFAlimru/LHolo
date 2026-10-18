@@ -124,7 +124,10 @@ void scheduleProjectionMeshBuild(
     auto const section = *selected;
     BlockPos minimum{INT_MAX, INT_MAX, INT_MAX};
     BlockPos maximum{INT_MIN, INT_MIN, INT_MIN};
+    bool needsBiomeSamples{};
     for (auto const index : state.sectionBlockIndices[section]) {
+        auto const* block = state.structure->renderBlocks[index].block;
+        needsBiomeSamples = needsBiomeSamples || (block && projectionUsesBiomeTint(*block));
         auto const local = transformStructurePosition(
             state.structure->renderBlocks[index], *state.structure, settings.mirrorMode,
             settings.rotationTurns
@@ -167,8 +170,9 @@ void scheduleProjectionMeshBuild(
         minimum = world;
         maximum = world;
     }
-    minimum = BlockPos{minimum.x - 2, minimum.y - 2, minimum.z - 2};
-    maximum = BlockPos{maximum.x + 2, maximum.y + 2, maximum.z + 2};
+    auto const padding = needsBiomeSamples ? projectionBiomeSamplingPadding() : std::array<int, 3>{2, 2, 2};
+    minimum = BlockPos{minimum.x - padding[0], minimum.y - padding[1], minimum.z - padding[2]};
+    maximum = BlockPos{maximum.x + padding[0], maximum.y + padding[1], maximum.z + padding[2]};
 
     auto snapshot = std::make_shared<ProjectionState>();
     snapshot->level = state.level;
@@ -203,6 +207,7 @@ void scheduleProjectionMeshBuild(
     snapshot->expectedWorldBlockActors = state.expectedWorldBlockActors;
     snapshot->expectedWorldBlockIndices = state.expectedWorldBlockIndices;
     snapshot->sections.resize(1);
+    snapshot->sections[0].biomeRefresh = state.sections[section].biomeRefresh;
     snapshot->warningFillSectionMeshes.resize(1);
     snapshot->correctionOutlineSectionMeshes.resize(1);
     snapshot->wrongFillSectionMeshes.resize(1);
@@ -296,6 +301,7 @@ void scheduleProjectionMeshBuild(
                     result.sectionMeshes[bucket] = std::move(snapshot->sections[0].meshes[bucket]);
                 }
                 result.meshBounds = snapshot->sections[0].meshBounds;
+                result.biomeRefresh = snapshot->sections[0].biomeRefresh;
                 result.warningFillMesh = std::move(snapshot->warningFillSectionMeshes[0]);
                 result.correctionOutlineMesh = std::move(snapshot->correctionOutlineSectionMeshes[0]);
                 result.wrongFillMesh = std::move(snapshot->wrongFillSectionMeshes[0]);
@@ -374,12 +380,13 @@ void buildNextProjectionSectionSynchronously(
     auto const section = *selected;
     ++state.meshBuildSelections;
     state.dirtySectionCursor = section + 1;
+    ++state.drawMeshRevision; // synchronous construction may replace several meshes
     buildProjectionSection(state, tessellator, blockTessellator, region, section,
         Tessellator::UploadMode::Buffered, settings);
+    armProjectionBiomeRefresh(state.sections[section].biomeRefresh, state.biomeRefreshFrame);
     state.sections[section].dirty = false;
     state.sections[section].uploadedRevision = state.sections[section].requestedRevision;
     state.sections[section].incrementalDirty = false;
-    state.meshPreflightDone = false;
 }
 
 } // namespace lholo::projection::detail

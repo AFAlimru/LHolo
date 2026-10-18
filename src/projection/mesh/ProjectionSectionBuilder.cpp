@@ -12,6 +12,7 @@
 #include "projection/core/ProjectionRules.h"
 #include "projection/core/ProjectionShellRules.h"
 #include "projection/core/ProjectionState.h"
+#include "projection/core/ProjectionTintRules.h"
 #include "projection/world/ProjectionVirtualWorld.h"
 #include "structure/StructureLoader.h"
 
@@ -126,6 +127,30 @@ std::uint32_t applyShade(std::uint32_t rgb, float factor, std::uint32_t alphaByt
 }
 
 } // namespace
+
+std::array<int, 3> projectionBiomeSamplingPadding() {
+    static auto const padding = [] {
+        std::array<int, 3> result{2, 2, 2};
+        for (auto const pattern : {BiomeColorSampling::Pattern::Single,
+                 BiomeColorSampling::Pattern::CornersAndMidpointsRange4,
+                 BiomeColorSampling::Pattern::Grid3x3, BiomeColorSampling::Pattern::CrossRange8}) {
+            for (auto const& offset : BiomeColorSampling::getPattern(pattern)) {
+                result[0] = std::max(result[0], std::abs(offset.x));
+                result[1] = std::max(result[1], std::abs(offset.y));
+                result[2] = std::max(result[2], std::abs(offset.z));
+            }
+        }
+        return result;
+    }();
+    return padding;
+}
+
+bool projectionUsesBiomeTint(Block const& block) {
+    auto const method = block.getBlockType().mTintMethod;
+    return method == TintMethod::Grass || method == TintMethod::DefaultFoliage
+        || method == TintMethod::BirchFoliage || method == TintMethod::EvergreenFoliage
+        || method == TintMethod::DryFoliage;
+}
 
 void buildCorrectionSectionMeshes(
     ProjectionState&,
@@ -262,6 +287,31 @@ void buildProjectionSection(
         *state.expectedWorldBlocks,
         *state.expectedWorldBlockActors
     );
+    auto& biomeRefresh = state.sections[section].biomeRefresh;
+    auto const previousBiomeRefresh = biomeRefresh;
+    biomeRefresh = {};
+    bool hasBiomeTint{};
+    auto const biomePadding = projectionBiomeSamplingPadding();
+    for (auto const& layered : layeredBlocks) {
+        if (!projectionUsesBiomeTint(*layered.block)) continue;
+        std::array<int, 3> const position{layered.position.x, layered.position.y, layered.position.z};
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            biomeRefresh.minimum[axis] = hasBiomeTint
+                ? std::min(biomeRefresh.minimum[axis], position[axis] - biomePadding[axis])
+                : position[axis] - biomePadding[axis];
+            biomeRefresh.maximum[axis] = hasBiomeTint
+                ? std::max(biomeRefresh.maximum[axis], position[axis] + biomePadding[axis])
+                : position[axis] + biomePadding[axis];
+        }
+        hasBiomeTint = true;
+    }
+    // Record readiness before sampling. A chunk view retains only the chunks
+    // available when it was created; later arrivals need a fresh mesh task.
+    if (hasBiomeTint) {
+        biomeRefresh.pending = !region.areChunksFullyLoaded(
+            BlockPos{biomeRefresh.minimum[0], biomeRefresh.minimum[1], biomeRefresh.minimum[2]},
+            BlockPos{biomeRefresh.maximum[0], biomeRefresh.maximum[1], biomeRefresh.maximum[2]});
+    }
     for (std::size_t bucketIndex = 0;
          bucketIndex < static_cast<std::size_t>(RenderBucket::Count);
          ++bucketIndex) {
@@ -288,8 +338,8 @@ void buildProjectionSection(
                 || tintMethod == TintMethod::BirchFoliage
                 || tintMethod == TintMethod::EvergreenFoliage
                 || tintMethod == TintMethod::DryFoliage) {
-                // BlockTessellator::buildBiomeWeights() is not exported by
-                // 1.26.40 and the tessellator's biome weight cache is never
+                // The 26.51 headers expose no buildBiomeWeights entry point,
+                // and this standalone tessellator's biome cache is never
                 // populated, so pass null and let the policy sample the biome
                 // color fresh from the region for this position.
                 foliageTint = toAbgr(BiomeColorSampling::getTessellationPolicy(tintMethod).get(
@@ -335,9 +385,15 @@ void buildProjectionSection(
                     colors[colorIndex] = modulateAbgr(colors[colorIndex], *foliageTint);
                 }
             }
+            ProjectionTintQuadObserver grassFaces;
             for (std::size_t colorIndex = firstColor; colorIndex < colors.size(); ++colorIndex) {
+                // Observe while applying opacity: no additional vertex pass.
+                if (tintMethod == TintMethod::Grass) grassFaces.observe(colors[colorIndex]);
                 colors[colorIndex] = (colors[colorIndex] & 0x00FFFFFFU) | (alpha << 24U);
             }
+            // A black face is a symptom, not proof of missing lighting/biomes.
+            // Its independent diagnostic flag permits only one auto refresh.
+            biomeRefresh.blackGrassFace = biomeRefresh.blackGrassFace || grassFaces.hasBlackFace();
             bucketTessellated = true;
         }
         auto& destination = state.sections[section].meshes[bucketIndex];
@@ -397,6 +453,8 @@ void buildProjectionSection(
     includeMesh(state.liquidProxySectionMeshes[section]);
     includeMesh(state.blockEntityPlaceholderSectionMeshes[section]);
     if (!completeBounds) bounds.valid = false;
+    biomeRefresh.sampleFailed = tessellationBlocksScope.biomeSampleFailed();
+    finishProjectionBiomeRefresh(biomeRefresh, previousBiomeRefresh);
 }
 
 void buildLiquidProxySectionMesh(

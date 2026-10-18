@@ -21,6 +21,7 @@ public:
         ExpectedBlockActorMap const& blockActors
     );
     ~ScopedTessellationBlocks();
+    bool biomeSampleFailed() const;
 
     ScopedTessellationBlocks(ScopedTessellationBlocks const&) = delete;
     ScopedTessellationBlocks& operator=(ScopedTessellationBlocks const&) = delete;
@@ -28,6 +29,7 @@ public:
 private:
     ExpectedBlockMap const*      mPreviousBlocks{};
     ExpectedBlockActorMap const* mPreviousBlockActors{};
+    bool mPreviousBiomeSampleFailed{};
 };
 
 // Vanilla BlockType::connectionUpdate recomputes a block's flattened
@@ -48,6 +50,7 @@ private:
 };
 
 bool regionWritesSuppressed();
+void markTessellationBiomeSampleFailed();
 
 Block const*      findTessellationBlock(BlockPos const& position);
 BlockActor const* findTessellationBlockActor(BlockPos const& position);

@@ -6,6 +6,7 @@
 #include "overlay/ImGuiOverlay.h"
 #include "plugin/LHolo.h"
 #include "projection/world/ProjectionVirtualWorld.h"
+#include "projection/core/ProjectionTintRules.h"
 #include "structure/StructureLoader.h"
 
 #include <cstddef>
@@ -14,6 +15,11 @@
 #include <variant>
 
 #include "mc/network/LoopbackPacketSender.h"
+#include "mc/client/world/level/biome/biome_color_sampling/GrassTessellationPolicy.h"
+#include "mc/deps/core/math/Color.h"
+#include "mc/world/level/biome/Biome.h"
+#include "mc/world/level/biome/biome_color_sampling/BiomeColorSampling.h"
+#include "mc/world/level/biome/biome_color_sampling/MapPolicy.h"
 #include "mc/network/MinecraftPacketIds.h"
 #include "mc/network/Packet.h"
 #include "mc/network/packet/TextPacket.h"
@@ -59,6 +65,32 @@ bool filterProjectionPacket(Packet& packet) {
         logger().error("Could not initialize the injected ImGui overlay");
     }
     return true;
+}
+
+LL_TYPE_INSTANCE_HOOK(
+    ProjectionGrassTintHook,
+    ll::memory::HookPriority::Normal,
+    BiomeColorSampling::GrassTessellationPolicy,
+    static_cast<mce::Color (BiomeColorSampling::GrassTessellationPolicy::*)(
+        Block const&, BlockSource&, BlockPos const&, BiomeTintCache const*) const>(
+            &BiomeColorSampling::GrassTessellationPolicy::$get),
+    mce::Color,
+    Block const& block,
+    BlockSource& region,
+    BlockPos const& position,
+    BiomeTintCache const* cache
+) {
+    if (!findTessellationBlock(position)) return origin(block, region, position, cache);
+    // MapPolicy explicitly samples a region without a BiomeTintCache. Passing
+    // null to the tessellation policy was not a verified cache-free contract.
+    // Vanilla still selects the grass-tinted faces; do not recolor dirt/snow.
+    auto const sample = BiomeColorSampling::getMapPolicy(TintMethod::Grass).get(region, position);
+    ProjectionTintRgb const rgb{sample.r, sample.g, sample.b};
+    if (validProjectionBiomeTint(rgb)) return mce::Color{sample.r, sample.g, sample.b, 1.0f};
+    markTessellationBiomeSampleFailed();
+    auto const& fallback = Biome::DEFAULT_GRASS_TINT();
+    auto const selected = projectionFallbackBiomeTint({fallback.r, fallback.g, fallback.b});
+    return mce::Color{selected[0], selected[1], selected[2], 1.0f};
 }
 
 LL_TYPE_INSTANCE_HOOK(
@@ -209,10 +241,21 @@ bool installProjectionGameHooks() {
         BlockSourceGetBlockHook::unhook();
         return false;
     }
+    if (ProjectionGrassTintHook::hook() < 0) {
+        LoopbackPacketSenderSendHook::unhook();
+        LoopbackPacketSenderSendToServerHook::unhook();
+        BlockSourceSetBlockWithActorHook::unhook();
+        BlockSourceSetBlockHook::unhook();
+        BlockSourceGetBlockEntityHook::unhook();
+        BlockSourceGetBlockLayerHook::unhook();
+        BlockSourceGetBlockHook::unhook();
+        return false;
+    }
     return true;
 }
 
 void uninstallProjectionGameHooks() {
+    ProjectionGrassTintHook::unhook();
     LoopbackPacketSenderSendHook::unhook();
     LoopbackPacketSenderSendToServerHook::unhook();
     BlockSourceSetBlockWithActorHook::unhook();

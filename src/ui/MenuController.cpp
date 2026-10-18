@@ -34,6 +34,10 @@
 
 #include "imgui.h"
 #include "ll/api/mod/NativeMod.h"
+#include "ll/api/service/Bedrock.h"
+#include "mc/client/game/ClientInstance.h"
+#include "mc/client/player/LocalPlayer.h"
+#include "mc/world/actor/Actor.h"
 
 namespace lholo::ui {
 namespace {
@@ -311,10 +315,24 @@ MenuActions buildStructureMenuActions(bool& refreshModel) {
             sIsLoadingStructure.store(false);
             return;
         }
-        session.setStatus(i18n::Message{i18n::TextKey::StatusLoading});
+        auto client = ll::service::getClientInstance();
+        auto* player = client ? client->getLocalPlayer() : nullptr;
+        if (!player) {
+            session.setStatus(i18n::Message{i18n::TextKey::CaptureStatusNoWorld});
+            refreshModel = true;
+            sIsLoadingStructure.store(false);
+            return;
+        }
+        auto const position = player->getPosition();
+        auto const request = session.beginFileLoad(structure::detail::StructureLoadOrigin{
+            static_cast<int>(std::floor(position.x)),
+            static_cast<int>(std::floor(position.y)) - 1,
+            static_cast<int>(std::floor(position.z)),
+            static_cast<int>(player->getDimensionId())
+        });
         refreshModel = true;
         auto const loadingHint = uiState().beginLoadingHint();
-        std::thread([pathText, loadingHint]() {
+        std::thread([pathText, loadingHint, request]() {
             LoadingHintCompletion const completion{loadingHint};
             std::string error;
             auto loaded = structure::detail::loadStructureFile(
@@ -322,16 +340,18 @@ MenuActions buildStructureMenuActions(bool& refreshModel) {
             );
             auto& session = structure::detail::StructureSession::getInstance();
             if (!loaded) {
-                session.setStatus(i18n::Message{i18n::TextKey::StatusLoadFailed, {error}});
-                logger().error("Could not load structure {}: {}", pathText, error);
+                if (session.failFileLoad(request, i18n::Message{i18n::TextKey::StatusLoadFailed, {error}})) {
+                    logger().error("Could not load structure {}: {}", pathText, error);
+                }
                 sIsLoadingStructure.store(false);
                 return;
             }
             auto const renderBlocks = loaded->renderBlocks.size();
             auto const status = structure::makeLoadedStatusMessage(*loaded);
-            projection::cancelNextStructureAnchorRequest();
-            session.resetTransform();
-            session.replaceLoaded(std::move(loaded), pathText, status);
+            if (!session.completeFileLoad(request, std::move(loaded), pathText, status)) {
+                sIsLoadingStructure.store(false);
+                return;
+            }
             structure::detail::invalidateMaterialList();
             structure::saveSettings();
             logger().info("Loaded structure {}: {} renderable blocks", pathText, renderBlocks);

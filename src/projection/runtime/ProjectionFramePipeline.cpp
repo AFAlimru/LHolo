@@ -119,9 +119,20 @@ void processProjectionOpaqueFrame(
 
     // Consume completed CPU data only in the opaque render pass.
     uploadCompletedProjectionMeshes(state, tessellator);
-    // Correction scanning may append sections; upload may replace their mesh
-    // bounds. Classify once after both, before scheduling and drawing.
+    // Classify first so pending visible tint work has its own retry budget.
     updateProjectionVisibility(state, renderContext, cameraPosition);
+    refreshProjectionBiomes(state.sections, state.biomeRefreshVisibleCursor, state.biomeRefreshCursor,
+        [&](ProjectionBiomeRefresh const& refresh) {
+            return region.areChunksFullyLoaded(
+                BlockPos{refresh.minimum[0], refresh.minimum[1], refresh.minimum[2]},
+                BlockPos{refresh.maximum[0], refresh.maximum[1], refresh.maximum[2]});
+        },
+        [&](std::size_t section) {
+            auto& target = state.sections[section];
+            target.dirty = true;
+            target.incrementalDirty = true;
+            ++target.requestedRevision;
+        }, ++state.biomeRefreshFrame);
     ensureStructureBoundsMesh(state, tessellator, buildSettings.rotationTurns);
     scheduleProjectionMeshBuild(
         state, tessellator, region, cameraPosition, buildSettings

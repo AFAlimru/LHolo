@@ -145,7 +145,7 @@
   "column.item": "Item",
   "column.identifier": "Identifier",
   "column.total": "Total",
-  "hud.fileName": "Projection: %s",
+  "hud.fileName": "File: %s",
   "hud.materialFilterAll": "Material filter: all",
   "hud.materialFilterSingle": "Material filter: #%d of %d",
   "hud.materialFilterUpTo": "Material filter: first %d",

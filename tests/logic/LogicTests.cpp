@@ -23,6 +23,10 @@
 #include <Windows.h>
 
 int runProjectionCullingTests();
+int runProjectionDrawCacheTests();
+int runProjectionBiomeRefreshTests();
+int runStructureLoadOriginTests();
+void benchmarkProjectionDrawCache();
 
 namespace {
 
@@ -41,6 +45,17 @@ int gFailures = 0;
 
 using namespace lholo::projection::detail;
 using lholo::structure::LoadedStructure;
+
+// Exercise the real restoration path when a test needs an installed structure.
+// Keep fixture setup out of the production session API.
+void replaceLoadedForTest(lholo::structure::detail::StructureSession& session,
+                          std::shared_ptr<LoadedStructure> loaded, std::string path,
+                          lholo::i18n::Message status) {
+    lholo::structure::detail::SavedProjectionSnapshot saved;
+    saved.structurePath = std::move(path);
+    saved.transform = session.transform();
+    session.restoreLoaded(std::move(loaded), saved, std::move(status));
+}
 
 bool expectBlockPos(BlockPos const& pos, int x, int y, int z) {
     return pos.x == x && pos.y == y && pos.z == z;
@@ -302,7 +317,7 @@ void testStructureSession() {
     loaded->sizeX = 7;
     loaded->sizeY = 5;
     loaded->sizeZ = 3;
-    session.replaceLoaded(
+    replaceLoadedForTest(session,
         loaded,
         "active.mcstructure",
         lholo::i18n::Message{lholo::i18n::TextKey::StatusRestoredPending}
@@ -337,7 +352,7 @@ void testStructureSession() {
     layered->sizeX = 3;
     layered->sizeY = 8;
     layered->sizeZ = 4;
-    session.replaceLoaded(
+    replaceLoadedForTest(session,
         layered,
         "layered.mcstructure",
         lholo::i18n::Message{lholo::i18n::TextKey::StatusRestoredPending}
@@ -356,7 +371,7 @@ void testStructureSession() {
     session.setLayerDisplayMode(layeredSaved.transform.layerDisplayMode);
     session.setDisplayLayer(layeredSaved.transform.displayLayer);
     session.setLayerAxis(layeredSaved.transform.layerAxis);
-    session.replaceLoaded(
+    replaceLoadedForTest(session,
         layered,
         layeredSaved.structurePath,
         lholo::i18n::Message{lholo::i18n::TextKey::StatusRestoredPending}
@@ -380,7 +395,7 @@ void testLayerHotkeyBounds() {
     loaded->sizeX = 9;
     loaded->sizeY = 7;
     loaded->materialCount = 3;
-    session.replaceLoaded(loaded, "layers.mcstructure", {});
+    replaceLoadedForTest(session, loaded, "layers.mcstructure", {});
 
     for (auto mode : {LayerDisplayMode::Single, LayerDisplayMode::UpToCurrent, LayerDisplayMode::FromCurrent}) {
         session.setLayerDisplayMode(mode);
@@ -411,7 +426,7 @@ void testLayerHotkeyBounds() {
     auto single = std::make_shared<LoadedStructure>();
     single->sizeX = single->sizeY = 1;
     single->materialCount = 1;
-    session.replaceLoaded(single, "single.mcstructure", {});
+    replaceLoadedForTest(session, single, "single.mcstructure", {});
     session.setLayerDisplayMode(LayerDisplayMode::Single);
     for (auto axis : {LayerAxis::Y, LayerAxis::X, LayerAxis::Material}) {
         session.setLayerAxis(axis);
@@ -1017,8 +1032,15 @@ void testI18n() {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 2 && std::string_view{argv[1]} == "--benchmark-draw-cache") {
+        benchmarkProjectionDrawCache();
+        return 0;
+    }
     LHOLO_CHECK(runProjectionCullingTests() == 0);
+    LHOLO_CHECK(runProjectionDrawCacheTests() == 0);
+    LHOLO_CHECK(runProjectionBiomeRefreshTests() == 0);
+    LHOLO_CHECK(runStructureLoadOriginTests() == 0);
     testLayoutRules();
     testProgress();
     testSettingsStore();

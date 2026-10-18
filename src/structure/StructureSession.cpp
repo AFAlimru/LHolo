@@ -4,6 +4,7 @@
 #include "structure/StructureSession.h"
 
 #include <algorithm>
+#include <cassert>
 #include <limits>
 
 namespace lholo::structure::detail {
@@ -82,6 +83,11 @@ std::shared_ptr<LoadedStructure const> StructureSession::loaded() const {
     return mLoaded;
 }
 
+StructureActivationSnapshot StructureSession::activation() const {
+    std::lock_guard lock(mMutex);
+    return {mLoaded, mLoadOrigin};
+}
+
 bool StructureSession::hasLoaded() const {
     std::lock_guard lock(mMutex);
     return static_cast<bool>(mLoaded);
@@ -102,15 +108,57 @@ void StructureSession::setLastPath(std::string path) {
     mLastPath = std::move(path);
 }
 
-void StructureSession::replaceLoaded(
-    std::shared_ptr<LoadedStructure> loaded,
-    std::string                      path,
-    i18n::Message                    status
+void StructureSession::replaceLoadedLocked(
+    std::shared_ptr<LoadedStructure> loaded, std::string path, i18n::Message status,
+    StructureLoadOrigin origin
 ) {
-    std::lock_guard lock(mMutex);
+    assert(loaded); // every published structure must have its own initial placement
+    ++mLoadRevision;
     mLastPath = std::move(path);
     mStatus   = std::move(status);
     mLoaded   = std::move(loaded);
+    mLoadOrigin = origin;
+}
+
+void StructureSession::restoreLoaded(
+    std::shared_ptr<LoadedStructure> loaded, SavedProjectionSnapshot const& saved, i18n::Message status
+) {
+    std::lock_guard lock(mMutex);
+    setRotation(saved.transform.rotation);
+    setMirror(std::clamp(saved.transform.mirror, 0, 2));
+    setOffsetX(saved.transform.offsetX);
+    setOffsetY(saved.transform.offsetY);
+    setOffsetZ(saved.transform.offsetZ);
+    setLayerDisplayMode(saved.transform.layerDisplayMode);
+    setDisplayLayer(saved.transform.displayLayer);
+    setLayerAxis(saved.transform.layerAxis);
+    replaceLoadedLocked(std::move(loaded), saved.structurePath, std::move(status),
+        StructureLoadOrigin{saved.anchorX, saved.anchorY, saved.anchorZ, std::nullopt});
+}
+
+StructureLoadRequest StructureSession::beginFileLoad(StructureLoadOrigin origin) {
+    std::lock_guard lock(mMutex);
+    mStatus = i18n::Message{i18n::TextKey::StatusLoading};
+    return {++mLoadRevision, origin};
+}
+
+bool StructureSession::completeFileLoad(
+    StructureLoadRequest const& request, std::shared_ptr<LoadedStructure> loaded,
+    std::string path, i18n::Message status
+) {
+    std::lock_guard lock(mMutex);
+    if (request.revision != mLoadRevision) return false;
+    resetTransform();
+    replaceLoadedLocked(std::move(loaded), std::move(path), std::move(status), request.origin);
+    return true;
+}
+
+bool StructureSession::failFileLoad(StructureLoadRequest const& request, i18n::Message status) {
+    std::lock_guard lock(mMutex);
+    if (request.revision != mLoadRevision) return false;
+    ++mLoadRevision;
+    mStatus = std::move(status);
+    return true;
 }
 
 void StructureSession::clearLoaded(i18n::Message status) {
@@ -120,7 +168,9 @@ void StructureSession::clearLoaded(i18n::Message status) {
     // zero; that transient empty-session value must not replace the restore
     // snapshot.
     refreshSavedTransformLocked();
+    ++mLoadRevision;
     mLoaded.reset();
+    mLoadOrigin.reset();
     mStatus = std::move(status);
 }
 

@@ -145,7 +145,7 @@
   "column.item": "Предмет",
   "column.identifier": "Идентификатор",
   "column.total": "Всего",
-  "hud.fileName": "Проекция: %s",
+  "hud.fileName": "Файл: %s",
   "hud.materialFilterAll": "Фильтр материалов: все",
   "hud.materialFilterSingle": "Фильтр материалов: №%d из %d",
   "hud.materialFilterUpTo": "Фильтр материалов: первые %d",

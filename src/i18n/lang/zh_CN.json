@@ -145,7 +145,7 @@
   "column.item": "物品",
   "column.identifier": "标识符",
   "column.total": "总计数量",
-  "hud.fileName": "投影：%s",
+  "hud.fileName": "文件：%s",
   "hud.materialFilterAll": "材料筛选：全部",
   "hud.materialFilterSingle": "材料筛选：第 %d 种（共 %d 种）",
   "hud.materialFilterUpTo": "材料筛选：前 %d 种",

@@ -14,6 +14,7 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 
 namespace lholo::structure::detail {
@@ -48,6 +49,23 @@ struct StructureSessionSnapshot {
     SavedProjectionSnapshot                saved;
 };
 
+// Runtime placement intent, kept separate from immutable file contents.
+struct StructureLoadOrigin {
+    int x{}, y{}, z{};
+    std::optional<int> dimensionId;
+    bool operator==(StructureLoadOrigin const&) const = default;
+};
+
+struct StructureLoadRequest {
+    std::uint64_t revision{};
+    StructureLoadOrigin origin;
+};
+
+struct StructureActivationSnapshot {
+    std::shared_ptr<LoadedStructure const> loaded;
+    std::optional<StructureLoadOrigin> origin;
+};
+
 class StructureSession {
 public:
     static StructureSession& getInstance();
@@ -59,6 +77,7 @@ public:
 
     [[nodiscard]] StructureSessionSnapshot snapshot() const;
     [[nodiscard]] std::shared_ptr<LoadedStructure const> loaded() const;
+    [[nodiscard]] StructureActivationSnapshot activation() const;
     [[nodiscard]] bool hasLoaded() const;
     [[nodiscard]] std::string lastPath() const;
 
@@ -67,12 +86,13 @@ public:
     // that were produced before the switch.
     void setStatus(i18n::Message status);
     void setLastPath(std::string path);
-    void replaceLoaded(
-        std::shared_ptr<LoadedStructure> loaded,
-        std::string                      path,
-        i18n::Message                    status
-    );
     void clearLoaded(i18n::Message status);
+    void restoreLoaded(std::shared_ptr<LoadedStructure> loaded, SavedProjectionSnapshot const& saved,
+                       i18n::Message status);
+    [[nodiscard]] StructureLoadRequest beginFileLoad(StructureLoadOrigin origin);
+    bool completeFileLoad(StructureLoadRequest const& request, std::shared_ptr<LoadedStructure> loaded,
+                          std::string path, i18n::Message status);
+    bool failFileLoad(StructureLoadRequest const& request, i18n::Message status);
 
     [[nodiscard]] StructureTransformSnapshot transform() const;
     [[nodiscard]] bool layerDisplayEnabled() const;
@@ -99,9 +119,13 @@ private:
     [[nodiscard]] StructureTransformSnapshot transformRelaxed() const;
     [[nodiscard]] SavedProjectionSnapshot savedProjectionLocked() const;
     void refreshSavedTransformLocked();
+    void replaceLoadedLocked(std::shared_ptr<LoadedStructure> loaded, std::string path,
+                             i18n::Message status, StructureLoadOrigin origin);
 
     mutable std::mutex              mMutex;
     std::shared_ptr<LoadedStructure> mLoaded;
+    std::optional<StructureLoadOrigin> mLoadOrigin;
+    std::uint64_t mLoadRevision{};
     std::string                      mSavedStructurePath;
     std::string                      mLastPath;
     i18n::Message                    mStatus{i18n::TextKey::StatusNotLoaded};

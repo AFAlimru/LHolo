@@ -15,6 +15,17 @@ struct LoadedStructure;
 
 namespace lholo::projection::detail {
 
+// Exact cache key: turning, moving, projection changes and resource publication
+// all invalidate classification. No camera/world object is retained.
+struct ProjectionViewKey {
+    std::array<float, 16> matrix{};
+    float originX{}, originY{}, originZ{};
+    std::uint64_t activation{}, meshRevision{};
+    std::size_t sections{};
+    bool hasMatrix{};
+    bool operator==(ProjectionViewKey const&) const = default;
+};
+
 struct ProjectionBounds {
     Vec3 minimum{};
     Vec3 maximum{};

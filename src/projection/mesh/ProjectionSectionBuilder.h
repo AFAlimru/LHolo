@@ -7,6 +7,7 @@
 #pragma once
 
 #include <cstddef>
+#include <array>
 
 #include "mc/client/renderer/Tessellator.h"
 #include "mc/util/Mirror.h"
@@ -14,10 +15,15 @@
 
 class BlockSource;
 class BlockTessellator;
+class Block;
 
 namespace lholo::projection::detail {
 
 struct ProjectionState;
+
+// Conservative union of the engine's declared biome sampling patterns.
+std::array<int, 3> projectionBiomeSamplingPadding();
+bool projectionUsesBiomeTint(Block const& block);
 
 struct ProjectionSectionBuildSettings {
     Mirror   mirror{Mirror::None};

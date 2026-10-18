@@ -9,6 +9,8 @@
 #include "projection/core/ProjectionInternalTypes.h"
 #include "projection/ProjectionTypes.h"
 #include "projection/core/ProjectionVisibilityRules.h"
+#include "projection/core/ProjectionDrawCache.h"
+#include "projection/core/ProjectionBiomeRefresh.h"
 
 #include <array>
 #include <cstddef>
@@ -44,6 +46,7 @@ struct SectionState {
     Vec3    center{};
     ProjectionBounds buildBounds;
     ProjectionBounds meshBounds;
+    ProjectionBiomeRefresh biomeRefresh;
     bool renderVisible{true};
     bool buildVisible{true};
     bool prefetchVisible{true};
@@ -128,8 +131,19 @@ struct ProjectionState {
     std::vector<SectionState>               sections;
     std::vector<std::size_t>                blockToSection;
     std::size_t                             dirtySectionCursor{};
+    std::size_t                             biomeRefreshCursor{};
+    std::size_t                             biomeRefreshVisibleCursor{};
+    std::uint64_t                           biomeRefreshFrame{};
+    std::uint64_t                           biomeSampleRetryCount{};
     std::uint64_t                           meshBuildSelections{};
     std::size_t                             visibleSectionCount{};
+    // Render-thread/session-owned values only. Session reset releases caches
+    // after workers stop; no cached pointer can outlive a mesh or world.
+    std::uint64_t                           drawMeshRevision{};
+    std::uint64_t                           visibilityRevision{};
+    std::optional<ProjectionViewKey>         visibilityKey;
+    ProjectionDrawCache                     drawCache;
+    ProjectionDrawTimings                   drawTimings;
     std::uint64_t                           meshWorkerGeneration{};
     int                                     consecutiveMeshWorkerFailures{};
     bool                                    asyncMeshBuildingEnabled{true};
@@ -153,7 +167,6 @@ struct ProjectionState {
     std::shared_ptr<ExpectedBlockIndexMap>   expectedWorldBlockIndices{
         std::make_shared<ExpectedBlockIndexMap>()
     };
-    bool                                    meshPreflightDone{};
 };
 
 } // namespace lholo::projection::detail

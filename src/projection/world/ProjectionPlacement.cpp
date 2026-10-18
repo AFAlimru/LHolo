@@ -82,6 +82,9 @@ void rebuildProjectionPlacement(
     LegacyStructureSettings const&     transformSettings,
     ProjectionPlacementSettings const& settings
 ) {
+    ++state.drawMeshRevision; // invalidate before mutating layout/centers
+    for (auto& section : state.sections) section.biomeRefresh = {};
+    state.biomeRefreshCursor = state.biomeRefreshVisibleCursor = 0;
     // A moved placement keeps its local GPU geometry, but the virtual world
     // and correction lookup must follow the new world origin.
     state.blockTessellator = std::make_unique<BlockTessellator>(&region);

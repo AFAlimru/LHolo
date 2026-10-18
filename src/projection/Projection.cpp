@@ -98,14 +98,6 @@ void setMissingSeeThrough(bool enabled) {
     detail::ProjectionSession::getInstance().setMissingSeeThrough(enabled);
 }
 
-void requestNextStructureAnchor(int x, int y, int z) {
-    detail::ProjectionSession::getInstance().requestAnchor(x, y, z);
-}
-
-void cancelNextStructureAnchorRequest() {
-    detail::ProjectionSession::getInstance().cancelAnchorRequest();
-}
-
 bool consumeWorldExitRequest() {
     return detail::consumeWorldExitRequest();
 }

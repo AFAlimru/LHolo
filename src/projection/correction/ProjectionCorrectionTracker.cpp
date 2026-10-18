@@ -32,6 +32,7 @@ void markSectionDirty(ProjectionState& state, std::size_t section) {
     auto& sectionState = state.sections[section];
     sectionState.dirty = true;
     sectionState.incrementalDirty = true;
+    sectionState.biomeRefresh = {}; // actual correction/neighbor change starts a fresh budget
     ++sectionState.requestedRevision;
 }
 
@@ -51,6 +52,7 @@ std::size_t ensureCorrectionSection(
     if (auto const found = state.localSectionIndices.find(key);
         found != state.localSectionIndices.end()) {
         if (state.sectionBlockIndices[found->second].empty()) {
+            ++state.drawMeshRevision;
             state.sections[found->second].center = Vec3{
                 static_cast<float>(transformedPosition.x) + 0.5f,
                 static_cast<float>(transformedPosition.y) + 0.5f,
