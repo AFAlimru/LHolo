@@ -4,15 +4,13 @@
 #include "ui/MenuController.h"
 
 #include "place/PlaceHelper.h"
-#include "plugin/LHolo.h"
 #include "projection/Projection.h"
 #include "structure/StructurePaths.h"
 #include "structure/StructureLoader.h"
-#include "structure/MaterialTracker.h"
+#include "structure/StructureFileLoader.h"
 #include "structure/StructureSession.h"
 #include "structure/StructureUiState.h"
 #include "structure/capture/StructureCapture.h"
-#include "structure/formats/StructureFormatLoaders.h"
 #include "ui/FileDialog.h"
 #include "ui/FluentTheme.h"
 #include "ui/HotkeyFormat.h"
@@ -20,20 +18,16 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstddef>
-#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <thread>
 
 #include <Windows.h>
 
 #include "imgui.h"
-#include "ll/api/mod/NativeMod.h"
 #include "ll/api/service/Bedrock.h"
 #include "mc/client/game/ClientInstance.h"
 #include "mc/client/player/LocalPlayer.h"
@@ -42,18 +36,9 @@
 namespace lholo::ui {
 namespace {
 
-auto& logger() {
-    return LHolo::getInstance().getSelf().getLogger();
-}
-
 auto& uiState() {
     return structure::detail::StructureUiState::getInstance();
 }
-
-struct LoadingHintCompletion {
-    std::uint64_t token;
-    ~LoadingHintCompletion() { uiState().finishLoadingHint(token); }
-};
 
 std::array<char, 2048> gPathBuffer{};
 bool                   gPathInitialized{};
@@ -303,16 +288,11 @@ MenuActions buildStructureMenuActions(bool& refreshModel) {
         return selected ? std::optional<std::string>{structure::detail::pathToUtf8(*selected)}
                         : std::nullopt;
     };
-    static std::atomic<bool> sIsLoadingStructure{false};
     actions.loadStructure = [&refreshModel](std::string_view pathValue) {
-        if (sIsLoadingStructure.exchange(true)) {
-            return;
-        }
         auto& session = structure::detail::StructureSession::getInstance();
         auto const pathText = std::string{pathValue};
         if (pathText.empty()) {
             session.setStatus(i18n::Message{i18n::TextKey::StatusPathEmpty});
-            sIsLoadingStructure.store(false);
             return;
         }
         auto client = ll::service::getClientInstance();
@@ -320,58 +300,24 @@ MenuActions buildStructureMenuActions(bool& refreshModel) {
         if (!player) {
             session.setStatus(i18n::Message{i18n::TextKey::CaptureStatusNoWorld});
             refreshModel = true;
-            sIsLoadingStructure.store(false);
             return;
         }
         auto const position = player->getPosition();
-        auto const request = session.beginFileLoad(structure::detail::StructureLoadOrigin{
+        structure::detail::startStructureFileLoad(pathText, structure::detail::StructureLoadOrigin{
             static_cast<int>(std::floor(position.x)),
             static_cast<int>(std::floor(position.y)) - 1,
             static_cast<int>(std::floor(position.z)),
             static_cast<int>(player->getDimensionId())
         });
         refreshModel = true;
-        auto const loadingHint = uiState().beginLoadingHint();
-        std::thread([pathText, loadingHint, request]() {
-            LoadingHintCompletion const completion{loadingHint};
-            std::string error;
-            auto loaded = structure::detail::loadStructureFile(
-                structure::detail::pathFromUtf8(pathText), error
-            );
-            auto& session = structure::detail::StructureSession::getInstance();
-            if (!loaded) {
-                if (session.failFileLoad(request, i18n::Message{i18n::TextKey::StatusLoadFailed, {error}})) {
-                    logger().error("Could not load structure {}: {}", pathText, error);
-                }
-                sIsLoadingStructure.store(false);
-                return;
-            }
-            auto const renderBlocks = loaded->renderBlocks.size();
-            auto const status = structure::makeLoadedStatusMessage(*loaded);
-            if (!session.completeFileLoad(request, std::move(loaded), pathText, status)) {
-                sIsLoadingStructure.store(false);
-                return;
-            }
-            structure::detail::invalidateMaterialList();
-            structure::saveSettings();
-            logger().info("Loaded structure {}: {} renderable blocks", pathText, renderBlocks);
-            sIsLoadingStructure.store(false);
-        }).detach();
     };
     actions.restoreProjection = [&refreshModel] {
-        if (sIsLoadingStructure.exchange(true)) {
-            return;
-        }
-        refreshModel = true;
-        auto const loadingHint = uiState().beginLoadingHint();
-        std::thread([loadingHint]() {
-            LoadingHintCompletion const completion{loadingHint};
-            structure::restoreSavedProjection();
+        if (structure::detail::startSavedProjectionLoad()) {
             auto const savedPath =
                 structure::detail::StructureSession::getInstance().savedProjection().structurePath;
             std::snprintf(gPathBuffer.data(), gPathBuffer.size(), "%s", savedPath.c_str());
-            sIsLoadingStructure.store(false);
-        }).detach();
+        }
+        refreshModel = true;
     };
     actions.closeProjection = [&refreshModel] {
         structure::clear();

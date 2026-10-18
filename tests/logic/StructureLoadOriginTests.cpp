@@ -78,7 +78,8 @@ int runStructureLoadOriginTests() {
     saved.transform.rotation = 3;
     saved.transform.offsetY = 8;
     auto restored = makeStructure(106);
-    session.restoreLoaded(restored, saved, Message{TextKey::StatusRestoredPending});
+    auto restoreRequest = session.beginFileLoad({saved.anchorX, saved.anchorY, saved.anchorZ, std::nullopt});
+    check(session.completeRestoreLoad(restoreRequest, restored, saved, Message{TextKey::StatusRestoredPending}));
     auto const restoration = session.activation();
     check(restoration.loaded == restored);
     check(restoration.origin == std::optional{StructureLoadOrigin{-100, 45, 75, std::nullopt}});
@@ -90,6 +91,25 @@ int runStructureLoadOriginTests() {
     auto afterRestore = session.beginFileLoad(clicked);
     check(session.completeFileLoad(afterRestore, makeStructure(108), "new.mcstructure", {}));
     check(session.activation().origin == std::optional{clicked});
+
+    // A late restore cannot re-open a closed/new world or overwrite a newer
+    // ordinary load. Its saved transform must not leak on rejected publication.
+    auto staleRestore = session.beginFileLoad({});
+    session.clearLoaded(Message{TextKey::StatusWorldExited});
+    check(!session.completeRestoreLoad(staleRestore, restored, saved, {}));
+    check(!session.activation().loaded && !session.activation().origin);
+    check(session.transform().rotation == 0);
+    staleRestore = session.beginFileLoad({});
+    auto newerLoad = session.beginFileLoad(clicked);
+    check(session.completeFileLoad(newerLoad, second, "newer.mcstructure", {}));
+    check(!session.completeRestoreLoad(staleRestore, restored, saved, {}));
+    check(session.activation().loaded == second && session.transform().rotation == 0);
+    auto beforeShutdown = session.beginFileLoad({});
+    session.cancelPendingLoad();
+    check(!session.completeRestoreLoad(beforeShutdown, restored, saved, {}));
+    check(!session.completeFileLoad(beforeShutdown, first, "shutdown.mcstructure", {}));
+    check(!session.failFileLoad(beforeShutdown, {}));
+    check(session.activation().loaded == second);
 
     // Exercise the actual publication/clear mutex race in both possible orders.
     for (int run = 0; run < 64; ++run) {
@@ -103,6 +123,18 @@ int runStructureLoadOriginTests() {
         });
         start.store(true, std::memory_order_release);
         session.clearLoaded(Message{TextKey::StatusProjectionClosed});
+        worker.join();
+        check(!session.activation().loaded && !session.activation().origin);
+    }
+    for (int run = 0; run < 64; ++run) {
+        auto ticket = session.beginFileLoad({});
+        std::atomic<bool> start{};
+        std::thread worker([&] {
+            while (!start.load(std::memory_order_acquire)) std::this_thread::yield();
+            session.completeRestoreLoad(ticket, restored, saved, {});
+        });
+        start.store(true, std::memory_order_release);
+        session.clearLoaded(Message{TextKey::StatusWorldExited});
         worker.join();
         check(!session.activation().loaded && !session.activation().origin);
     }

@@ -20,7 +20,7 @@
 #include "input/ViewMoveBasis.h"
 #include "settings/SettingsStore.h"
 #include "structure/MaterialTracker.h"
-#include "structure/formats/StructureFormatLoaders.h"
+#include "structure/StructureFileLoader.h"
 #include "structure/StructureSession.h"
 #include "structure/StructurePaths.h"
 #include "structure/StructureUiState.h"
@@ -975,26 +975,7 @@ bool scrollLockActive() {
 }
 
 void restoreSavedProjection() {
-    auto& session = detail::StructureSession::getInstance();
-    auto const saved = session.savedProjection();
-    auto const& savedPath = saved.structurePath;
-    std::string error;
-    auto loaded = detail::loadStructureFile(detail::pathFromUtf8(savedPath), error);
-    if (!loaded) {
-        session.setStatus(i18n::Message{i18n::TextKey::StatusRestoreFailed, {error}});
-        logger().error("Could not restore structure {}: {}", savedPath, error);
-        return;
-    }
-    session.restoreLoaded(
-        std::move(loaded),
-        saved,
-        i18n::Message{i18n::TextKey::StatusRestoredPending}
-    );
-    detail::invalidateMaterialList();
-    logger().info(
-        "Restoring projection {} at ({}, {}, {})",
-        savedPath, saved.anchorX, saved.anchorY, saved.anchorZ
-    );
+    detail::startSavedProjectionLoad();
 }
 
 namespace {

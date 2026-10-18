@@ -2,7 +2,7 @@
 
 ## 实现边界
 
-- 保留异步文件加载与现有单线程网格执行器。本轮没有修改菜单加载线程；其任务生命周期问题仍需另行修复。
+- 保留异步文件加载与现有单线程网格执行器。文件任务统一由 `structure/StructureFileLoader` 管理，普通加载和恢复共用单任务入口；不在每帧等待任务，世界销毁及模组卸载时才等待已有任务。
 - `core/ProjectionFrustum.h` 只做矩阵数学，`core/ProjectionVisibilityRules.h` 管理包围盒与调度规则，`runtime/ProjectionVisibility.cpp` 适配游戏相机。游戏对象不进入纯规则测试。
 - 实际依赖为 LeviLamina 26.51.0。相机矩阵来自该包 `mc/deps/renderer/Camera.h` 的 `viewMatrixStack`、`projectionMatrixStack` 和内联 `getProjectionMatrix()`；沿用项目已有相机位置来源，没有新增位置偏移或猜测游戏函数。
 - 只提取四个视锥侧面，不推断近远平面、反向 Z 或深度范围；矩阵、包围盒无效时保留绘制。已有相机位置硬编码来源仍需要在目标游戏版本内复核。
@@ -44,7 +44,8 @@
 - 移动投影或相机改变局部相机位置；透明度跨越不透明/半透明模式时更新相应顺序与列表。切层通过布局和网格发布版本失效。
 - 缓存属于 `ProjectionState`，在 `ProjectionSession::withLockedState` 的锁内访问。工作线程不访问活动绘制缓存；网格结果通过原有 generation/revision 验证后发布。
 - 切维度、退出世界、关闭投影仍沿用先停止并等待网格工作线程、再释放会话状态的顺序。缓存随状态销毁，编号不会解引用已释放资源；新的 activation 也会强制重建缓存。
-- 此项仅覆盖本轮 CPU 绘制缓存与现有网格任务的生命周期，不改变异步文件加载线程的管理方式。
+- CPU 绘制缓存与网格任务仍按原有生命周期释放。文件任务独立拥有 future，关闭投影/退出世界通过 StructureSession 的请求版本拒绝迟到结果；恢复结果也必须校验版本，不能绕过清理重新激活。菜单路径只在 UI 回调内写入。
+- `.mcstructure` 的原版 `StructureTemplate` 依赖世界持有的 unknown-block registry。实际 26.51.0 API 返回 `optional_ref<Level>` 和 `NonOwnerPointer<IUnknownBlockTypeRegistry>`，均不能延长世界寿命。因此文件任务启动前独立注册 `LevelListener`，即使尚无活动投影也在 `onLevelDestruction` 中先清除发布意图，再等待解析完成；回调后丢弃 Level 指针，不对销毁中的 Level 调用 removeListener。不在普通关闭投影或每帧路径等待解析；退出世界时若仍在解析大文件，会等待有限的剩余工作。
 
 ### 复现与测量
 

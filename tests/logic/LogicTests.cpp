@@ -54,7 +54,8 @@ void replaceLoadedForTest(lholo::structure::detail::StructureSession& session,
     lholo::structure::detail::SavedProjectionSnapshot saved;
     saved.structurePath = std::move(path);
     saved.transform = session.transform();
-    session.restoreLoaded(std::move(loaded), saved, std::move(status));
+    auto const request = session.beginFileLoad({});
+    session.completeRestoreLoad(request, std::move(loaded), saved, std::move(status));
 }
 
 bool expectBlockPos(BlockPos const& pos, int x, int y, int z) {

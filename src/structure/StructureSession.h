@@ -87,8 +87,9 @@ public:
     void setStatus(i18n::Message status);
     void setLastPath(std::string path);
     void clearLoaded(i18n::Message status);
-    void restoreLoaded(std::shared_ptr<LoadedStructure> loaded, SavedProjectionSnapshot const& saved,
-                       i18n::Message status);
+    bool completeRestoreLoad(StructureLoadRequest const& request, std::shared_ptr<LoadedStructure> loaded,
+                             SavedProjectionSnapshot const& saved, i18n::Message status);
+    void cancelPendingLoad();
     [[nodiscard]] StructureLoadRequest beginFileLoad(StructureLoadOrigin origin);
     bool completeFileLoad(StructureLoadRequest const& request, std::shared_ptr<LoadedStructure> loaded,
                           std::string path, i18n::Message status);

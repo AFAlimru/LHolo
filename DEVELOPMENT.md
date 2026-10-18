@@ -307,12 +307,21 @@ LHolo/
 
 `LHolo::enable()` 的顺序：
 
-1. 安装投影相关 LeviLamina Hook。
+1. 开放结构文件后台任务入口，再安装投影相关 LeviLamina Hook。
 2. 安装辅助放置 Hook：`LocalPlayer::$tickWorld` 负责每 tick 驱动，三个 `GameMode` build Hook 负责命中真实方块时的右键状态和原版放置抑制，`GameMode::$useItem` 负责捕获指向空气的右键操作（tick Hook 失败仅告警，不阻断；单个手动 Hook 失败会分别告警并降级对应行为）。
 3. 安装菜单输入保护：`MouseDevice::feed` 与 `HIDControllerGameCoreDesktop::$onKeyDown/$onKeyUp` 在游戏和原生 UI 处理前取得输入所有权。三项 Hook 状态独立告警，不阻断菜单启用。
 4. 尝试安装 ImGui/DXGI Hook；图形环境尚未可用时允许后续 `Present` 重试。
 
 配置由 `LHolo::load()` 在 enable 之前从 `mods/LHolo/config/config.json` 读取。世界退出由 `LevelListener::onLevelDestruction()` 发布轻量信号；投影渲染入口和 Overlay Present 都能观察该信号，真正的结构、辅助放置、捕获和投影清理在引擎回调之外执行。投影渲染入口仍通过 `client/level/dimension` 身份变化检测世界/维度切换，并在上下文失效时清理投影。
+
+文件加载由 `structure/StructureFileLoader` 独立管理一个后台 future，普通加载、菜单恢复与恢复快捷键
+共用入口。请求在派发前捕获位置/维度或保存的恢复参数，成功/失败均校验 StructureSession 的请求
+版本；关闭、退出世界和卸载会使旧结果失效。工作线程不写菜单路径缓冲区，提示令牌由作用域自动
+结束；异常转为加载失败，不留下永久忙状态。普通关闭和逐帧渲染不等待文件解析。
+由于原版 StructureTemplate 借用 Level 的 unknown-block registry，文件模块在启动任务前独立注册
+LevelListener，即使首个投影尚未激活，世界销毁回调也先清空会话并等待文件任务，再允许注册表释放。
+卸载同样先禁止派发、提升请求版本并等待任务；只有这些销毁边界等待尚未结束的解析。
+此监听器与现有投影/网格监听器分别负责文件和网格任务；前者不获取投影状态或 Worker 锁。
 
 投影启用入口只有 `enableStructureProjection()`。它要求：
 
@@ -325,7 +334,7 @@ LHolo/
 
 当前关闭顺序：
 
-1. 保存配置。
+1. 关闭结构文件任务入口、取消待发布结果并等待已有文件任务完成，再保存配置。
 2. 清理辅助放置、结构、菜单、捕获和投影状态；投影停止接收网格任务，提升 Worker generation，清空待处理结果并等待 in-flight Worker 退出。
 3. 卸载菜单鼠标/HID 输入源 Hook。
 4. 卸载辅助放置的 tick/build Hook。

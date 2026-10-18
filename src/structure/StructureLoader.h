@@ -131,7 +131,7 @@ void recordProjectionAnchor(int x, int y, int z);
 // movement: a projection is loaded and the fixed Alt trigger is held.
 bool scrollLockActive();
 void clear();
-// Reload the last saved projection at its saved anchor/transform. Standalone so
+// Asynchronously reload the last saved projection at its saved anchor/transform. Standalone so
 // both the menu action and the load hotkey can trigger it.
 void restoreSavedProjection();
 // Status line for a freshly loaded structure. File names and dimensions are

@@ -13,6 +13,7 @@
 #include "structure/capture/StructureCapture.h"
 #include "structure/MaterialTracker.h"
 #include "structure/StructureLoader.h"
+#include "structure/StructureFileLoader.h"
 
 #include "ll/api/mod/NativeMod.h"
 
@@ -33,6 +34,7 @@ bool AppKernel::enable() {
     auto& logger = LHolo::getInstance().getSelf().getLogger();
 
     projection::detail::resetMeshWorkerForSession();
+    structure::detail::enableStructureFileLoader();
 
     if (!projection::detail::projectionController().installHooks()) {
         logger.error("Failed to install projection hooks");
@@ -65,6 +67,7 @@ bool AppKernel::enable() {
 bool AppKernel::disable() {
     auto& logger = LHolo::getInstance().getSelf().getLogger();
 
+    structure::detail::shutdownStructureFileLoader();
     structure::saveSettings();
     structure::detail::shutdownMaterialTracker();
     // Drop all world-owned state before removing hooks. In particular, this

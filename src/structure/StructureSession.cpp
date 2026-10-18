@@ -120,10 +120,12 @@ void StructureSession::replaceLoadedLocked(
     mLoadOrigin = origin;
 }
 
-void StructureSession::restoreLoaded(
-    std::shared_ptr<LoadedStructure> loaded, SavedProjectionSnapshot const& saved, i18n::Message status
+bool StructureSession::completeRestoreLoad(
+    StructureLoadRequest const& request, std::shared_ptr<LoadedStructure> loaded,
+    SavedProjectionSnapshot const& saved, i18n::Message status
 ) {
     std::lock_guard lock(mMutex);
+    if (request.revision != mLoadRevision) return false;
     setRotation(saved.transform.rotation);
     setMirror(std::clamp(saved.transform.mirror, 0, 2));
     setOffsetX(saved.transform.offsetX);
@@ -134,6 +136,12 @@ void StructureSession::restoreLoaded(
     setLayerAxis(saved.transform.layerAxis);
     replaceLoadedLocked(std::move(loaded), saved.structurePath, std::move(status),
         StructureLoadOrigin{saved.anchorX, saved.anchorY, saved.anchorZ, std::nullopt});
+    return true;
+}
+
+void StructureSession::cancelPendingLoad() {
+    std::lock_guard lock(mMutex);
+    ++mLoadRevision;
 }
 
 StructureLoadRequest StructureSession::beginFileLoad(StructureLoadOrigin origin) {
