@@ -12,6 +12,8 @@
 #include "structure/StructureLoader.h"
 #include "render/BoxWireframeMesh.h"
 
+#include <algorithm>
+
 #include "mc/client/renderer/block/BlockTessellator.h"
 #include "mc/world/level/BlockSource.h"
 #include "mc/world/level/levelgen/structure/LegacyStructureSettings.h"
@@ -36,8 +38,11 @@ void ensureStructureBoundsMesh(
     auto const depth = static_cast<float>(
         rotated ? state.structure->sizeX : state.structure->sizeZ
     );
+    // The floor line sits on top of the bottom layer rather than under it: the
+    // bottom layer is usually the build's floor set into the ground, and a line
+    // at its underside was buried a block below the surface and never visible.
     state.structureBoundsMesh = render::buildBoxWireframeMesh(tessellator,
-        {0,0,0}, {width,height,depth}, "LHoloStructureBounds");
+        {0,std::min(1.0f, height),0}, {width,height,depth}, "LHoloStructureBounds");
 }
 
 } // namespace

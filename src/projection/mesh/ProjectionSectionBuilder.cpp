@@ -55,7 +55,6 @@ constexpr std::uint32_t ExtraColorAbgrRgb      = 0x00E64CFFU; // #FF4CE6
 constexpr std::uint32_t WrongBlockColorAbgrRgb = 0x003333FFU; // #FF3333
 constexpr std::uint32_t WrongStateColorAbgrRgb = 0x001090FFU; // #FF9010
 
-constexpr std::uint32_t LiquidWaterTintAbgrRgb = 0x00E4763FU; // #3F76E4
 constexpr std::uint32_t LiquidLavaTintAbgrRgb  = 0x001080FFU; // #FF8010
 
 void setColorAbgr(Tessellator& tessellator, std::uint32_t colorAbgr) {
@@ -165,7 +164,8 @@ void buildLiquidProxySectionMesh(
     Tessellator&,
     std::size_t,
     Tessellator::UploadMode,
-    ProjectionSectionBuildSettings const&
+    ProjectionSectionBuildSettings const&,
+    BlockSource&
 );
 
 void buildBlockEntityPlaceholderSectionMesh(
@@ -419,7 +419,7 @@ void buildProjectionSection(
     }
 
     detail::buildLiquidProxySectionMesh(
-        state, tessellator, section, uploadMode, sectionBuildSettings
+        state, tessellator, section, uploadMode, sectionBuildSettings, region
     );
     detail::buildBlockEntityPlaceholderSectionMesh(
         state,
@@ -459,7 +459,8 @@ void buildLiquidProxySectionMesh(
     Tessellator&                          tessellator,
     std::size_t                           section,
     Tessellator::UploadMode               uploadMode,
-    ProjectionSectionBuildSettings const& settings
+    ProjectionSectionBuildSettings const& settings,
+    BlockSource&                          region
 ) {
     auto const mirrorMode        = settings.mirrorMode;
     auto const rotationTurns     = settings.rotationTurns;
@@ -499,10 +500,24 @@ void buildLiquidProxySectionMesh(
             bool const isLava = expectedLiquid->getTypeName().find("lava") != std::string::npos
                 || expectedLiquid->getBlockType().mMaterial.mSuperHot;
 
-            // Route B: Water uses standard blue (#3F76E4) to tint grayscale water tiles.
-            // Lava uses fiery molten orange (#FF8010), ensuring grayscale flowing lava tiles
-            // and fallback tiles display rich, warm molten color rather than rendering white.
-            auto const baseRgb = isLava ? LiquidLavaTintAbgrRgb : LiquidWaterTintAbgrRgb;
+            auto const p = transformStructurePosition(entry, *state.structure, mirrorMode, rotationTurns);
+            BlockPos const worldPosition{
+                state.anchor.x + offsetX + p.x,
+                state.anchor.y + offsetY + p.y,
+                state.anchor.z + offsetZ + p.z
+            };
+
+            // Water takes the biome water color the vanilla water renderer uses
+            // for this position (the same grey tile tinted the same way), so the
+            // projection matches the real water and any resource pack that
+            // retextures the grey water tiles. A fixed #3F76E4 multiplied by a
+            // pack's grey tile came out far darker than the water in the world.
+            // Lava keeps the molten orange, which its grey flow tile needs.
+            auto const baseRgb = isLava
+                ? LiquidLavaTintAbgrRgb
+                : (toAbgr(BiomeColorSampling::getTessellationPolicy(TintMethod::Water)
+                       .get(*expectedLiquid, region, worldPosition, nullptr))
+                   & 0x00FFFFFFU);
             // Preserve the liquid appearance used at full projection opacity.
             float const effectiveAlpha = isLava ? 0.85f : 0.65f;
             auto const alphaByte = static_cast<std::uint32_t>(std::lround(effectiveAlpha * 255.0f));
@@ -517,6 +532,14 @@ void buildLiquidProxySectionMesh(
             auto const* uvSetStill = graphics ? &graphics->getTexture(0, 0) : nullptr;
             auto const* uvSetFlow = graphics ? &graphics->getTexture(2, 0) : nullptr;
             if (!uvSetFlow) uvSetFlow = uvSetStill;
+            // Flow arrows stand in for a resource pack's flowing-water tile
+            // (which the projection cannot sample, see the surface below), so
+            // draw them only when a pack replaces that tile. The texture's
+            // source location is the same relative path either way, so tell the
+            // vanilla tile apart by its image: the vanilla flowing-water flipbook
+            // is 32x1024 (32 frames of 32x32).
+            bool const packFlowTile = uvSetFlow
+                && !(uvSetFlow->_sourceImageWidth == 32 && uvSetFlow->_sourceImageHeight == 1024);
 
             float const u0_s = uvSetStill ? uvSetStill->_u0 : 0.0f;
             float const v0_s = uvSetStill ? uvSetStill->_v0 : 0.0f;
@@ -529,12 +552,6 @@ void buildLiquidProxySectionMesh(
             float const v1_f = uvSetFlow ? uvSetFlow->_v1 : v1_s;
             float const dv_f = v1_f - v0_f;
 
-            auto const p = transformStructurePosition(entry, *state.structure, mirrorMode, rotationTurns);
-            BlockPos const worldPosition{
-                state.anchor.x + offsetX + p.x,
-                state.anchor.y + offsetY + p.y,
-                state.anchor.z + offsetZ + p.z
-            };
             auto const neighborEntry = [&](int dx, int dy, int dz)
                 -> structure::LoadedStructure::RenderBlock const* {
                 auto const found = state.expectedWorldBlockIndices->find(std::tuple{
@@ -625,6 +642,13 @@ void buildLiquidProxySectionMesh(
                 );
             }
             if (!neighborIsSameLiquid(0, 1, 0)) {
+                // The surface always uses the still tile. The flowing tile is an
+                // animated flipbook that RenderDragon advances in a texture the
+                // projection cannot sample (its cell in the bound atlas holds no
+                // frame), so a flowing cell instead gets an arrow drawn along its
+                // downhill direction, like flow-arrow resource packs show. The
+                // flow vector is the height drop to each open horizontal
+                // neighbour, as in the vanilla liquid renderer.
                 addQuad(
                     {x0, yc00, z0}, u0_s, v0_s,
                     {x0, yc01, z1}, u0_s, v1_s,
@@ -632,6 +656,87 @@ void buildLiquidProxySectionMesh(
                     {x1, yc10, z0}, u1_s, v0_s,
                     topColor
                 );
+                // Flow vector, ported from the vanilla fluid flow rule: each cell
+                // weighs its own fluid amount (not the submerged/corner height
+                // used for the surface shape). A same-liquid neighbour pulls by
+                // the amount difference; an open (non-motion-blocking) neighbour
+                // pulls only when liquid lies directly beneath it, as a drop.
+                auto const fluidAmount = [](int depth) {
+                    if (depth <= 0 || depth >= 8) return 8.0f / 9.0f;  // source/falling
+                    return (8.0f - static_cast<float>(depth)) / 9.0f;
+                };
+                auto const sameLiquidDepth = [&](int dx, int dy, int dz) -> std::optional<int> {
+                    if (!neighborIsSameLiquid(dx, dy, dz)) return std::nullopt;
+                    auto const* n = neighborEntry(dx, dy, dz);
+                    auto const* t = transformExpectedBlock(n->liquid, sectionTransformSettings, identityTransform);
+                    if (!t) return std::nullopt;
+                    return getLiquidDepth(*t);
+                };
+                float const selfAmount = fluidAmount(getLiquidDepth(*expectedLiquid));
+                float flowX = 0.0f;
+                float flowZ = 0.0f;
+                constexpr int kFlowDirs[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+                for (auto const& dir : kFlowDirs) {
+                    float diff = 0.0f;
+                    if (auto const depth = sameLiquidDepth(dir[0], 0, dir[1])) {
+                        diff = selfAmount - fluidAmount(*depth);
+                    } else {
+                        auto const* n = neighborEntry(dir[0], 0, dir[1]);
+                        bool const blocksMotion = n && n->block && !n->block->isAir()
+                            && n->block->getMaterial().mBlocksMotion;
+                        if (!blocksMotion) {
+                            if (auto const below = sameLiquidDepth(dir[0], -1, dir[1])) {
+                                diff = selfAmount - (fluidAmount(*below) - 8.0f / 9.0f);
+                            }
+                        }
+                    }
+                    flowX += static_cast<float>(dir[0]) * diff;
+                    flowZ += static_cast<float>(dir[1]) * diff;
+                }
+                float const flowLength = std::sqrt(flowX * flowX + flowZ * flowZ);
+                if (packFlowTile && flowLength > 1.0e-4f) {
+                    // Snap to the nearest of the 8 compass directions: the in-game
+                    // flow arrows only ever point along an axis or a diagonal.
+                    float const snapped = std::round(std::atan2(flowZ, flowX) / 0.78539816f) * 0.78539816f;
+                    float const fx = std::cos(snapped);  // forward (downhill)
+                    float const fz = std::sin(snapped);
+                    // Point on the sloped surface at cell-relative (a, b) in [0,1].
+                    // The surface quad is drawn as two triangles split along the
+                    // (x0,z0)-(x1,z1) diagonal, so follow that exact triangle
+                    // rather than a bilinear blend: on a twisted cell (next to a
+                    // source, diagonally) the blend dipped below the drawn
+                    // surface and the arrow vanished. Lift it clear of the fold.
+                    auto const surfacePoint = [&](float along, float across) -> Vec3 {
+                        float const a = 0.5f + fx * along - fz * across;
+                        float const b = 0.5f + fz * along + fx * across;
+                        float const height = b >= a
+                            ? yc00 + (yc01 - yc00) * b + (yc11 - yc01) * a
+                            : yc00 + (yc10 - yc00) * a + (yc11 - yc10) * b;
+                        return {x0 + a, height + 0.02f, z0 + b};
+                    };
+                    // A flat-colored arrow: every vertex samples the still tile's
+                    // centre, then the vertex color darkens it.
+                    float const um = (u0_s + u1_s) * 0.5f;
+                    float const vm = (v0_s + v1_s) * 0.5f;
+                    auto const arrowColor = applyShade(
+                        baseRgb, 0.30f, std::min<std::uint32_t>(255U, alphaByte + 70U)
+                    );
+                    // Same winding as the surface quad (clockwise seen from above).
+                    addQuad(
+                        surfacePoint(-0.30f,  0.07f), um, vm,
+                        surfacePoint( 0.06f,  0.07f), um, vm,
+                        surfacePoint( 0.06f, -0.07f), um, vm,
+                        surfacePoint(-0.30f, -0.07f), um, vm,
+                        arrowColor
+                    );
+                    addQuad(
+                        surfacePoint(0.06f,  0.20f), um, vm,
+                        surfacePoint(0.34f,  0.00f), um, vm,
+                        surfacePoint(0.34f,  0.00f), um, vm,
+                        surfacePoint(0.06f, -0.20f), um, vm,
+                        arrowColor
+                    );
+                }
             }
 
             auto addSideFace = [&](
