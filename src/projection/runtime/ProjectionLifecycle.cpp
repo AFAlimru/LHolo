@@ -4,6 +4,7 @@
 #include "projection/runtime/ProjectionLifecycle.h"
 
 #include "projection/core/ProjectionInternalTypes.h"
+#include "projection/mesh/LiquidFlipbook.h"
 #include "projection/mesh/ProjectionMeshWorker.h"
 #include "projection/runtime/ProjectionProgress.h"
 #include "projection/core/ProjectionState.h"
@@ -125,6 +126,8 @@ bool prepareProjectionState(
     state.liquidProxySectionMeshes.resize(state.sectionBlockIndices.size());
     state.blockEntityPlaceholderSectionMeshes.resize(state.sectionBlockIndices.size());
     state.sectionExtraBlockPositions.resize(state.sectionBlockIndices.size());
+    // Before any mesh is built, so every liquid hull agrees on its texture.
+    (void)prepareLiquidFlipbook(client);
     return resolveTerrainTexture(client, state);
 }
 

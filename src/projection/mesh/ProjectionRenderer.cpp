@@ -6,6 +6,7 @@
 
 #include "projection/core/ProjectionInternalTypes.h"
 #include "projection/core/ProjectionState.h"
+#include "projection/mesh/LiquidFlipbook.h"
 #include "projection/world/ProjectionVirtualWorld.h"
 
 #include <algorithm>
@@ -23,6 +24,8 @@
 #include "mc/client/renderer/blockactor/BlockActorRenderDispatcher.h"
 #include "mc/client/renderer/game/ItemInHandRenderer.h"
 #include "mc/common/Brightness.h"
+#include "mc/client/renderer/ptexture/LightTexture.h"
+#include "mc/world/level/block/BrightnessPair.h"
 #include "mc/client/renderer/game/LevelRenderer.h"
 #include "mc/client/renderer/game/LevelRendererPlayer.h"
 #include "mc/deps/core/renderer/RenderMaterialInfo.h"
@@ -216,9 +219,40 @@ void submitProjectionMeshPass(
     }
 
     // Textured liquid hulls travel the proven glass path: blend-block material
-    // plus the terrain atlas, sorted back to front by section.
+    // plus the terrain atlas (or the animated liquid flipbook the hulls were
+    // built for), sorted back to front by section.
     if (renderAlphaLayer) {
+        auto const* liquidTexture = liquidFlipbookReady()
+            ? acquireLiquidFlipbookTexture(client)
+            : &*state.terrainTextureVariant;
+        // The flipbook is a plain 2D texture, which the block materials cannot
+        // sample; the beacon beam's translucent material can.
+        auto const* beamMaterial = liquidFlipbookReady() ? render::resolveBeaconBeamTransparentMaterial() : nullptr;
+        auto const& liquidMaterial = beamMaterial ? *beamMaterial : blendMaterial;
+        // The beam shader scales and offsets its UVs by the actor constants'
+        // UV animation; the player priming above leaves that collapsed, which
+        // made every texel read the texture's corner. Set an identity one at
+        // full brightness, as for a block drawn outside the terrain pass.
+        auto* lightTexture = client.getLightTexture();
+        auto* localPlayer = client.getLocalPlayer();
+        if (beamMaterial && lightTexture && localPlayer) {
+            BrightnessPair full;
+            full.sky = Brightness::MAX();
+            full.block = Brightness::MAX();
+            ActorShaderManager::setupShaderParameters(
+                renderContext.mScreenContext,
+                localPlayer->getDimensionBlockSource(),
+                full,
+                glm::vec4{1.0f, 1.0f, 1.0f, 1.0f},
+                1.0f,
+                true,
+                *lightTexture,
+                Vec2{1.0f, 1.0f},
+                Vec4{0.0f, 0.0f, 1.0f, 1.0f}
+            );
+        }
         for (auto const liquidSection : list(ProjectionDrawSlot::Liquid)) {
+            if (!liquidTexture) break;
             if (liquidSection >= state.liquidProxySectionMeshes.size()) continue;
             auto const& candidate = state.liquidProxySectionMeshes[liquidSection];
             if (!candidate || !candidate->isValid()) continue;
@@ -226,12 +260,25 @@ void submitProjectionMeshPass(
             ++drawTimer.draws;
             mesh.renderMesh(
                 renderContext.mScreenContext,
-                blendMaterial,
-                *state.terrainTextureVariant,
+                liquidMaterial,
+                *liquidTexture,
                 0,
                 mesh.mVertexCount.get().value_or(0u),
                 emptyOffscreenCaptureDescription(),
                 nullptr
+            );
+        }
+
+        // Restore the player priming for the block materials drawn after.
+        if (beamMaterial && localPlayer) {
+            ActorShaderManager::setupShaderParameters(
+                renderContext.mScreenContext,
+                renderContext,
+                *localPlayer,
+                mce::Color{1.0f, 1.0f, 1.0f, 0.0f},
+                1.0f,
+                Brightness::MAX(),
+                std::nullopt
             );
         }
 

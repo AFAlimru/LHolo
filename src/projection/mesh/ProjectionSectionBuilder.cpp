@@ -13,6 +13,7 @@
 #include "projection/core/ProjectionShellRules.h"
 #include "projection/core/ProjectionState.h"
 #include "projection/core/ProjectionTintRules.h"
+#include "projection/mesh/LiquidFlipbook.h"
 #include "projection/world/ProjectionVirtualWorld.h"
 #include "structure/StructureLoader.h"
 
@@ -486,6 +487,7 @@ void buildLiquidProxySectionMesh(
         liquidProxyIndices.push_back(index);
     }
     if (!liquidProxyIndices.empty()) {
+        bool const useFlipbook = liquidFlipbookReady();
         tessellator.begin(
             Tessellator::DebugContextCallback{},
             mce::PrimitiveMode::QuadList,
@@ -541,15 +543,23 @@ void buildLiquidProxySectionMesh(
             bool const packFlowTile = uvSetFlow
                 && !(uvSetFlow->_sourceImageWidth == 32 && uvSetFlow->_sourceImageHeight == 1024);
 
-            float const u0_s = uvSetStill ? uvSetStill->_u0 : 0.0f;
-            float const v0_s = uvSetStill ? uvSetStill->_v0 : 0.0f;
-            float const u1_s = uvSetStill ? uvSetStill->_u1 : 0.0f;
-            float const v1_s = uvSetStill ? uvSetStill->_v1 : 0.0f;
+            // With the projection's own flipbook texture (see LiquidFlipbook.h)
+            // the hull samples its animated cells instead of the atlas tiles.
+            auto const stillCell = liquidFlipbookCellUv(
+                isLava ? LiquidFlipbookCell::LavaStill : LiquidFlipbookCell::WaterStill
+            );
+            auto const flowCell = liquidFlipbookCellUv(
+                isLava ? LiquidFlipbookCell::LavaFlow : LiquidFlipbookCell::WaterFlow
+            );
+            float const u0_s = useFlipbook ? stillCell.u0 : uvSetStill ? uvSetStill->_u0 : 0.0f;
+            float const v0_s = useFlipbook ? stillCell.v0 : uvSetStill ? uvSetStill->_v0 : 0.0f;
+            float const u1_s = useFlipbook ? stillCell.u1 : uvSetStill ? uvSetStill->_u1 : 0.0f;
+            float const v1_s = useFlipbook ? stillCell.v1 : uvSetStill ? uvSetStill->_v1 : 0.0f;
 
-            float const u0_f = uvSetFlow ? uvSetFlow->_u0 : u0_s;
-            float const v0_f = uvSetFlow ? uvSetFlow->_v0 : v0_s;
-            float const u1_f = uvSetFlow ? uvSetFlow->_u1 : u1_s;
-            float const v1_f = uvSetFlow ? uvSetFlow->_v1 : v1_s;
+            float const u0_f = useFlipbook ? flowCell.u0 : uvSetFlow ? uvSetFlow->_u0 : u0_s;
+            float const v0_f = useFlipbook ? flowCell.v0 : uvSetFlow ? uvSetFlow->_v0 : v0_s;
+            float const u1_f = useFlipbook ? flowCell.u1 : uvSetFlow ? uvSetFlow->_u1 : u1_s;
+            float const v1_f = useFlipbook ? flowCell.v1 : uvSetFlow ? uvSetFlow->_v1 : v1_s;
             float const dv_f = v1_f - v0_f;
 
             auto const neighborEntry = [&](int dx, int dy, int dz)
@@ -642,20 +652,14 @@ void buildLiquidProxySectionMesh(
                 );
             }
             if (!neighborIsSameLiquid(0, 1, 0)) {
-                // The surface always uses the still tile. The flowing tile is an
-                // animated flipbook that RenderDragon advances in a texture the
-                // projection cannot sample (its cell in the bound atlas holds no
-                // frame), so a flowing cell instead gets an arrow drawn along its
-                // downhill direction, like flow-arrow resource packs show. The
-                // flow vector is the height drop to each open horizontal
-                // neighbour, as in the vanilla liquid renderer.
-                addQuad(
-                    {x0, yc00, z0}, u0_s, v0_s,
-                    {x0, yc01, z1}, u0_s, v1_s,
-                    {x1, yc11, z1}, u1_s, v1_s,
-                    {x1, yc10, z0}, u1_s, v0_s,
-                    topColor
-                );
+                // A flowing surface shows the flowing tile turned downhill when
+                // the projection's flipbook texture is available. Without it the
+                // flowing tile cannot be sampled (its cell in the bound atlas
+                // holds no frame), so the surface keeps the still tile and a
+                // flowing cell gets an arrow drawn along its downhill direction,
+                // like flow-arrow resource packs show. The flow vector is the
+                // height drop to each open horizontal neighbour, as in the
+                // vanilla liquid renderer.
                 // Flow vector, ported from the vanilla fluid flow rule: each cell
                 // weighs its own fluid amount (not the submerged/corner height
                 // used for the surface shape). A same-liquid neighbour pulls by
@@ -694,7 +698,37 @@ void buildLiquidProxySectionMesh(
                     flowZ += static_cast<float>(dir[1]) * diff;
                 }
                 float const flowLength = std::sqrt(flowX * flowX + flowZ * flowZ);
-                if (packFlowTile && flowLength > 1.0e-4f) {
+                if (useFlipbook && flowLength > 1.0e-4f) {
+                    // The flowing tile turned so its v axis runs downhill. As in
+                    // the vanilla liquid renderer, one block covers the middle
+                    // half of the tile, which a turn of any angle keeps inside it.
+                    float const alongX = flowX / flowLength;
+                    float const alongZ = flowZ / flowLength;
+                    auto const flowU = [&](float a, float b) {
+                        float const across = (a - 0.5f) * -alongZ + (b - 0.5f) * alongX;
+                        return u0_f + (0.5f + across * 0.5f) * (u1_f - u0_f);
+                    };
+                    auto const flowV = [&](float a, float b) {
+                        float const along = (a - 0.5f) * alongX + (b - 0.5f) * alongZ;
+                        return v0_f + (0.5f + along * 0.5f) * dv_f;
+                    };
+                    addQuad(
+                        {x0, yc00, z0}, flowU(0.0f, 0.0f), flowV(0.0f, 0.0f),
+                        {x0, yc01, z1}, flowU(0.0f, 1.0f), flowV(0.0f, 1.0f),
+                        {x1, yc11, z1}, flowU(1.0f, 1.0f), flowV(1.0f, 1.0f),
+                        {x1, yc10, z0}, flowU(1.0f, 0.0f), flowV(1.0f, 0.0f),
+                        topColor
+                    );
+                } else {
+                    addQuad(
+                        {x0, yc00, z0}, u0_s, v0_s,
+                        {x0, yc01, z1}, u0_s, v1_s,
+                        {x1, yc11, z1}, u1_s, v1_s,
+                        {x1, yc10, z0}, u1_s, v0_s,
+                        topColor
+                    );
+                }
+                if (!useFlipbook && packFlowTile && flowLength > 1.0e-4f) {
                     // Snap to the nearest of the 8 compass directions: the in-game
                     // flow arrows only ever point along an axis or a diagonal.
                     float const snapped = std::round(std::atan2(flowZ, flowX) / 0.78539816f) * 0.78539816f;
@@ -739,6 +773,11 @@ void buildLiquidProxySectionMesh(
                 }
             }
 
+            // The flipbook's flowing tile is twice a block, so a side covers its
+            // top-left quarter, as in the vanilla liquid renderer.
+            float const sideU1 = useFlipbook ? u0_f + (u1_f - u0_f) * 0.5f : u1_f;
+            float const sideDv = useFlipbook ? dv_f * 0.5f : dv_f;
+            float const sideV1 = v0_f + sideDv;
             auto addSideFace = [&](
                 float xA, float zA, float ycA,
                 float xB, float zB, float ycB,
@@ -747,10 +786,10 @@ void buildLiquidProxySectionMesh(
                 float const hA = std::clamp(ycA - y0, 0.0f, 1.0f);
                 float const hB = std::clamp(ycB - y0, 0.0f, 1.0f);
                 addQuad(
-                    {xA, y0,  zA}, u0_f, v1_f,
-                    {xA, ycA, zA}, u0_f, v1_f - dv_f * hA,
-                    {xB, ycB, zB}, u1_f, v1_f - dv_f * hB,
-                    {xB, y0,  zB}, u1_f, v1_f,
+                    {xA, y0,  zA}, u0_f, sideV1,
+                    {xA, ycA, zA}, u0_f, sideV1 - sideDv * hA,
+                    {xB, ycB, zB}, sideU1, sideV1 - sideDv * hB,
+                    {xB, y0,  zB}, sideU1, sideV1,
                     color
                 );
             };
@@ -759,6 +798,22 @@ void buildLiquidProxySectionMesh(
             if (!neighborIsSameLiquid( 0, 0,  1)) addSideFace(x1, z1, yc11, x0, z1, yc01, nsColor);
             if (!neighborIsSameLiquid(-1, 0,  0)) addSideFace(x0, z1, yc01, x0, z0, yc00, ewColor);
             if (!neighborIsSameLiquid( 1, 0,  0)) addSideFace(x1, z0, yc10, x1, z1, yc11, ewColor);
+        }
+        if (useFlipbook) {
+            // Tessellator::tex2 fills the second texture-coordinate stream,
+            // which the block materials sample. The beam material drawing the
+            // flipbook samples the first, so give it the same coordinates.
+            auto& data = tessellator.mMeshData.get();
+            auto uvSets = [&](int stream) -> auto& { return data.mTextureUVs[stream].get(); };
+            auto const vertices = data.mPositions.get().size();
+            if (uvSets(0).size() != vertices) {
+                for (int stream = 1; stream < 3; ++stream) {
+                    if (uvSets(stream).size() == vertices) {
+                        uvSets(0) = uvSets(stream);
+                        break;
+                    }
+                }
+            }
         }
         state.liquidProxySectionMeshes[section] = std::make_unique<mce::Mesh>(tessellator.end(
             uploadMode,
