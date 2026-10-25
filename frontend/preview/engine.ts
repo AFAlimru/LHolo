@@ -1,4 +1,4 @@
-import type { CaptureState, ProjectionState, StructureFileState, MenuLabels, TransformState, TransformEdit, RenderState, RenderEdit } from '../src/platform/bridge';
+import type { CaptureState, ProjectionState, MaterialsState, MaterialItem, StructureFileState, MenuLabels, TransformState, TransformEdit, RenderState, RenderEdit } from '../src/platform/bridge';
 import { createPreviewSettings } from './settings';
 import type {SettingsIntent} from '../src/platform/settingsBridge';
 
@@ -11,6 +11,17 @@ export function createPreviewEngine(labels: MenuLabels, notice: (message: string
   let render: RenderState = {values: {bounds: true, axis: 0, mode: 0, layer: 0, fill: 15, outline: 100,
     correctionSeeThrough: false, missingSeeThrough: false}, maximum: [0, 0, 0], context: 0, ack: 0, accepted: false};
   let file: StructureFileState = { path: '', browsing: false, error: 0 };
+  const previewMaterials: readonly MaterialItem[] = [
+    { displayName: '砂岩', typeName: 'minecraft:sandstone', itemId: 'sandstone', count: 141542 },
+    { displayName: '白色混凝土', typeName: 'minecraft:white_concrete', itemId: 'white_concrete', count: 131839 },
+    { displayName: '橡树叶', typeName: 'minecraft:oak_leaves', itemId: 'oak_leaves', count: 50624 },
+    { displayName: '青色玻璃', typeName: 'minecraft:cyan_stained_glass', itemId: 'cyan_stained_glass', count: 19196 },
+    { displayName: '草方块', typeName: 'minecraft:grass_block', itemId: 'grass_block', count: 13938 },
+    { displayName: '石砖', typeName: 'minecraft:stone_bricks', itemId: 'stone_bricks', count: 12809 },
+    { displayName: '青色玻璃板', typeName: 'minecraft:cyan_stained_glass_pane', itemId: 'cyan_stained_glass_pane', count: 10738 },
+    { displayName: '', nameKey: 'material.water', typeName: 'minecraft:water', itemId: 'water_bucket', count: 16 },
+  ];
+  let materials: MaterialsState = { ready: false, items: [] };
   let projection: ProjectionState = {
     status: labels['status.notLoaded'], loading: false, hasProjection: false, canRestore: false, savedOrigin: '',
   };
@@ -25,6 +36,7 @@ export function createPreviewEngine(labels: MenuLabels, notice: (message: string
   const publish = () => {
     emit('lholo:structure-file', file);
     emit('lholo:projection', projection);
+    emit('lholo:materials', materials);
     emit('lholo:capture', capture);
     emit('lholo:transform', transform);
     emit('lholo:render', render);
@@ -113,21 +125,26 @@ export function createPreviewEngine(labels: MenuLabels, notice: (message: string
         queueMicrotask(() => { emit('lholo:menu-labels', labels); publish(); }); break;
       case 'lholo.menu.close': notice('这是浏览器开发预览。关闭此标签页即可退出。'); break;
       case 'lholo.structure.browse': browse(); break;
+      case 'lholo.materials.request':
+        materials = projection.hasProjection ? { ready: true, items: previewMaterials } : { ready: false, items: [] };
+        publish(); break;
       case 'lholo.projection.load':
       case 'lholo.projection.restore': {
         settings.contextChanged();
         if (projection.loading) return;
-        projection = { ...projection, loading: true, status: '开发预览：模拟加载中…' }; publish();
+        projection = { ...projection, loading: true, status: '开发预览：模拟加载中…' }; materials = { ready: false, items: [] }; publish();
         const request = ++projectionRequest;
         later(() => { if (request !== projectionRequest) return;
           render = {...render, context: render.context + 1, maximum: [11, 15, 4], values: {...render.values, axis: 0, mode: 0, layer: 0}};
           projection = { ...projection, loading: false, hasProjection: true, canRestore: true,
-          savedOrigin: '原点 X -79  Y -60  Z 43', status: '开发预览：已模拟加载结构' }; }); break;
+          savedOrigin: '原点 X -79  Y -60  Z 43', status: '开发预览：已模拟加载结构' };
+          materials = { ready: true, items: previewMaterials }; }); break;
       }
       case 'lholo.projection.close':
         settings.contextChanged();
         ++projectionRequest;
         projection = { ...projection, loading: false, hasProjection: false, status: labels['status.projectionClosed'] };
+        materials = { ready: false, items: [] };
         publish(); break;
       }
     },
@@ -145,6 +162,7 @@ export function createPreviewEngine(labels: MenuLabels, notice: (message: string
       if (name === 'loaded') {
         render = {...render, maximum: [11, 15, 4]};
         file = { path: '预览目录\\示例结构.mcstructure', browsing: false, error: 0 };
+        materials = { ready: true, items: previewMaterials };
         projection = {
           status: '已加载: 示例结构.mcstructure (16 × 12 × 16)',
           loading: false,
@@ -161,11 +179,13 @@ export function createPreviewEngine(labels: MenuLabels, notice: (message: string
           draft: { first: null, second: null, includeEntities: false } };
       } else if (name === 'saved') {
         file = { path: '预览目录\\示例结构.mcstructure', browsing: false, error: 0 };
+        materials = { ready: true, items: previewMaterials };
         projection = { ...projection, canRestore: true, savedOrigin: '原点 X -79  Y -60  Z 43' };
       } else if (name === 'reset') {
         render = {...render, maximum: [0, 0, 0], values: {...render.values, axis: 0, mode: 0, layer: 0}};
         file = { path: '', browsing: false, error: 0 };
         projection = { status: labels['status.notLoaded'], loading: false, hasProjection: false, canRestore: false, savedOrigin: '' };
+        materials = { ready: false, items: [] };
         capture = { ...capture, worldAvailable: true, status: labels['captureStatus.needTwoPoints'],
           draft: { first: null, second: null, includeEntities: false } };
       }

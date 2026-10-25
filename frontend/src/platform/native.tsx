@@ -9,6 +9,8 @@ export interface InteractiveProps {
   children?: React.ReactNode;
 }
 
+export interface ItemIconProps { itemId: string; }
+
 // Only the version-specific adapter may resolve private game symbols.
 export interface NativeRuntime {
   React: typeof React;
@@ -17,6 +19,7 @@ export interface NativeRuntime {
   Interactive: React.ComponentType<InteractiveProps>;
   Scroll: React.ComponentType<React.PropsWithChildren>;
   Completion: React.ComponentType;
+  ItemIcon: React.ComponentType<ItemIconProps>;
 }
 
 declare global {
@@ -27,3 +30,4 @@ export const GameShell = window.__LHoloOreUiRuntime.Shell;
 export const NativeInteractive = window.__LHoloOreUiRuntime.Interactive;
 export const NativeScrollView = window.__LHoloOreUiRuntime.Scroll;
 export const FrameCompletion = window.__LHoloOreUiRuntime.Completion;
+export const NativeItemIcon = window.__LHoloOreUiRuntime.ItemIcon;

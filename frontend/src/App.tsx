@@ -27,7 +27,7 @@ function MenuPage() {
   const hotkeys = useHotkeySettings(settings);
   const interfaceSettings = useInterfaceSettings(settings);
   const experimental = useExperimentalSettings(settings);
-  const materialsDraft = useMaterialsDraft();
+  const materialsDraft = useMaterialsDraft(menuBridge);
   useEffect(() => menuBridge.subscribe(setLabels), []);
   return <>
     {labels ? <LHoloMenu labels={labels} file={file} projection={projection} capture={capture}

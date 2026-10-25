@@ -29,9 +29,10 @@ namespace lholo::oreui {
 namespace {
 std::atomic_bool active{}, labelsPending{}, browsePending{}, fileStatePending{};
 std::atomic_bool loadPending{}, closeProjectionPending{}, restorePending{}, projectionStatePending{};
+std::atomic_bool materialsRequestPending{}, materialsStatePending{};
 bool registered{}, viewInstalled{}, intentInstalled{};
 auto& logger() { return LHolo::getInstance().getSelf().getLogger(); }
-enum class MenuQuery { Ready, Close, BrowseStructure, LoadProjection, CloseProjection, RestoreProjection, CancelHotkeyCapture };
+enum class MenuQuery { Ready, Close, BrowseStructure, LoadProjection, CloseProjection, RestoreProjection, RequestMaterials, CancelHotkeyCapture };
 std::optional<i18n::Language> publishedLanguage;
 
 // Typed facet activation is the supported scalar-payload entry point. No
@@ -78,11 +79,12 @@ public:
         if (!active.load()) return;
         switch (mQuery) {
         case MenuQuery::Close: requestMenuClose(); break;
-        case MenuQuery::Ready: labelsPending = fileStatePending = projectionStatePending = true; break;
+        case MenuQuery::Ready: labelsPending = fileStatePending = projectionStatePending = materialsStatePending = true; break;
         case MenuQuery::BrowseStructure: browsePending = true; break;
         case MenuQuery::LoadProjection: loadPending = true; break;
         case MenuQuery::CloseProjection: closeProjectionPending = true; break;
         case MenuQuery::RestoreProjection: restorePending = true; break;
+        case MenuQuery::RequestMaterials: materialsRequestPending = materialsStatePending = true; break;
         case MenuQuery::CancelHotkeyCapture: if (isMenuOnTop()) cancelSettingsHotkeyCapture(); break;
         }
     }
@@ -123,6 +125,7 @@ LL_TYPE_INSTANCE_HOOK(MenuViewUpdate, ll::memory::HookPriority::Normal,
             $triggerEvent("lholo:menu-labels", buildMenuLabels());
         }
         if (browsePending.exchange(false)) requestStructureFileBrowse();
+        if (materialsRequestPending.exchange(false)) requestMaterialList();
         auto const forceProjection = projectionStatePending.exchange(false) || load || close || restore;
         if (auto update = takeTransformUpdate(forceProjection)) $triggerEvent("lholo:transform", *update);
         if (auto update = takeRenderSettingsUpdate(forceProjection)) $triggerEvent("lholo:render", *update);
@@ -132,6 +135,9 @@ LL_TYPE_INSTANCE_HOOK(MenuViewUpdate, ll::memory::HookPriority::Normal,
         }
         if (auto update = takeProjectionUpdate(forceProjection)) {
             $triggerEvent("lholo:projection", *update);
+        }
+        if (auto update = takeMaterialsUpdate(forceProjection || materialsStatePending.exchange(false))) {
+            $triggerEvent("lholo:materials", *update);
         }
         if (auto update = takeStructureFileUpdate(fileStatePending.exchange(false))) {
             $triggerEvent("lholo:structure-file", *update);
@@ -161,6 +167,7 @@ bool installMenuBridge() {
                     QueryDefinition{"lholo.projection.load", MenuQuery::LoadProjection},
                     QueryDefinition{"lholo.projection.close", MenuQuery::CloseProjection},
                     QueryDefinition{"lholo.projection.restore", MenuQuery::RestoreProjection},
+                    QueryDefinition{"lholo.materials.request", MenuQuery::RequestMaterials},
                     QueryDefinition{"lholo.hotkeys.cancel", MenuQuery::CancelHotkeyCapture}
                 }) {
                     OreUI::Detail::QueryRegistry::QueryTemplate query;
@@ -179,6 +186,7 @@ bool installMenuBridge() {
 void resetMenuBridge() {
     labelsPending = browsePending = fileStatePending = false;
     loadPending = closeProjectionPending = restorePending = projectionStatePending = false;
+    materialsRequestPending = materialsStatePending = false;
     resetMenuBindings();
     resetCaptureBindings();
     resetTransformBindings();

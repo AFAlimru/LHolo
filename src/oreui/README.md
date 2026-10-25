@@ -2,7 +2,7 @@
 
 - OreUiScreen：聊天命令、路由、等待聊天退出后的开屏、ESC 和延迟关闭。
 - OreUiBridge：查询请求登记、View update 传输、内容日志；不持有选中文件、不调用 Win32 对话框。
-- MenuBindings：菜单文案、文件草稿、浏览与投影用例绑定、增量文件/投影状态；投影操作提交 structure/ProjectionActions。
+- MenuBindings：菜单文案、文件草稿、浏览与投影用例绑定、材料清单请求与快照发布、增量文件/投影/材料状态；投影操作提交 structure/ProjectionActions，材料统计复用 structure/MaterialTracker 与 StructureUiState。
 - CaptureBindings / CaptureProtocol：创建动作协议校验、导出选择与应答；复用 capture/CaptureActions 和原有捕获器。
 - ui/StructureFilePicker：独立异步系统打开/另存为服务；自身不依赖 OreUI 或业务模块。
 

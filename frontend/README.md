@@ -1,7 +1,7 @@
 # LHolo OreUI 前端
 
 使用当前自有菜单样式。聊天命令打开新菜单，快捷键仍打开旧菜单。
-浏览、加载、关闭投影与恢复上次投影、创建结构选区与导出、结构变换、渲染设置、HUD、快捷键、语言与实验性功能已接入。材料清单弹窗仍为前端草稿，界面缩放按 OreUI 方案保留本地占位，不修改旧 ImGui 缩放。
+浏览、加载、关闭投影与恢复上次投影、材料清单弹窗、创建结构选区与导出、结构变换、渲染设置、HUD、快捷键、语言与实验性功能已接入。界面缩放按 OreUI 方案保留本地占位，不修改旧 ImGui 缩放。
 
 ## 浏览器实时预览
 
@@ -32,7 +32,7 @@ npm.cmd --prefix frontend ci
 npm.cmd --prefix frontend test
 ```
 
-src/App.tsx 只装配页面、useStructureFile、useProjection、useCapture、useTransform、useRenderSettings、useSettings、useHudSettings、useHotkeySettings、useInterfaceSettings 和 useExperimentalSettings。
+src/App.tsx 只装配页面、useStructureFile、useProjection、useMaterialsDraft、useCapture、useTransform、useRenderSettings、useSettings、useHudSettings、useHotkeySettings、useInterfaceSettings 和 useExperimentalSettings。
 application/useStructureFile 管理文件草稿快照与请求状态，由装配入口注入桥接接口。
 LHoloMenu 负责布局与导航，ProjectionPage 仅接收文件/投影状态及动作。
 application/useProjection 管理原生投影快照和待应答状态，不推测业务结果。
@@ -92,3 +92,11 @@ App 只装配 useSettings 与四个具体页面 hook。useSettings 串行提交�
 沿用主菜单中性黑灰表面、标题字号与共享关闭按钮。汇总使用辅助文字，三列维持物品/标识符/数量；标识符降低字号与亮度，数量固定窄列并右对齐，表头和行分隔线减弱。弹窗宽度 `38rem`、最大 `86vw`，表格保留独立滚动与隐藏滚动条，紧凑行高可在默认预览字号显示全部 7 行示例。仅调整外观和层级，不增加筛选、导出等操作，不接材料后端。
 
 下拉框尺寸由共享 LHoloSelect 的 `size` 明确区分：旋转/镜像使用 compact（6rem），长选项使用 regular（11rem）；不按当前选中文字长度改变宽度，避免切换时跳动。
+
+## 原版物品图标测试通路
+
+材料行通过 `LHoloItemIcon → platform/native.NativeItemIcon → tools/oreui/runtime_adapter.js` 复用原版物品缩略图组件。版本私有组件 `u_`、尺寸换算 `uc` 和 `geo-item` 协议只存在于目标游戏适配器；页面不拼 URL，不访问原生物品注册表。构建脚本继续校验原版 bundle SHA256，并校验图标组件签名。
+
+`MaterialItemDraft.itemId` 是可选的图标物品身份，与展示的方块 `typeName` 分离；不自动把方块 ID 当成物品 ID，也不将水伪装成水桶。打开材料清单时通过 `lholo.materials.request` 请求原生 `MaterialTracker` / `StructureUiState` 统计，经 `lholo:materials` 下发真实需求快照（包含 `displayName`、可选 `nameKey`、`typeName`、`itemId`、`count`）；正式构建不包含预览示例数据。
+
+浏览器 preview/runtime 只渲染中性 SVG 占位，不请求游戏协议或复制游戏贴图。隔离测试验证 6 个物品请求与水的占位；实际缩略图、材质包覆盖、未知 ID、退出世界和反复开关需游戏内验收。

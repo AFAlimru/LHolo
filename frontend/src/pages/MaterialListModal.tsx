@@ -7,6 +7,7 @@ import {
 import type { MenuLabels } from '../platform/bridge';
 import { NativeScrollView } from '../platform/native';
 import { LHoloButton } from '../components/LHoloControls';
+import { LHoloItemIcon } from '../components/LHoloItemIcon';
 
 export function MaterialListModal({
   labels,
@@ -50,7 +51,8 @@ export function MaterialListModal({
                     {materials.map((item, index) => (
                       <div key={item.typeName + ':' + index} className="lholo-material-table-row">
                         <div className="lholo-material-col-item">
-                          {formatMaterialDisplayName(item, labels)}
+                          <LHoloItemIcon itemId={item.itemId} />
+                          <div className="lholo-material-name">{formatMaterialDisplayName(item, labels)}</div>
                         </div>
                         <div className="lholo-material-col-id">{item.typeName}</div>
                         <div className="lholo-material-col-total">{String(item.count)}</div>

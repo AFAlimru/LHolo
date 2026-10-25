@@ -22,6 +22,21 @@ export interface ProjectionBridge {
   closeProjection(): void;
   restoreProjection(): void;
 }
+export interface MaterialItem {
+  displayName: string;
+  nameKey?: string;
+  typeName: string;
+  itemId?: string;
+  count: number;
+}
+export interface MaterialsState {
+  ready: boolean;
+  items: readonly MaterialItem[];
+}
+export interface MaterialsBridge {
+  subscribeMaterials(listener: (state: MaterialsState) => void): () => void;
+  requestMaterials(): void;
+}
 export interface CapturePoint { x: number; y: number; z: number }
 export interface CaptureDraft {
   first: CapturePoint | null;
@@ -62,7 +77,7 @@ export interface RenderBridge {
   subscribeRender(listener: (state: RenderState) => void): () => void;
   renderSettings(edit: RenderEdit): void;
 }
-export interface MenuBridge extends StructureFileBridge, ProjectionBridge, CaptureBridge, TransformBridge, RenderBridge, SettingsBridge {
+export interface MenuBridge extends StructureFileBridge, ProjectionBridge, MaterialsBridge, CaptureBridge, TransformBridge, RenderBridge, SettingsBridge {
   subscribe(listener: (labels: MenuLabels) => void): () => void;
   close(): void;
 }
@@ -110,6 +125,23 @@ export function parseProjection(payload: string): ProjectionState {
   }
   return { status: value.status, savedOrigin: value.savedOrigin, loading: value.loading,
     hasProjection: value.hasProjection, canRestore: value.canRestore };
+}
+
+export function parseMaterials(payload: string): MaterialsState {
+  const value: unknown = JSON.parse(payload);
+  if (!value || typeof value !== 'object' || !('ready' in value) || typeof value.ready !== 'boolean'
+    || !('items' in value) || !Array.isArray(value.items)
+    || !value.items.every((item: unknown) => !!item && typeof item === 'object'
+      && typeof (item as Record<string, unknown>).displayName === 'string'
+      && typeof (item as Record<string, unknown>).typeName === 'string'
+      && ((item as Record<string, unknown>).nameKey === undefined || typeof (item as Record<string, unknown>).nameKey === 'string')
+      && ((item as Record<string, unknown>).itemId === undefined || typeof (item as Record<string, unknown>).itemId === 'string')
+      && typeof (item as Record<string, unknown>).count === 'number'
+      && Number.isSafeInteger((item as Record<string, unknown>).count)
+      && ((item as Record<string, unknown>).count as number) >= 0)) {
+    throw new Error('Invalid LHolo materials state');
+  }
+  return { ready: value.ready, items: value.items as MaterialItem[] };
 }
 
 function send(name: string) {
@@ -215,6 +247,15 @@ export const menuBridge: MenuBridge = {
   loadProjection: () => send('lholo.projection.load'),
   closeProjection: () => send('lholo.projection.close'),
   restoreProjection: () => send('lholo.projection.restore'),
+  subscribeMaterials(listener) {
+    const receive = (payload: string) => {
+      try { listener(parseMaterials(payload)); }
+      catch (error) { console.error(error); }
+    };
+    window.engine.on('lholo:materials', receive);
+    return () => window.engine.off('lholo:materials', receive);
+  },
+  requestMaterials: () => send('lholo.materials.request'),
   subscribeCapture(listener) {
     const receive = (payload: string) => {
       try { listener(parseCapture(payload)); }

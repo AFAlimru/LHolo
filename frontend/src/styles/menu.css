@@ -137,22 +137,22 @@
 .lholo-modal-paragraph { font-size:1.05rem; line-height:1.55; margin-top:0.55rem; color:#e0e0e0; }
 
 /* Material list uses the same neutral surfaces and type scale as the menu. */
-.lholo-material-modal { width:38rem; max-width:86vw; max-height:84vh; min-height:0; padding:1rem; border-radius:0.6rem; border:0.06rem solid #303030; background-color:#151515; }
+.lholo-material-modal { width:58rem; max-width:92vw; max-height:88vh; min-height:0; padding:1.25rem; border-radius:0.6rem; border:0.06rem solid #303030; background-color:#151515; }
 .lholo-material-modal-header { flex-direction:row; flex-shrink:0; align-items:center; justify-content:space-between; padding-bottom:0.75rem; border-bottom:0.06rem solid #2b2b2b; }
-.lholo-material-title { font-size:1.2rem; font-weight:600; line-height:1.5; }
-.lholo-material-summary { flex-shrink:0; font-size:0.9rem; line-height:1.5; color:#a0a0a0; margin:0.75rem 0; }
+.lholo-material-title { font-size:1.35rem; font-weight:600; line-height:1.5; }
+.lholo-material-summary { flex-shrink:0; font-size:0.95rem; line-height:1.5; color:#a0a0a0; margin:0.85rem 0; }
 .lholo-material-empty { margin:1rem 0; }
 .lholo-material-table { flex:1; min-height:0; border:0.06rem solid #2c2c2c; border-radius:0.35rem; overflow:hidden; background-color:#181818; }
-.lholo-material-table-header { flex-direction:row; flex-shrink:0; align-items:center; min-height:2.2rem; padding:0.4rem 0.75rem; background-color:#222222; border-bottom:0.06rem solid #303030; color:#a0a0a0; font-size:0.85rem; line-height:1.5; }
-.lholo-material-table-viewport { height:18rem; max-height:48vh; min-height:0; overflow:hidden; }
+.lholo-material-table-header { flex-direction:row; flex-shrink:0; align-items:center; min-height:2.35rem; padding:0.45rem 0.85rem; background-color:#222222; border-bottom:0.06rem solid #303030; color:#a0a0a0; font-size:0.9rem; line-height:1.5; }
+.lholo-material-table-viewport { height:32rem; max-height:64vh; min-height:0; overflow:hidden; }
 .lholo-material-table-viewport > div { min-height:0; }
 .lholo-material-table-body { flex-shrink:0; }
-.lholo-material-table-row { flex-direction:row; flex-shrink:0; align-items:center; min-height:2.45rem; padding:0.45rem 0.75rem; border-bottom:0.06rem solid #252525; font-size:0.95rem; line-height:1.5; }
+.lholo-material-table-row { flex-direction:row; flex-shrink:0; align-items:center; min-height:2.65rem; padding:0.45rem 0.85rem; border-bottom:0.06rem solid #252525; font-size:1rem; line-height:1.5; }
 .lholo-material-table-row:last-child { border-bottom:none; }
-.lholo-material-col-item { flex:34; min-width:0; padding-right:0.75rem; overflow-wrap:break-word; }
-.lholo-material-col-id { flex:66; min-width:0; padding-right:0.75rem; overflow-wrap:break-word; }
-.lholo-material-table-row .lholo-material-col-id { font-size:0.82rem; line-height:1.5; color:#858585; }
-.lholo-material-col-total { width:5rem; flex-shrink:0; min-width:0; text-align:right; align-items:flex-end; font-variant-numeric:tabular-nums; }
+.lholo-material-col-item { width:15rem; min-width:15rem; max-width:15rem; flex:0 0 15rem; padding-right:0.85rem; overflow-wrap:break-word; }
+.lholo-material-col-id { flex:1 1 0; min-width:0; padding-right:0.85rem; overflow-wrap:break-word; }
+.lholo-material-table-row .lholo-material-col-id { font-size:0.88rem; line-height:1.5; color:#858585; }
+.lholo-material-col-total { width:7rem; min-width:7rem; flex:0 0 7rem; text-align:right; align-items:flex-end; font-variant-numeric:tabular-nums; font-size:1.02rem; }
 
 /* Narrow previews retain the same controls, with deliberate label wrapping. */
 @media (max-width:800px) {
@@ -171,3 +171,8 @@
   .lholo-setting-row > .lholo-select { min-width:0; }
   .lholo-setting-row > .lholo-stepper { min-width:0; }
 }
+
+.lholo-material-table-row .lholo-material-col-item { flex-direction:row; align-items:center; }
+.lholo-material-icon { width:1.6rem; height:1.6rem; min-width:1.6rem; min-height:1.6rem; flex-shrink:0; margin-right:0.55rem; align-items:center; justify-content:center; }
+.lholo-material-name { flex:1; min-width:0; overflow-wrap:break-word; }
+.lholo-material-icon-empty { width:0.45rem; height:0.45rem; border:0.06rem solid #505050; border-radius:0.1rem; }

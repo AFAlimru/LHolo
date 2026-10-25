@@ -5,7 +5,7 @@
 保留当前自有深色菜单，原版设置页风格试验已回滚。
 聊天输入 LHolo 打开 OreUI 菜单，快捷键继续打开旧功能菜单。
 已接通系统文件浏览、加载、关闭投影与恢复上次投影、创建结构的选区与导出，以及结构变换、渲染设置、HUD、快捷键、语言和实验性功能。
-材料清单弹窗仍为前端草稿；OreUI 界面缩放保留本地占位，暂不接后端。
+材料清单弹窗已接入原生 `MaterialTracker` / `StructureUiState` 统计快照并复用原版物品缩略图渲染通路；OreUI 界面缩放保留本地占位，暂不接后端。
 选择路径仍是菜单草稿，不自动加载或写配置；明确点击加载后复用现有加载器与投影会话，不改变配置格式。
 
 收尾审计见 [OREUI_AUDIT.md](OREUI_AUDIT.md)：包含异步回退修复、官方接口边界、线程亲和性待核验与正式分发限制。
@@ -125,7 +125,12 @@ lholo.transform.intent 接收 {id, context, field, expected, value}；lholo:tran
 | JS → C++ | lholo.projection.load | 加载原生持有的选中路径，无参数 |
 | JS → C++ | lholo.projection.close | 关闭当前投影或取消待发布加载 |
 | JS → C++ | lholo.projection.restore | 恢复已保存的投影记录 |
+| JS → C++ | lholo.materials.request | 请求计算并发布当前加载结构的材料清单 |
 | C++ → JS | lholo:projection | status / loading / hasProjection / canRestore / savedOrigin |
+| C++ → JS | lholo:materials | ready:boolean / items:[{displayName, nameKey, typeName, itemId, count}] |
+
+
+
 | JS → C++ | facet:discard / facet:request | lholo.capture.intent，同名固定 id；payload.request 为 JSON 字符串：id / revision / action / draft |
 | C++ → JS | lholo:capture | draft / revision / ack / worldAvailable / busy / status / error |
 | JS → C++ | lholo.transform.intent（facet） | id / context / field / expected / value |
@@ -209,3 +214,5 @@ package_menu.ps1 当前生成本机测试包，仍依赖指定版本游戏资源
 不要将旧版 v1 页面与本次 v7 DLL 混用。
 
 文件选择器实现依据：[Common Item Dialog](https://learn.microsoft.com/en-us/windows/win32/shell/common-file-dialog)、[IFileDialog::Close](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ifiledialog-close)。
+
+物品图标使用独立 LHoloItemIcon 与运行时 ItemIcon 适配，版本私有组件只放在 tools/oreui/runtime_adapter.js；不修改 structure 材料统计或既有业务协议。浏览器仅显示占位，详情见 frontend/README.md。

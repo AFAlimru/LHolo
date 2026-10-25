@@ -33,6 +33,8 @@ def main():
         raise ValueError("Unsupported gameplay bundle hash; review the version adapter first")
     subprocess.run(["npm.cmd", "run", "build"], cwd=PROJECT / "frontend", check=True)
     bundle = raw.decode("utf-8")
+    if bundle.count('function u_({itemID:t,width:n,height:r,floating:o})') != 1:
+        raise ValueError("Unsupported native item icon component; review the runtime adapter")
     start_anchor = "function oL(){"
     end_anchor = "var iL,lL;iL=e.createElement(oL,null)"
     if bundle.count(start_anchor) != 1 or bundle.count(end_anchor) != 1:

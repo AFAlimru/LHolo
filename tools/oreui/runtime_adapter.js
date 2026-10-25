@@ -12,6 +12,15 @@ function LHoloUseMenuHistory() { return lholoMenuHistory; }
 window.__LHoloOreUiRuntime = {
     React: e,
     Facet: a,
+    // Reviewed native inventory thumbnail component; it builds geo-item URLs
+    // and requests the game's GeometryAtlas renderer. No custom texture lookup.
+    ItemIcon: function (props) {
+        const rawId = (typeof props.itemId === 'string' && props.itemId.startsWith('minecraft:'))
+            ? props.itemId.slice(10)
+            : (props.itemId || '');
+        const side = uc(1.6);
+        return e.createElement(u_, {itemID: rawId, width: side, height: side});
+    },
     // This primitive owns focus, activation and game sounds only. All visual
     // elements and styles are authored by LHoloControls.tsx / menu.css.
     Interactive: function (props) {

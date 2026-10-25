@@ -1,28 +1,15 @@
-import { useState } from 'react';
-import type { MenuLabels } from '../platform/bridge';
+import { useCallback, useEffect, useState } from 'react';
+import type { MaterialItem, MaterialsBridge, MaterialsState, MenuLabels } from '../platform/bridge';
 
-export interface MaterialItemDraft {
-  displayName: string;
-  nameKey?: string;
-  typeName: string;
-  count: number;
-}
+export type MaterialItemDraft = MaterialItem;
 
-export const defaultPreviewMaterials: readonly MaterialItemDraft[] = [
-  { displayName: '石头', typeName: 'minecraft:stone', count: 128 },
-  { displayName: '橡木木板', typeName: 'minecraft:oak_planks', count: 96 },
-  { displayName: '玻璃', typeName: 'minecraft:glass', count: 48 },
-  { displayName: '圆石楼梯', typeName: 'minecraft:stone_stairs', count: 32 },
-  { displayName: '橡木原木', typeName: 'minecraft:oak_log', count: 24 },
-  { displayName: '', nameKey: 'material.water', typeName: 'minecraft:water', count: 16 },
-  { displayName: '灯笼', typeName: 'minecraft:lantern', count: 8 },
-];
+const initialState: MaterialsState = { ready: false, items: [] };
 
 export function formatMaterialDisplayName(item: MaterialItemDraft, labels: MenuLabels): string {
   if (item.nameKey && labels[item.nameKey]) {
     return labels[item.nameKey];
   }
-  return item.displayName;
+  return item.displayName || item.typeName;
 }
 
 export function formatMaterialSummary(
@@ -38,21 +25,24 @@ export function formatMaterialSummary(
     .replace('%zu', String(materials.length));
 }
 
-// Frontend-only material list modal state. Mirrors renderMaterialPopup in
-// src/ui/MenuPages.cpp without adding native bridge commands yet.
-export function useMaterialsDraft(initialMaterials: readonly MaterialItemDraft[] = defaultPreviewMaterials) {
+// Native material list modal state backed by StructureUiState / MaterialTracker.
+export function useMaterialsDraft(bridge: MaterialsBridge) {
   const [isOpen, setIsOpen] = useState(false);
-  const [materials, setMaterials] = useState<readonly MaterialItemDraft[]>(initialMaterials);
+  const [state, setState] = useState<MaterialsState>(initialState);
+  useEffect(() => bridge.subscribeMaterials(setState), [bridge]);
 
-  const openModal = () => setIsOpen(true);
-  const closeModal = () => setIsOpen(false);
+  const openModal = useCallback(() => {
+    setIsOpen(true);
+    try { bridge.requestMaterials(); } catch {}
+  }, [bridge]);
+  const closeModal = useCallback(() => setIsOpen(false), []);
 
   return {
     isOpen,
+    ready: state.ready,
     openModal,
     closeModal,
-    materials,
-    setMaterials,
+    materials: state.items,
   };
 }
 

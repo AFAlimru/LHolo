@@ -33,9 +33,10 @@ const context = {
       Interactive: ({ onClick, className, disabled, children }) => React.createElement('button', { onClick, className, disabled }, children),
       Scroll: ({ children }) => React.createElement('native-scroll', null, children),
       Completion: () => null,
+      ItemIcon: ({ itemId }) => React.createElement('native-item-icon', { itemId }),
     },
     engine: {
-      on(name, fn) { assert(['lholo:menu-labels', 'lholo:structure-file', 'lholo:projection', 'lholo:capture', 'lholo:transform', 'lholo:render', 'lholo:settings'].includes(name)); listeners.add({ name, fn }); },
+      on(name, fn) { assert(['lholo:menu-labels', 'lholo:structure-file', 'lholo:projection', 'lholo:materials', 'lholo:capture', 'lholo:transform', 'lholo:render', 'lholo:settings'].includes(name)); listeners.add({ name, fn }); },
       off(name, fn) { for (const item of listeners) if (item.name === name && item.fn === fn) listeners.delete(item); },
       trigger(...args) { events.push(args); },
     },
@@ -69,7 +70,7 @@ const click = label => renderer.act(() => {
   button.props.onClick();
 });
 mount();
-assert.equal(listeners.size, 7);
+assert.equal(listeners.size, 8);
 assert(events.some(args => args[0] === 'query:subscribe/lholo.menu.ready'));
 receive('{"menu.close":false}');
 assert(errors.length > 0);
@@ -148,17 +149,39 @@ assert.equal(buttonByLabel(labels['button.closeProjection']).props.disabled, fal
   'A failed replacement does not hide the current projection');
 const beforeMaterials = events.length;
 click(labels['material.listTitle']);
+assert.equal(events.at(-1)[0], 'query:subscribe/lholo.materials.request', 'Opening materials modal requests native material snapshot');
+assert.equal(events.length, beforeMaterials + 1);
 const materialModal = tree.root.findByProps({ className: 'lholo-material-modal' });
+
+assert(nodeText(materialModal).includes(labels['hint.noPlaceableMaterials']), 'Empty native material snapshot shows empty hint');
+receive(JSON.stringify({
+  ready: true,
+  items: [
+    { displayName: '石头', typeName: 'minecraft:stone', itemId: 'stone', count: 128 },
+    { displayName: '橡木木板', typeName: 'minecraft:oak_planks', itemId: 'oak_planks', count: 96 },
+    { displayName: '玻璃', typeName: 'minecraft:glass', itemId: 'glass', count: 48 },
+    { displayName: '圆石楼梯', typeName: 'minecraft:stone_stairs', itemId: 'stone_stairs', count: 32 },
+    { displayName: '橡木原木', typeName: 'minecraft:oak_log', itemId: 'oak_log', count: 24 },
+    { displayName: '', nameKey: 'material.water', typeName: 'minecraft:water', itemId: 'water_bucket', count: 16 },
+    { displayName: '灯笼', typeName: 'minecraft:lantern', itemId: 'lantern', count: 8 },
+  ],
+}), 'lholo:materials');
+receive('{"ready":"bad","items":[]}', 'lholo:materials');
+receive('{"ready":true,"items":[{"displayName":"bad","typeName":"minecraft:stone","count":-1}]}', 'lholo:materials');
 const materialModalText = nodeText(materialModal);
 assert(materialModalText.includes(labels['label.materialSummary'].replace('%llu', '352').replace('%zu', '7')));
 assert(materialModalText.includes(labels['column.item']));
 assert(materialModalText.includes(labels['column.identifier']));
 assert(materialModalText.includes(labels['column.total']));
 assert(materialModalText.includes('minecraft:stone'));
+assert.equal(materialModal.findAllByType('native-item-icon').length, 7,
+  'All materials including liquids use native icons');
+assert.equal(materialModal.findAllByType('native-item-icon')[0].props.itemId, 'stone');
 assert(materialModalText.includes(labels['material.water']));
 renderer.act(() => materialModal.findAllByType('button').find(node => nodeText(node) === labels['button.close']).props.onClick());
 assert.equal(tree.root.findAllByProps({ className: 'lholo-material-modal' }).length, 0, 'Close button dismisses material modal');
-assert.equal(events.length, beforeMaterials, 'Materials modal does not emit native commands');
+
+
 click(labels['page.projection']);
 // Capture drafts live for the whole menu, and only native acknowledgements
 // commit player coordinates, world resets and export outcomes.
@@ -259,7 +282,7 @@ assert(JSON.stringify(tree.toJSON()).includes('79228162514264337593543950336'), 
 click(labels['page.projection']);
 assert(events.every(args => ['query:subscribe/lholo.menu.ready', 'query:subscribe/lholo.menu.close',
   'query:subscribe/lholo.structure.browse', 'query:subscribe/lholo.projection.load',
-  'query:subscribe/lholo.projection.close', 'query:subscribe/lholo.projection.restore', 'facet:discard', 'facet:request'].includes(args[0])));
+  'query:subscribe/lholo.projection.close', 'query:subscribe/lholo.projection.restore', 'query:subscribe/lholo.materials.request', 'facet:discard', 'facet:request'].includes(args[0])));
 // Transform migration is frontend only: exact old controls, no game commands.
 const beforeTransform = events.length;
 let transformState = {values: {rotation: 0, mirror: 0, x: 0, y: 0, z: 0}, context: 8, ack: 0, accepted: false};
@@ -614,7 +637,7 @@ renderer.act(() => tree.unmount());
 assert.equal(listeners.size, 0);
 assert([...inputMocks.values()].every(input => input.listeners.size === 0), 'DOM input subscriptions clean up');
 mount();
-assert.equal(listeners.size, 7);
+assert.equal(listeners.size, 8);
 receive(JSON.stringify(labels));
 assert(tree.root.findAllByType('button').some(node => nodeText(node) === labels['button.browse']));
 fileState(selectedPath);
@@ -630,7 +653,7 @@ const adapterContext = {
   window: { engine: { trigger() {} } },
   a: { createStaticFacet: value => value },
   e: { createElement: (type, props, ...children) => ({ type, props, children }) },
-  Us: Symbol('native-input'), cf: Symbol('native-scroll'), no: () => theme,
+  Us: Symbol('native-input'), cf: Symbol('native-scroll'), u_: Symbol('native-item-icon'), uc: v => `${v}rem`, no: () => theme,
 };
 vm.createContext(adapterContext);
 vm.runInContext(fs.readFileSync('../tools/oreui/runtime_adapter.js', 'utf8'), adapterContext);
@@ -649,4 +672,9 @@ assert.equal(scroll.type, adapterContext.cf);
 assert.equal(scroll.props.floating, true);
 assert.equal(scroll.props.scrollbarClassName, 'lholo-hidden-scrollbar');
 assert.equal(scroll.props.disableScrolling, undefined);
-console.log('Menu tests passed: native transform, render, HUD, hotkeys, interface language and experimental settings; local-only OreUI scale and material modal; automatic selection synchronization, preserved in-flight edits, no extra button, hidden scroll rails; capture coordinates, selection, export/cancel, invalid input and native input adapters; file selection, Unicode path, cancellation, duplicate click, invalid payload, navigation, cleanup/reopen, load/close/restore protocol, cancellation controls and native-state reconciliation.');
+const icon = adapterContext.window.__LHoloOreUiRuntime.ItemIcon({ itemId: 'minecraft:stone' });
+assert.equal(icon.type, adapterContext.u_);
+assert.equal(icon.props.itemID, 'stone');
+assert.equal(icon.props.width, '1.6rem');
+assert.equal(icon.props.height, '1.6rem');
+console.log('Menu tests passed: native transform, render, HUD, hotkeys, interface language, experimental settings and material list; local-only OreUI scale; automatic selection synchronization, preserved in-flight edits, no extra button, hidden scroll rails; capture coordinates, selection, export/cancel, invalid input and native input adapters; file selection, Unicode path, cancellation, duplicate click, invalid payload, navigation, cleanup/reopen, load/close/restore protocol, cancellation controls and native-state reconciliation.');

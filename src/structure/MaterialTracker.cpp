@@ -131,14 +131,20 @@ std::vector<MaterialRequirement> resolveMaterials(
         requirement.typeName = typeName;
         if (typeName == "minecraft:water" || typeName == "minecraft:flowing_water") {
             requirement.nameKey = i18n::TextKey::MaterialWater;
+            requirement.itemId = "minecraft:water";
+            requirement.stackSize = 64;
         } else if (typeName == "minecraft:lava" || typeName == "minecraft:flowing_lava") {
             requirement.nameKey = i18n::TextKey::MaterialLava;
+            requirement.itemId = "minecraft:lava";
+            requirement.stackSize = 64;
         } else if (auto const item = block::resolvePlacementItem(*blockValue); item.valid) {
             requirement.displayName = item.displayName;
             requirement.itemId = item.itemId;
             requirement.stackSize = item.stackSize;
         } else {
             requirement.displayName = localizedBlockName(*blockValue, localeCode);
+            requirement.itemId = typeName;
+            requirement.stackSize = 64;
         }
 
         auto const result = destination.try_emplace(key, std::move(requirement));
@@ -235,6 +241,14 @@ std::vector<int> collectInventoryAvailability(
         if (itemId.empty()) continue;
         if (auto const found = inventoryCounts.find(itemId); found != inventoryCounts.end()) {
             available[index] = found->second;
+        } else if (itemId == "minecraft:water") {
+            if (auto const found = inventoryCounts.find("minecraft:water_bucket"); found != inventoryCounts.end()) {
+                available[index] = found->second;
+            }
+        } else if (itemId == "minecraft:lava") {
+            if (auto const found = inventoryCounts.find("minecraft:lava_bucket"); found != inventoryCounts.end()) {
+                available[index] = found->second;
+            }
         }
     }
     return available;
