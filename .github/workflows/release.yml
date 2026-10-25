@@ -30,7 +30,7 @@ jobs:
           python-version: '3.x'
 
       # Upload the complete xmake output from the release machine to the draft.
-      # Native-only CI builds never replace this package or accepted notes.
+      # Verification never rebuilds the package or overwrites accepted notes.
       - name: Download installation package and GitHub asset digest
         run: |
           gh release download "$RELEASE_TAG" --pattern 'LHolo-client-windows-x64.zip' --dir release

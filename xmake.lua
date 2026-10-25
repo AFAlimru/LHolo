@@ -12,33 +12,23 @@ option("target_type")
     set_values("server", "client")
 option_end()
 
--- Local-only source for the reviewed game runtime; never store machine paths in source.
+-- Optional local override; the default reviewed runtime input is versioned with the tools.
 option("oreui_hbui")
     set_showmenu(true)
-    set_description("Installed game data/gui/dist/hbui directory for complete xmake builds")
-option_end()
-
-option("oreui_native_only")
-    set_default(false)
-    set_showmenu(true)
-    set_description("Build native files only (CI); not a complete installation directory")
+    set_description("Optional installed game data/gui/dist/hbui override")
 option_end()
 
 rule("lholo.oreui.package")
     -- The native packer must run first: it owns DLL and native manifest output.
     add_deps("@levibuildscript/modpacker")
     before_build(function (target)
-        if not has_config("oreui_native_only") then
-            import("tools.oreui.package").prepare()
-        end
+        import("tools.oreui.package").prepare()
     end)
     after_build(function (target)
         local package_dir = path.join(os.projectdir(), "bin", target:name())
         os.mkdir(package_dir)
         os.cp(path.join(os.projectdir(), "LICENSE"), path.join(package_dir, "LICENSE"))
-        if not has_config("oreui_native_only") then
-            import("tools.oreui.package").assemble()
-        end
+        import("tools.oreui.package").assemble()
     end)
 rule_end()
 

@@ -2,8 +2,10 @@
 function prepare()
     import("core.project.config")
     local hbui = os.getenv("LHOLO_OREUI_HBUI") or config.get("oreui_hbui")
-    assert(hbui and #hbui > 0,
-        "Missing game runtime. Configure xmake f --oreui_hbui=PATH, then run xmake.")
+    if not hbui or #hbui == 0 then
+        hbui = path.join(os.projectdir(), "build", "oreui", "runtime")
+        os.execv("python", {"tools/oreui/prepare_runtime.py", "--output", hbui})
+    end
     hbui = path.absolute(hbui)
     assert(os.isfile(path.join(hbui, "gameplay.html")), "Missing gameplay.html in " .. hbui)
     assert(config.get("target_type") == "client", "LHolo requires target_type=client.")

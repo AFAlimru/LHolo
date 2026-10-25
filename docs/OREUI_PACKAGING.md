@@ -8,25 +8,21 @@
 
 ## 一键构建完整目录（本机开发）
 
-首次配置本机的目标游戏资源目录；该路径只保存在被忽略的 xmake 本地配置中，不写入源码：
-
-```powershell
-xmake f -a x64 -m release -p windows --target_type=client --oreui_hbui="D:/games/LeviLauncher/MC/versions/1.26.51.01/data/gui/dist/hbui" -y
-```
-
-之后只需：
+本地与 GitHub 使用相同的默认 `xmake` 流程。目标版本构建输入已固定在 `tools/oreui/runtime/`，不要求构建机安装游戏：
 
 ```powershell
 xmake
 ```
 
-也可设置环境变量 `LHOLO_OREUI_HBUI` 覆盖本地 `oreui_hbui` 配置。需要现有 C++ 工具链、Node/npm 和 Python；首次缺少前端依赖时自动运行锁定版本的 `npm ci`。
+`runtime/source.json` 记录游戏版本、归档哈希和两份原始输入的 SHA256。`prepare_runtime.py` 先验证整个归档及每个成员，再将 `gameplay.html` 与对应运行时脚本准备到 `build/oreui/runtime/`。这些是未经修改的版本化构建依赖，不是 LHolo 生成页面或另一套业务实现；归档不会进入安装包，也不新增 Release 附件。
 
-构建钩子先验证并生成目标版本前端、检查 JS 语法，再完成原生 LHolo 编译，最后组装完整 `bin/LHolo/`。该目录可整体复制到目标游戏 `mods/`；不生成 ZIP，不自动部署、不启动或停止游戏。默认 `xmake` 即生成完整目录；只有显式配置 `--oreui_native_only=y` 的 CI 构建才跳过前端，不能作为完整安装包。
+需要核对本机游戏资源时，可显式配置 `xmake f --oreui_hbui="<目标游戏 data/gui/dist/hbui>" -y`，或用环境变量 `LHOLO_OREUI_HBUI` 覆盖。它们只作为可选构建输入，不写入源码或安装包；版本与哈希检查仍会执行。
+
+构建机需要 C++ 工具链、Node/npm 和 Python；首次缺少前端依赖时自动运行锁定版本的 `npm ci`。构建钩子验证源资源、生成前端、检查 JS 语法，随后编译原生模块，最后组装完整 `bin/LHolo/`。该目录可直接复制到 `mods`；默认构建不生成 ZIP，不自动部署或操作游戏进程。已移除 `oreui_native_only` 分支，本地与远程都生成包含 UI 的完整安装目录。
 
 `lholo.oreui.package` 构建规则依赖原生 modpacker，`tools/oreui/package.lua` 提供前置资源生成和后置目录组装钩子；`build_menu.py` 管理版本适配与前端生成；`assemble_package.py` 管理安装文件清单、版本/UUID/协议标记校验和目录哈希。校验报告在 `build/oreui/package-validation.json`，不进入模组目录。该流水线始终重新生成页面，不使用旧的 build 页面作为成功回退。UUID 固定，版本来自原生 manifest 并与 tooth 校验；不会删除模组目录或覆盖配置。
 
-这是完整安装目录，也作为正式发行的唯一输入。构建机使用经过 SHA256 审核的目标游戏 bundle 生成必需页面，安装者无需安装 Node、Python 或再次生成资源。普通 CI 的 native-only 产物仅供原生编译检查，不作为正式安装包。
+这是完整安装目录，也作为正式发行的唯一输入。构建机使用仓库内经过 SHA256 审核的目标版本依赖生成必需页面，安装者无需安装 Node、Python 或再次生成资源。GitHub 构建安装相同工具链，运行同一 `xmake` 并上传包含 `LHolo/resource_packs/LHoloUI` 的完整目录。
 
 ## 已确认的加载约定
 
@@ -70,7 +66,7 @@ LHolo/
 - xmake 与发布 CI：先完成受控的前端/运行时资源构建，再统一收集 DLL、清单及资源包。保持一个正式发布目录，不另建一套不同结构的发行物。
 - lip/启动器：安装和更新完整模组包。运行中的 DLL 不自更新，也不在启动时修改游戏安装目录来补资源。
 
-普通 CI 只做原生构建；正式发布在具备目标游戏资源的构建机执行 `xmake`，校验完整目录并仅上传 ZIP 到草稿后发布。发行 CI 下载已发布附件，复查六项文件清单、整包哈希、原生/资源包版本、固定 UUID 与 UI 协议；不会用 native-only 包覆盖完整发行附件，也不重写已确认的更新日志。
+普通 CI 与本地都通过 `xmake` 生成完整安装目录；正式发布将经过校验的完整目录归档，只上传 ZIP 到草稿后发布。发行 CI 下载已发布附件，复查六项文件清单、整包哈希、原生/资源包版本、固定 UUID 与 UI 协议；不会用缺少资源的包覆盖完整发行附件，也不重写已确认的更新日志。
 
 ## 升级、保留与回滚
 

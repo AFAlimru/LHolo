@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- GitHub 与本地统一使用完整 xmake 构建；版本化 OreUI 输入随构建工具提供，远程产物包含资源包，不再生成 native-only 包。
+
 ## [26.51.6] - 2026-10-26
 
 ### Added

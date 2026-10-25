@@ -9,6 +9,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
       - uses: xmake-io/github-action-setup-xmake@v1
         # with:
         #   xmake-version: branch@master
@@ -30,16 +38,15 @@ jobs:
           xmake repo -u
 
       - run: |
-          xmake f -a x64 -m release -p windows -v --target_type=client --oreui_native_only=y -y
+          xmake f -a x64 -m release -p windows -v --target_type=client -y
 
       - run: |
           xmake -v -y
 
       - uses: actions/upload-artifact@v7
         with:
-          name: ${{ github.event.repository.name }}-${{ github.sha }}-native-only-client-windows-x64
+          name: ${{ github.event.repository.name }}-${{ github.sha }}-client-windows-x64
+          if-no-files-found: error
           path: |
-            bin/LHolo/LHolo.dll
-            bin/LHolo/LHolo.pdb
-            bin/LHolo/manifest.json
-            bin/LHolo/LICENSE
+            bin/
+            !bin/**/*.pdb

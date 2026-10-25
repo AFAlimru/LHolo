@@ -984,7 +984,7 @@ mods/LHolo/config/config.json
 
 ## 14. 构建、发布与部署
 
-完整本机安装目录统一使用 `xmake`，输出 `bin/LHolo/`（包含资源包，不生成 ZIP）。首次通过 `xmake f --oreui_hbui="<目标游戏 data/gui/dist/hbui>" -y` 配置资源源路径；默认 `xmake` 同时构建原生与前端资源。构建/版本/哈希校验、工具分层及公开发行边界见 [打包说明](docs/OREUI_PACKAGING.md)。
+完整本机安装目录统一使用 `xmake`，输出 `bin/LHolo/`（包含资源包，不生成 ZIP）。默认使用 `tools/oreui/runtime/` 中固定版本、哈希校验的构建输入，无需安装游戏；`oreui_hbui` 仍可显式覆盖资源源路径。本地和 GitHub 默认 `xmake` 均同时构建原生与前端资源。构建/版本/哈希校验、工具分层及公开发行边界见 [打包说明](docs/OREUI_PACKAGING.md)。
 
 
 ### 14.1 依赖
@@ -1035,7 +1035,7 @@ bin/LHolo/
 
 ### 14.3 本机部署
 
-OreUI 随模组资源包分发的目标目录、Mojang 清单规则和升级保留策略见 [OreUI 发布与更新方案](docs/OREUI_PACKAGING.md)。2026-10-25 用户已实测内置资源包菜单启动成功：由 `OreUiMenuResources` 仅适配 LHolo HTML/JS，解决原版 Hybrid 对未受信任包的读取限制。OreUI 页面是必需资源，正式包必须包含上述六个安装文件。发布归档由 `tools/oreui/release_package.py` 校验并生成 ZIP/SHA256，发行 CI 下载并复核完整附件；普通 native-only CI 产物不作为发行包。
+OreUI 随模组资源包分发的目标目录、Mojang 清单规则和升级保留策略见 [OreUI 发布与更新方案](docs/OREUI_PACKAGING.md)。2026-10-25 用户已实测内置资源包菜单启动成功：由 `OreUiMenuResources` 仅适配 LHolo HTML/JS，解决原版 Hybrid 对未受信任包的读取限制。OreUI 页面是必需资源，正式包必须包含上述六个安装文件。发布归档由 `tools/oreui/release_package.py` 校验并生成 ZIP/SHA256，发行 CI 下载并复核完整附件；GitHub CI 运行同一完整构建，上传包含 DLL、清单及 OreUI 资源的目录。
 
 测试路径：
 
