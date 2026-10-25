@@ -12,6 +12,36 @@ option("target_type")
     set_values("server", "client")
 option_end()
 
+-- Local-only source for the reviewed game runtime; never store machine paths in source.
+option("oreui_hbui")
+    set_showmenu(true)
+    set_description("Installed game data/gui/dist/hbui directory for complete xmake builds")
+option_end()
+
+option("oreui_native_only")
+    set_default(false)
+    set_showmenu(true)
+    set_description("Build native files only (CI); not a complete installation directory")
+option_end()
+
+rule("lholo.oreui.package")
+    -- The native packer must run first: it owns DLL and native manifest output.
+    add_deps("@levibuildscript/modpacker")
+    before_build(function (target)
+        if not has_config("oreui_native_only") then
+            import("tools.oreui.package").prepare()
+        end
+    end)
+    after_build(function (target)
+        local package_dir = path.join(os.projectdir(), "bin", target:name())
+        os.mkdir(package_dir)
+        os.cp(path.join(os.projectdir(), "LICENSE"), path.join(package_dir, "LICENSE"))
+        if not has_config("oreui_native_only") then
+            import("tools.oreui.package").assemble()
+        end
+    end)
+rule_end()
+
 add_repositories("levimc-repo " .. (get_config("levimc_repo") or "https://github.com/LiteLDev/xmake-repo.git"))
 
 add_requires("levilamina 26.51.0", {configs = {target_type = get_config("target_type") or "client"}})
@@ -107,8 +137,8 @@ rule("lholo.i18n.resources")
             .. "$registryContent = @'\n" .. registry_content .. "\n'@\n"
             .. "$directory = Split-Path -Parent $manifest\n"
             .. "New-Item -ItemType Directory -Force -Path $directory | Out-Null\n"
-            .. "[System.IO.File]::WriteAllText($manifest, $content, [System.Text.UTF8Encoding]::new($false))\n"
-            .. "[System.IO.File]::WriteAllText($registry, $registryContent, [System.Text.UTF8Encoding]::new($false))\n"
+            .. "if (!(Test-Path -LiteralPath $manifest) -or [System.IO.File]::ReadAllText($manifest) -cne $content) { [System.IO.File]::WriteAllText($manifest, $content, [System.Text.UTF8Encoding]::new($false)) }\n"
+            .. "if (!(Test-Path -LiteralPath $registry) -or [System.IO.File]::ReadAllText($registry) -cne $registryContent) { [System.IO.File]::WriteAllText($registry, $registryContent, [System.Text.UTF8Encoding]::new($false)) }\n"
         os.vrunv("powershell", {"-NoProfile", "-NonInteractive", "-Command", powershell})
         target:add("files", manifest)
     end)
@@ -118,6 +148,7 @@ target("LHolo")
     add_rules("lholo.i18n.resources")
     add_rules("@levibuildscript/linkrule")
     add_rules("@levibuildscript/modpacker", {modVersion = "26.51.5"})
+    add_rules("lholo.oreui.package")
     add_shflags("/DELAYLOAD:bedrock_runtime.dll", {force = true})
     add_cxflags(
         "/utf-8",
@@ -152,11 +183,6 @@ target("LHolo")
     add_files("src/**.cpp")
     add_includedirs("src")
 
-    after_build(function (target)
-        local package_dir = path.join(os.projectdir(), "bin", target:name())
-        os.mkdir(package_dir)
-        os.cp(path.join(os.projectdir(), "LICENSE"), path.join(package_dir, "LICENSE"))
-    end)
 
 target("LHoloLogicTests")
     add_rules("lholo.i18n.resources")

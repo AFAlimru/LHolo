@@ -187,16 +187,11 @@ components/LHoloControls 自行定义控件子树和样式；runtime_adapter 的
 ## 构建、部署与验证
 
 ```powershell
-npm.cmd --prefix frontend ci
-npm.cmd --prefix frontend test
-xmake -y
-xmake -b LHoloLogicTests
-xmake r LHoloLogicTests
-python tools/oreui/build_menu.py 'D:\games\LeviLauncher\MC\versions\1.26.51.01\data\gui\dist\hbui'
-python tools/oreui/package_resource_pack.py
-# 更新 DLL 与内置资源包；部署脚本要求目标游戏进程已退出
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/oreui/deploy_resource_pack.ps1
+# 日常构建：完整目录输出到 bin/LHolo，不生成 ZIP
+xmake
 ```
+
+首次资源路径配置见 [打包说明](OREUI_PACKAGING.md)。可直接复制 bin/LHolo 到游戏 mods；可选的 `tools/oreui/deploy.ps1` 要求游戏退出后执行。前端测试使用 `npm.cmd --prefix frontend test`，原生逻辑测试使用 `xmake -b LHoloLogicTests` 与 `xmake r LHoloLogicTests`，属于开发验证而非打包前置手工步骤。
 
 游戏由用户自行启动和测试。需验证浏览、中文路径、取消、加载成功与失败、加载中关闭、关闭后恢复原锚点/变换、菜单重开及返回游戏后的输入。创建页另测两点记录、负坐标输入与线框自动更新、清除、包含实体、导出及取消、换维度后旧保存失效，以及导出文件重新加载。
 自动测试覆盖前端协议/订阅、路径回显/取消、加载/关闭/恢复协议、重复提交与原生快照同步，以及异步服务的取消、拒绝并发、结果消费和扩展名校验。
@@ -205,12 +200,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/oreui/deploy_resource_
 
 ## 后续迁移
 
-先实机验收投影与创建结构，设置类页面本轮已接入，材料清单与 OreUI 缩放后续单独推进。
-package_menu.ps1 当前生成本机测试包，仍依赖指定版本游戏资源；面向其他用户的自动资源准备与正式安装打包尚未实现。
+材料清单已接入，OreUI 缩放仍为本地占位；继续实机回归各功能。
+默认 xmake 已生成完整本机安装目录；当前运行时生成仍依赖指定版本游戏资源，面向其他用户的自动资源准备尚未实现。
 正式分发目标使用 LeviLamina 内置 `mods/LHolo/resource_packs` 约定；规格、更新策略和待验证边界见 [OreUI 发布与更新方案](OREUI_PACKAGING.md)。资源包挂载及原生资源栈读取已实测确认；原版 Hybrid HTML 入口因包信任限制读取失败，已添加只处理 LHolo HTML/JS 的资源适配，用户已实测页面启动成功。正式运行时资源生成尚未完成。
 已存在的 HUD、提示和快捷键维持原路径，菜单迁移后再按实际用途清理旧 UI。
-原版风格试验前的快照仍位于 build/ui-checkpoints/，只作为当时版本的回滚依据；
-不要将旧版 v1 页面与本次 v7 DLL 混用。
+旧原版风格试验的回滚脚本已移除，避免将历史页面与当前 DLL 混用。
 
 文件选择器实现依据：[Common Item Dialog](https://learn.microsoft.com/en-us/windows/win32/shell/common-file-dialog)、[IFileDialog::Close](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ifiledialog-close)。
 

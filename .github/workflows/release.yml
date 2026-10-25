@@ -38,10 +38,21 @@ jobs:
           xmake repo -u
 
       - run: |
-          xmake f -a x64 -m release -p windows --target_type=client -y
+          xmake f -a x64 -m release -p windows --target_type=client --oreui_native_only=y -y
 
       - run: |
           xmake -w -y
+
+      # A DLL-only build is not an installable OreUI release. The public runtime
+      # generation pipeline is still pending; fail rather than publish a broken ZIP.
+      - name: Require complete UI assets before publishing
+        shell: pwsh
+        run: |
+          foreach ($file in @('manifest.json', 'hbui/lholo-menu.html', 'hbui/lholo-menu.js')) {
+            if (!(Test-Path -LiteralPath "bin/LHolo/resource_packs/LHoloUI/$file" -PathType Leaf)) {
+              throw 'Release pipeline has no complete OreUI assets. Public runtime packaging must be implemented before publishing.'
+            }
+          }
 
       - uses: actions/upload-artifact@v7
         with:

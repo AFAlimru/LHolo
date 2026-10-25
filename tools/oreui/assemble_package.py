@@ -1,14 +1,13 @@
-"""Build a LOCAL-ONLY resource-pack experiment from already generated menu assets.
+"""Assemble and validate the complete bin/LHolo installation directory.
 
-Does not modify the game or the standard release directory. The hbui path is a
-candidate for native resource resolution, not a claim of game validation.
+Invoked by the default xmake build after the native modpacker. No ZIP or deploy.
+The generated runtime remains local-only until public runtime packaging is resolved.
 """
 import hashlib
 import json
 from pathlib import Path
 import re
 import uuid
-import zipfile
 
 PROJECT = Path(__file__).resolve().parents[2]
 MARKER = "lholo-menu-v7-settings"
@@ -18,6 +17,10 @@ def main():
     native = PROJECT / "bin/LHolo"
     assets = PROJECT / "build/oreui"
     manifest = json.loads((native / "manifest.json").read_text(encoding="utf-8-sig"))
+    if any(manifest.get(key) != expected for key, expected in {
+        "name": "LHolo", "entry": "LHolo.dll", "type": "native", "platform": "client"
+    }.items()):
+        raise ValueError("Expected an LHolo native client manifest")
     version = manifest["version"]
     if not re.fullmatch(r"\d+\.\d+\.\d+", version):
         raise ValueError("Native version must have three integer components")
@@ -41,30 +44,26 @@ def main():
         if MARKER not in content.decode("utf-8"):
             raise ValueError(f"Missing UI protocol marker: {name}")
         files[f"LHolo/resource_packs/LHoloUI/hbui/{name}"] = content
-    output = PROJECT / "build/oreui-resource-pack-test"
-    # Write an exact ZIP inventory; stale staging files cannot enter this artifact.
-    output.mkdir(parents=True, exist_ok=True)
-    archive = output / f"LHolo-{version}-resource-pack-local-test.zip"
-    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as target:
-        for name, content in files.items():
-            target.writestr(name, content)
-    with zipfile.ZipFile(archive) as target:
-        if target.testzip() is not None or set(target.namelist()) != set(files):
-            raise ValueError("ZIP inventory or CRC validation failed")
-        for name, content in files.items():
-            if target.read(name) != content:
-                raise ValueError(f"ZIP round-trip mismatch: {name}")
+    source = json.loads((assets / "build-info.json").read_text(encoding="utf-8"))
+    # Write only the owned installation inventory. Never delete the mod
+    # directory or copy config/debug/intermediate files into the package.
+    output_root = PROJECT / "bin"
+    for relative, content in files.items():
+        destination = output_root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(content)
+    for relative, content in files.items():
+        if (output_root / relative).read_bytes() != content:
+            raise ValueError(f"Assembled directory mismatch: {relative}")
     report = {
-        "localOnly": True, "gameValidated": False, "version": version,
-        "candidateResourcePath": "hbui", "protocol": MARKER,
-        "source": json.loads((assets / "build-info.json").read_text(encoding="utf-8")),
-        "archiveSha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+        "localOnly": True, "version": version, "protocol": MARKER,
+        "source": source,
         "files": {name: hashlib.sha256(content).hexdigest() for name, content in files.items()},
     }
-    (output / "validation.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print(f"LOCAL ONLY: {archive}")
-    print(f"Verified {len(files)} ZIP entries, UUIDs, versions, protocol markers and SHA256")
-    print("Native pack mounting / hbui resolution: awaiting user game test")
+    report_path = assets / "package-validation.json"
+    report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    print(f"Complete LOCAL-ONLY mod directory: {native}")
+    print(f"Verified {len(files)} installation files; no ZIP generated.")
 
 
 if __name__ == "__main__":

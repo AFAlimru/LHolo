@@ -2,9 +2,31 @@
 
 状态：2026-10-25 用户实机确认：内置资源包 + LHolo 限定 URL 读取适配已成功打开菜单。当前验证范围是 Minecraft 1.26.51.01 / LeviLamina 26.51.0 client 的本机测试包，正式发行流程尚未完成。
 
-本机实验已增加 `tools/oreui/package_resource_pack.py` 与 `deploy_resource_pack.ps1`：生成 `build/oreui-resource-pack-test/` 下独立 ZIP，使用已实测的包内 `hbui/` 路径，版本从原生 manifest 注入并核对 tooth。部署直接覆盖 DLL/页面，并清理旧游戏目录的 LHolo v7 页面。原生资源检查在包清单存在时只检查包内资源，避免静默退回旧文件。临时目录中重复部署、旧页面清理和配置保留已验证；资源包挂载、页面读取与菜单启动已由用户实测通过；正式 CI 未切换。
+当前统一构建流程为默认 `xmake`：生成前端、编译原生模块、组装并校验 `bin/LHolo/`，不生成 ZIP。可直接复制完整目录到目标 `mods/`；可选 `tools/oreui/deploy.ps1` 也只从 bin 读取，不重新构建或解压。旧独立打包和 ZIP 测试分支已移除。
 
-本机记录：DLL Release 构建、前端类型检查、生成 JS 语法、6 项 ZIP 内容/CRC/逐文件哈希及 PowerShell 语法检查通过。已部署到 `D:/games/LeviLauncher/MC/versions/1.26.51.01`。用户已启动游戏并确认菜单成功打开；跨版本更新、缓存刷新及完整安装升级矩阵尚未验收。
+资源包挂载、限定 URL 读取与菜单启动已由用户在目标版本实测；跨版本升级、缓存刷新及完整安装升级矩阵仍需验收。
+
+## 一键构建完整目录（本机开发）
+
+首次配置本机的目标游戏资源目录；该路径只保存在被忽略的 xmake 本地配置中，不写入源码：
+
+```powershell
+xmake f -a x64 -m release -p windows --target_type=client --oreui_hbui="D:/games/LeviLauncher/MC/versions/1.26.51.01/data/gui/dist/hbui" -y
+```
+
+之后只需：
+
+```powershell
+xmake
+```
+
+也可设置环境变量 `LHOLO_OREUI_HBUI` 覆盖本地 `oreui_hbui` 配置。需要现有 C++ 工具链、Node/npm 和 Python；首次缺少前端依赖时自动运行锁定版本的 `npm ci`。
+
+构建钩子先验证并生成目标版本前端、检查 JS 语法，再完成原生 LHolo 编译，最后组装完整 `bin/LHolo/`。该目录可整体复制到目标游戏 `mods/`；不生成 ZIP，不自动部署、不启动或停止游戏。默认 `xmake` 即生成完整目录；只有显式配置 `--oreui_native_only=y` 的 CI 构建才跳过前端，不能作为完整安装包。
+
+`lholo.oreui.package` 构建规则依赖原生 modpacker，`tools/oreui/package.lua` 提供前置资源生成和后置目录组装钩子；`build_menu.py` 管理版本适配与前端生成；`assemble_package.py` 管理安装文件清单、版本/UUID/协议标记校验和目录哈希。校验报告在 `build/oreui/package-validation.json`，不进入模组目录。该流水线始终重新生成页面，不使用旧的 build 页面作为成功回退。UUID 固定，版本来自原生 manifest 并与 tooth 校验；不会删除模组目录或覆盖配置。
+
+这是完整的**本机安装目录**，仍使用已审查的本机原版 bundle；公开发行的运行时生成方案尚未完成。普通 CI 明确上传 native-only 构建产物，发行 CI 缺少完整前端时会失败，避免把仅 DLL 的产物发布为可用模组。
 
 ## 已确认的加载约定
 
@@ -12,7 +34,7 @@ LeviLamina 的 Mod 将资源目录定义为 `mods/<模组名>/resource_packs`。
 
 依据：[Mod.cpp](https://github.com/LiteLDev/LeviLamina/blob/main/src/ll/api/mod/Mod.cpp)、[客户端初始化与资源栈挂载](https://github.com/LiteLDev/LeviLamina/blob/main/src-client/ll/core/main_win.cpp)。本机 LeviLamina 源码也已对照。
 
-已验证的本机测试 ZIP 目录（正式发行沿用此结构）：
+完整本机安装目录（正式发行沿用此结构）：
 
 ```text
 LHolo/
@@ -27,7 +49,7 @@ LHolo/
          └─ lholo-menu.js
 ```
 
-两个 manifest 的格式和作用不同，不得共用。`tooth.json` 仍描述发布资产、安装位置和 LeviLamina 依赖，ZIP 中 `LHolo/` 安装到 `mods/LHolo/`。
+两个 manifest 的格式和作用不同，不得共用。`tooth.json` 仍描述发布资产、安装位置和 LeviLamina 依赖，`bin/LHolo/` 安装到 `mods/LHolo/`。
 
 ## Mojang 清单与版本规则
 
@@ -48,7 +70,7 @@ LHolo/
 - xmake 与发布 CI：先完成受控的前端/运行时资源构建，再统一收集 DLL、清单及资源包。保持一个正式发布目录，不另建一套不同结构的发行物。
 - lip/启动器：安装和更新完整模组包。运行中的 DLL 不自更新，也不在启动时修改游戏安装目录来补资源。
 
-当前 CI 只收集 `bin/`，未构建或收集 OreUI 页面；在补齐资源构建和完整性校验前，不得把它标记为包含新菜单的完整发行包。
+普通 CI 仅上传明确命名的 native-only DLL/清单等产物，不打包为完整安装包；发行 CI 缺失资源包清单与页面时拒绝继续发布。公开发行用的运行时生成仍待完成，本机完整目录使用 `xmake`。
 
 ## 升级、保留与回滚
 
@@ -74,7 +96,7 @@ LHolo/
 已完成资源包挂载、固定 URL 到包内路径读取适配、旧目录测试页面清理，以及用户实机菜单启动验证。后续工作：
 
 1. 在保留同页原版 React/Facet/root 约束下解决正式运行时资源生成，避免将包含原版 bundle 的本机测试产物直接分发。
-2. 将资源构建与完整性校验接入唯一正式发布目录及 CI，保持业务模块和协议不受安装路径影响。
+2. 本机资源构建与完整性校验已由 `xmake` 汇入 `bin/LHolo/`；在公开运行时生成完成后，再将同一流水线接入发行 CI。
 3. 分别验收干净安装、同 UUID 升级、旧资源残留、缓存刷新、配置保留、匹配版本回滚和不兼容版本提示。
 
 完成上述验证后，再将迁移文档中的“本机测试包”状态改为正式发布方案。

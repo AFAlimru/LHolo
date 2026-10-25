@@ -983,6 +983,9 @@ mods/LHolo/config/config.json
 
 ## 14. 构建、发布与部署
 
+完整本机安装目录统一使用 `xmake`，输出 `bin/LHolo/`（包含资源包，不生成 ZIP）。首次通过 `xmake f --oreui_hbui="<目标游戏 data/gui/dist/hbui>" -y` 配置资源源路径；默认 `xmake` 同时构建原生与前端资源。构建/版本/哈希校验、工具分层及公开发行边界见 [打包说明](docs/OREUI_PACKAGING.md)。
+
+
 ### 14.1 依赖
 
 - Visual Studio 2022 C++ 工具链（提供链接器与 Windows SDK）
