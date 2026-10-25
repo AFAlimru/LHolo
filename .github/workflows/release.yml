@@ -1,108 +1,39 @@
+name: Verify release package
+
 on:
   release:
-    types:
-      - published
+    types: [published]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to rebuild and attach the zip to"
+        description: "Release tag whose complete installation package will be verified"
         required: true
         type: string
 
+permissions:
+  contents: read
+
 jobs:
-  build:
-    runs-on: windows-latest
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ inputs.tag || github.event.release.tag_name }}
 
-      - uses: xmake-io/github-action-setup-xmake@v1
-        # with:
-        #   xmake-version: branch@master
-
-      - uses: actions/cache@v5
+      - uses: actions/setup-python@v6
         with:
-          path: |
-            ~/AppData/Local/.xmake
-          key: xmake-${{ hashFiles('xmake.lua') }}
-          restore-keys: |
-            xmake-
+          python-version: '3.x'
 
-      - name: Setup LLVM
-        uses: ZhongRuoyu/setup-llvm@v0
-        with:
-          llvm-version: 22
-
-      - run: |
-          xmake repo -u
-
-      - run: |
-          xmake f -a x64 -m release -p windows --target_type=client --oreui_native_only=y -y
-
-      - run: |
-          xmake -w -y
-
-      # A DLL-only build is not an installable OreUI release. The public runtime
-      # generation pipeline is still pending; fail rather than publish a broken ZIP.
-      - name: Require complete UI assets before publishing
-        shell: pwsh
+      # Upload the complete xmake output from the release machine to the draft.
+      # Native-only CI builds never replace this package or accepted notes.
+      - name: Download installation package and checksum
         run: |
-          foreach ($file in @('manifest.json', 'hbui/lholo-menu.html', 'hbui/lholo-menu.js')) {
-            if (!(Test-Path -LiteralPath "bin/LHolo/resource_packs/LHoloUI/$file" -PathType Leaf)) {
-              throw 'Release pipeline has no complete OreUI assets. Public runtime packaging must be implemented before publishing.'
-            }
-          }
+          gh release download "$RELEASE_TAG" --pattern 'LHolo-client-windows-x64.zip' --pattern 'LHolo-client-windows-x64.zip.sha256' --dir release
 
-      - uses: actions/upload-artifact@v7
-        with:
-          name: ${{ github.event.repository.name }}-${{ github.sha }}-client-windows-x64
-          path: |
-            bin/
-
-  update-release-notes:
-    permissions:
-      contents: write
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.tag || github.ref }}
-
-      - id: extract-release-notes
-        uses: ffurrer2/extract-release-notes@v3
-
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ inputs.tag || github.ref }}
-          body: |
-            ${{ steps.extract-release-notes.outputs.release_notes }}
-
-  upload-to-release:
-    needs:
-      - build
-      - update-release-notes
-    permissions:
-      contents: write
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/download-artifact@v8
-        with:
-          name: ${{ github.event.repository.name }}-${{ github.sha }}-client-windows-x64
-          path: artifact
-
-      - run: |
-          cp README.md artifact/
-          cp LICENSE artifact/ 2>/dev/null || true
-
-      - run: |
-          zip -r ../${{ github.event.repository.name }}-client-windows-x64.zip *
-        working-directory: artifact
-
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ inputs.tag || github.ref }}
-          files: |
-            ${{ github.event.repository.name }}-client-windows-x64.zip
+      - name: Verify version, resource pack, UI protocol and installation inventory
+        run: python tools/oreui/release_package.py --verify release/LHolo-client-windows-x64.zip --tag "$RELEASE_TAG"

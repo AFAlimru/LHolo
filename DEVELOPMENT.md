@@ -1023,14 +1023,19 @@ xmake -r
 bin/LHolo/
 ├─ LHolo.dll
 ├─ manifest.json
-└─ LICENSE
+├─ LICENSE
+└─ resource_packs/LHoloUI/
+   ├─ manifest.json
+   └─ hbui/
+      ├─ lholo-menu.html
+      └─ lholo-menu.js
 ```
 
 `THIRD_PARTY_NOTICES.md` 只保留在源码仓库，不复制到 `bin/LHolo`。不要发布 `build/`、`.exp`、`.lib`、日志、崩溃转储、配置、开发工具或测试结构文件。
 
 ### 14.3 本机部署
 
-OreUI 随模组资源包分发的目标目录、Mojang 清单规则和升级保留策略见 [OreUI 发布与更新方案](docs/OREUI_PACKAGING.md)。2026-10-25 用户已实测内置资源包菜单启动成功：由 `OreUiMenuResources` 仅适配 LHolo HTML/JS，解决原版 Hybrid 对未受信任包的读取限制。上述目录仍是当前原生 CI 发布现状；包含资源包的独立本机测试 ZIP 已验证，正式运行时资源生成和发行 CI 尚未完成。
+OreUI 随模组资源包分发的目标目录、Mojang 清单规则和升级保留策略见 [OreUI 发布与更新方案](docs/OREUI_PACKAGING.md)。2026-10-25 用户已实测内置资源包菜单启动成功：由 `OreUiMenuResources` 仅适配 LHolo HTML/JS，解决原版 Hybrid 对未受信任包的读取限制。OreUI 页面是必需资源，正式包必须包含上述六个安装文件。发布归档由 `tools/oreui/release_package.py` 校验并生成 ZIP/SHA256，发行 CI 下载并复核完整附件；普通 native-only CI 产物不作为发行包。
 
 测试路径：
 

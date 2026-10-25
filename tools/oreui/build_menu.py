@@ -1,6 +1,6 @@
-"""Generate local LHolo menu assets from a reviewed installed gameplay bundle.
+"""Generate version-locked LHolo menu assets from a reviewed installed gameplay bundle.
 
-Never overwrite vanilla assets. Generated game code is local-only, not a release artifact.
+Never overwrite vanilla assets. Generated menu resources ship with the complete mod.
 """
 import argparse
 import hashlib
@@ -55,9 +55,9 @@ def main():
     (args.output / "lholo-menu.js").write_text(result, encoding="utf-8")
     (args.output / "lholo-menu.html").write_text(html, encoding="utf-8")
     (args.output / "build-info.json").write_text(json.dumps({
-        "sourceSha256": EXPECTED_SHA256, "route": "/lholo-menu", "runtimeVerified": False,
+        "sourceSha256": EXPECTED_SHA256, "route": "/lholo-menu", "gameVersion": "1.26.51.01",
     }, indent=2), encoding="utf-8")
-    print(f"Generated local menu assets: {args.output.resolve()}")
+    print(f"Generated menu assets: {args.output.resolve()}")
 
 
 if __name__ == "__main__":

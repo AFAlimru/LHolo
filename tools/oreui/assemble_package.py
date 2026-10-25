@@ -1,7 +1,7 @@
 """Assemble and validate the complete bin/LHolo installation directory.
 
 Invoked by the default xmake build after the native modpacker. No ZIP or deploy.
-The generated runtime remains local-only until public runtime packaging is resolved.
+The resource pack is a required part of the installation and release package.
 """
 import hashlib
 import json
@@ -56,13 +56,13 @@ def main():
         if (output_root / relative).read_bytes() != content:
             raise ValueError(f"Assembled directory mismatch: {relative}")
     report = {
-        "localOnly": True, "version": version, "protocol": MARKER,
+        "version": version, "protocol": MARKER,
         "source": source,
         "files": {name: hashlib.sha256(content).hexdigest() for name, content in files.items()},
     }
     report_path = assets / "package-validation.json"
     report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print(f"Complete LOCAL-ONLY mod directory: {native}")
+    print(f"Complete mod directory: {native}")
     print(f"Verified {len(files)} installation files; no ZIP generated.")
 
 
