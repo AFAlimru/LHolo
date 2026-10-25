@@ -9,7 +9,7 @@ const initial: SettingsValues = {hudEnabled: true, hudPosition: 1, hudShowFileNa
 interface Editor {native: SettingsState | null; dirty: Partial<SettingsValues>; pending: SettingsIntent | null; failed: boolean}
 let nextId = 0;
 // Shared acknowledgement scheduling for these settings pages; page hooks own
-// only input text, capture/modal presentation and the explicitly fake OreUI scale.
+// only input text and capture/modal presentation.
 export function useSettings(bridge: SettingsBridge) {
   const [editor, set] = useState<Editor>({native: null, dirty: {}, pending: null, failed: false});
   useEffect(() => bridge.subscribeSettings(native => {

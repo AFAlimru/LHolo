@@ -13,7 +13,7 @@
 
 OreUI 渐进迁移状态（2026-10-25）：聊天命令和菜单快捷键均打开当前自有样式的 OreUI 主菜单，旧 ImGui 菜单保留代码但不开放入口。
 主界面入口试验：菜单快捷键允许在 Idle + start_screen 打开同一页面；路由调度在主 ClientInstance::update 上执行，不依赖已有 OreUI View。进入/退出世界或加载状态变化关闭旧上下文页面。无世界时允许浏览文件和编辑偏好，禁用加载/恢复投影、选区/导出与辅助放置启用；前后端均校验 worldAvailable。主界面实机结果待验收。
-浏览、加载、关闭投影、恢复、材料清单弹窗、创建结构选区/导出、结构变换、渲染设置、HUD、快捷键、语言和实验性功能已接入；OreUI 缩放保留本地占位，不写旧 ImGui 缩放。前端 → 通信桥 → MenuBindings，
+浏览、加载、关闭投影、恢复、材料清单弹窗、创建结构选区/导出、结构变换、渲染设置、HUD、快捷键、语言和实验性功能已接入；OreUI 不提供缩放控件，不写旧 ImGui 缩放。前端 → 通信桥 → MenuBindings，
 浏览进入独立异步文件选择服务；投影意图进入 structure/ProjectionActions，在现有应用控制帧执行并复用加载器与会话，业务模块不依赖 OreUI。协议、取消、测试与部署要求见
 [OreUI 迁移说明](docs/OREUI_MIGRATION.md)；前端入口见 [frontend/README.md](frontend/README.md)。
 材料清单经 useMaterials → MaterialsBridge → MenuBindings 读取 StructureUiState 的版本化一致快照。协议 iconId 仅用于显示，保留完整命名空间；版本私有格式转换集中在 tools/oreui/runtime_adapter.js，不借图标显示改变材料背包计数或辅助放置规则。原生快照未变化时不复制材料数组或重建 JSON。

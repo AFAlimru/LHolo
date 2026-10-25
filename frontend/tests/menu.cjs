@@ -599,13 +599,8 @@ click(labels['button.resetAllHotkeys']);ackSettings();assert(settingsState.value
 renderer.act(()=>hkButton(1).props.onClick());ackSettings();click(labels['page.interface']);
 assert(events.some(e=>e[0]==='query:subscribe/lholo.hotkeys.cancel'),'Leaving hotkey page cancels native capture');
 settingsState.hotkeys=settingsState.hotkeys.map(b=>({...b,capturing:false}));++settingsState.hotkeysRevision;emitSettings();
-const interfaceInput=()=>tree.root.findAllByType('input')[0];
-const fakeScaleEvents=events.length;
-const scaleInput=inputMocks.get(interfaceInput().props['data-narrate']);
-renderer.act(()=>{scaleInput.value='3.4';scaleInput.listeners.get('input')();});
-renderer.act(()=>interfaceInput().props.onBlur());
-assert.equal(interfaceInput().props.value,'3.4');assert.equal(events.length,fakeScaleEvents,'Scale placeholder has no backend writes');
-assert(JSON.stringify(tree.toJSON()).includes(labels['oreui.scalePlaceholder']));
+assert.equal(tree.root.findAllByType('input').length,0,'OreUI interface page has no scale placeholder');
+assert(!JSON.stringify(tree.toJSON()).includes(labels['label.uiScale']));
 // Choices come from the native registry, including future locales.
 settingsState.languages.push({code:'test_NEW',name:'Native extra language'});emitSettings();
 renderer.act(()=>selectTrigger(0).props.onClick());click('Native extra language');settleSettings();
@@ -690,4 +685,4 @@ assert.equal(icon.props.width, '1.6rem');
 assert.equal(icon.props.height, '1.6rem');
 assert.equal(adapterContext.window.__LHoloOreUiRuntime.ItemIcon({itemId: 'custom:stone'}).props.itemID, 'custom:stone',
   'Version adapter preserves non-vanilla namespaces');
-console.log('Menu tests passed: native transform, render, HUD, hotkeys, interface language, experimental settings and material list; local-only OreUI scale; automatic selection synchronization, preserved in-flight edits, no extra button, hidden scroll rails; capture coordinates, selection, export/cancel, invalid input and native input adapters; file selection, Unicode path, cancellation, duplicate click, invalid payload, navigation, cleanup/reopen, load/close/restore protocol, cancellation controls and native-state reconciliation.');
+console.log('Menu tests passed: native transform, render, HUD, hotkeys, interface language, experimental settings and material list; no OreUI scale placeholder; automatic selection synchronization, preserved in-flight edits, no extra button, hidden scroll rails; capture coordinates, selection, export/cancel, invalid input and native input adapters; file selection, Unicode path, cancellation, duplicate click, invalid payload, navigation, cleanup/reopen, load/close/restore protocol, cancellation controls and native-state reconciliation.');

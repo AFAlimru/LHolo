@@ -27,4 +27,4 @@ LHolo 是当前开发项目。同级 OreUIProbe 仅供参考，ore-ui 提供官�
 
 - 渲染设置经 app/RenderSettingsActions 协调 projection 参数与 StructureSession 分层，AppKernel 控制帧执行；低层不反向依赖 app/OreUI。分层范围来自原生快照，材料编号仅在 UI 做一基转换，字段批次须检查原值/context/原轴。
 
-- HUD/快捷键/语言/实验性设置通过 app/SettingsActions 的字段/命令通路，不复制完整配置；正式前端不得硬编码原生语言表、快捷键默认值或自行捕获按键。input/HotkeyCapture 共享旧规则，模式是会话态。OreUI 缩放暂为本地占位，协议不接受 uiScale。
+- HUD/快捷键/语言/实验性设置通过 app/SettingsActions 的字段/命令通路，不复制完整配置；正式前端不得硬编码原生语言表、快捷键默认值或自行捕获按键。input/HotkeyCapture 共享旧规则，模式是会话态。OreUI 不提供缩放控件，协议不接受 uiScale。

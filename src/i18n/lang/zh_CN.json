@@ -196,7 +196,6 @@
   "actionHint.closeProjection": "关闭投影",
   "actionHint.noMatchingItem": "背包中没有对应的投影方块",
   "actionHint.manualModeBlocked": "已被手动放置模式阻止（对准投影方块才能放置）",
-  "oreui.scalePlaceholder": "占位：OreUI 界面缩放由游戏管理，此处调整暂不生效",
   "oreui.previewActionNotice": "当前仅展示界面，此操作尚未接入",
   "oreui.browsing": "正在选择…",
   "oreui.browseFailed": "无法选择文件，请重试并选择 .mcstructure 或 .litematic 文件",

@@ -5,7 +5,7 @@
 保留当前自有深色菜单，原版设置页风格试验已回滚。
 聊天输入 LHolo 或使用已配置的菜单快捷键（默认 Alt+M）打开 OreUI 主菜单。旧 ImGui 菜单保留代码但隐藏，不再提供打开入口。
 已接通系统文件浏览、加载、关闭投影与恢复上次投影、创建结构的选区与导出，以及结构变换、渲染设置、HUD、快捷键、语言和实验性功能。
-材料清单弹窗已接入原生 `MaterialTracker` / `StructureUiState` 统计快照并复用原版物品缩略图渲染通路；OreUI 界面缩放保留本地占位，暂不接后端。
+材料清单弹窗已接入原生 `MaterialTracker` / `StructureUiState` 统计快照并复用原版物品缩略图渲染通路；OreUI 界面不提供缩放控件。
 选择路径仍是菜单草稿，不自动加载或写配置；明确点击加载后复用现有加载器与投影会话，不改变配置格式。
 
 收尾审计见 [OREUI_AUDIT.md](OREUI_AUDIT.md)：包含异步回退修复、官方接口边界、线程亲和性待核验与正式分发限制。
@@ -118,12 +118,12 @@ lholo.transform.intent 接收 {id, context, field, expected, value}；lholo:tran
 - settings snapshot 发布 values、hotkeys、languages、consent、context、ack、accepted、hotkeysRevision。字段编辑仅传对应 expected/value；动作包括 set/capture/clearHotkey/resetHotkey/resetHotkeys/consent。快捷键动作携带原生 revision 和受限 slot，拒绝旧快照；取消捕获为独立无参 query，可取消尚未执行的 capture。字段和类型均白名单，拒绝分数、越界、未知字段、无效 locale 和超 4096 字节 payload；协议不接受 uiScale。
 - input/HotkeyCapture 抽出旧菜单原有捕获规则，两个入口共用，原生正式前端不自行翻译 KeyboardEvent.key。Overlay 在 OreUI 激活捕获期间只把按键/中键/侧键交给捕获器，其余时候仍由原版场景接收；保留 F11 的完整生命周期，认领的重复按下和释放不泄漏给场景。Esc 取消捕获不会同时关闭菜单。切页 query、关闭菜单、原生上下文销毁清理捕获。HotkeyDefinitions 共用于旧菜单和 OreUI 标签，按键名称仍由 HotkeyFormat 格式化；默认键值只在 StructureUiState 原有表中维护。
 - 语言代码和列表来自 i18n 动态注册表，不硬编码四个语言索引。OreUiBridge 观察语言变化主动重发 labels，开屏中旧菜单/后端改变语言也能刷新；名称沿用每种语言自己的 displayName。
-- 界面缩放假控件只保留浏览器/菜单局部文本，不写配置，不影响旧 ImGui 缩放。HUD 通过 StructureUiState 的原子单字段 setter 修改目标字段，不经过包含 uiScale 的整份 applyHud 回写。
+- OreUI 界面设置仅提供语言选择，已移除缩放占位控件、说明与局部状态，不影响旧 ImGui 缩放。HUD 通过 StructureUiState 的原子单字段 setter 修改目标字段，不经过包含 uiScale 的整份 applyHud 回写。
 - 实验性说明继续使用旧 UI 的原文和确认流程；取消无启用请求，确认后等原生授权/模式应答。后端独立校验授权，模式勾选不能由前端草稿自称成功。半径 1～4、冷却 0～60，原生与前端均验证。
 
-本次检查纠正了前端写死语言表/语言索引、复制快捷键默认值、将 Esc/退格/F11 当普通绑定、恢复默认仅改前端、知情授权和模式互斥只存在于草稿的问题。这些状态现在由原生拥有，正式页面只保留 UI 文本/弹窗/缩放占位；没有新增用户操作。检查范围是这些页面与共用设置/输入通路，不宣称完成全仓库审计。
+本次检查纠正了前端写死语言表/语言索引、复制快捷键默认值、将 Esc/退格/F11 当普通绑定、恢复默认仅改前端、知情授权和模式互斥只存在于草稿的问题。这些状态现在由原生拥有，正式页面只保留 UI 文本/弹窗；没有新增用户操作。检查范围是这些页面与共用设置/输入通路，不宣称完成全仓库审计。
 
-验证：原生测试覆盖字段与 slot/范围/locale 校验、HUD 不覆盖旧缩放、未授权拒绝、模式互斥且不保存、原生默认与快捷键 revision、捕获重复冲突及 Esc/退格/F11/侧键；前端测试覆盖连续编辑、原生回显、动态语言、新世界丢弃旧模式、取消无启用与缩放不发请求。浏览器捕获模拟仅在 preview/，不替代游戏 Win32/Gameface 的输入验证。
+验证：原生测试覆盖字段与 slot/范围/locale 校验、HUD 不覆盖旧缩放、未授权拒绝、模式互斥且不保存、原生默认与快捷键 revision、捕获重复冲突及 Esc/退格/F11/侧键；前端测试覆盖连续编辑、原生回显、动态语言、新世界丢弃旧模式、取消无启用与界面设置无缩放占位控件。浏览器捕获模拟仅在 preview/，不替代游戏 Win32/Gameface 的输入验证。
 
 ## 当前协议
 
@@ -208,7 +208,7 @@ xmake
 
 ## 后续迁移
 
-材料清单已接入，OreUI 缩放仍为本地占位；继续实机回归各功能。
+材料清单已接入，OreUI 缩放占位已移除；继续实机回归各功能。
 默认 xmake 已生成完整本机安装目录；当前运行时生成仍依赖指定版本游戏资源，面向其他用户的自动资源准备尚未实现。
 正式分发目标使用 LeviLamina 内置 `mods/LHolo/resource_packs` 约定；规格、更新策略和待验证边界见 [OreUI 发布与更新方案](OREUI_PACKAGING.md)。资源包挂载及原生资源栈读取已实测确认；原版 Hybrid HTML 入口因包信任限制读取失败，已添加只处理 LHolo HTML/JS 的资源适配，用户已实测页面启动成功。正式运行时资源生成尚未完成。
 已存在的 HUD、提示和快捷键维持原路径，菜单迁移后再按实际用途清理旧 UI。

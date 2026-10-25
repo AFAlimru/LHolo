@@ -255,7 +255,6 @@
     LHOLO_TEXT_KEY("actionHint.closeProjection", ActionHintCloseProjection, "")                          \
     LHOLO_TEXT_KEY("actionHint.noMatchingItem", ActionHintNoMatchingItem, "")                            \
     LHOLO_TEXT_KEY("actionHint.manualModeBlocked", ActionHintManualModeBlocked, "")                      \
-    LHOLO_TEXT_KEY("oreui.scalePlaceholder", OreUiScalePlaceholder, "") \
     LHOLO_TEXT_KEY("oreui.previewActionNotice", OreUiPreviewActionNotice, "")                              \
     LHOLO_TEXT_KEY("oreui.browsing", OreUiBrowsing, "")                                                    \
     LHOLO_TEXT_KEY("oreui.applySelection", OreUiApplySelection, "") \
