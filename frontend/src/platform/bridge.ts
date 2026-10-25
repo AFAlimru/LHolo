@@ -10,6 +10,7 @@ export interface StructureFileBridge {
   browseStructureFile(): void;
 }
 export interface ProjectionState {
+  worldAvailable: boolean;
   status: string;
   loading: boolean;
   hasProjection: boolean;
@@ -119,12 +120,13 @@ export function parseProjection(payload: string): ProjectionState {
   const value: unknown = JSON.parse(payload);
   if (!value || typeof value !== 'object' || !('status' in value) || typeof value.status !== 'string'
     || !('savedOrigin' in value) || typeof value.savedOrigin !== 'string'
+    || !('worldAvailable' in value) || typeof value.worldAvailable !== 'boolean'
     || !('loading' in value) || typeof value.loading !== 'boolean'
     || !('hasProjection' in value) || typeof value.hasProjection !== 'boolean'
     || !('canRestore' in value) || typeof value.canRestore !== 'boolean') {
     throw new Error('Invalid LHolo projection state');
   }
-  return { status: value.status, savedOrigin: value.savedOrigin, loading: value.loading,
+  return { worldAvailable: value.worldAvailable, status: value.status, savedOrigin: value.savedOrigin, loading: value.loading,
     hasProjection: value.hasProjection, canRestore: value.canRestore };
 }
 

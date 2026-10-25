@@ -6,8 +6,8 @@ import type {
 import type { MenuLabels } from '../platform/bridge';
 import { LHoloButton, LHoloCheckbox, LHoloTextField } from '../components/LHoloControls';
 
-export function ExperimentalPage({ labels, experimental }: {
-  labels: MenuLabels; experimental: ExperimentalSettingsControls;
+export function ExperimentalPage({ labels, experimental, worldAvailable }: {
+  labels: MenuLabels; experimental: ExperimentalSettingsControls; worldAvailable: boolean;
 }) {
   const infoButtonLabel = experimental.experimentalConsent
     ? labels['button.experimentalInfoView']
@@ -29,17 +29,17 @@ export function ExperimentalPage({ labels, experimental }: {
         onClick={experimental.openInfoModal} />
     </div>
     <div className="lholo-render-check">
-      <LHoloCheckbox disabled={!experimental.canCommand} label={labels['checkbox.manualPlace']}
+      <LHoloCheckbox disabled={!worldAvailable || !experimental.canCommand} label={labels['checkbox.manualPlace']}
         value={experimental.activeMode === 'manual'}
         onChange={checked => experimental.toggleMode('manual', checked)} />
     </div>
     <div className="lholo-render-check">
-      <LHoloCheckbox disabled={!experimental.canCommand} label={labels['checkbox.easyPlace']}
+      <LHoloCheckbox disabled={!worldAvailable || !experimental.canCommand} label={labels['checkbox.easyPlace']}
         value={experimental.activeMode === 'easy'}
         onChange={checked => experimental.toggleMode('easy', checked)} />
     </div>
     <div className="lholo-render-check">
-      <LHoloCheckbox disabled={!experimental.canCommand} label={labels['checkbox.rangePlace']}
+      <LHoloCheckbox disabled={!worldAvailable || !experimental.canCommand} label={labels['checkbox.rangePlace']}
         value={experimental.activeMode === 'range'}
         onChange={checked => experimental.toggleMode('range', checked)} />
     </div>

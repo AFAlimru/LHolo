@@ -118,7 +118,6 @@ LL_TYPE_INSTANCE_HOOK(MenuViewUpdate, ll::memory::HookPriority::Normal,
             else if (restore) restoreLastProjection();
             else if (load) loadSelectedProjection();
         }
-        processMenuScreen();
         if (!menuView || !isMenuOnTop()) return;
         if (labelsPending.exchange(false) || publishedLanguage != i18n::language()) {
             publishedLanguage = i18n::language();

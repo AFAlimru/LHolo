@@ -1,6 +1,7 @@
 #include "oreui/OreUiScreen.h"
 #include "oreui/OreUiMenuResources.h"
 #include "input/HotkeyCapture.h"
+#include "oreui/MenuContextPolicy.h"
 
 #include "oreui/OreUiBridge.h"
 #include "plugin/LHolo.h"
@@ -28,19 +29,22 @@
 #include "mc/network/packet/TextPacket.h"
 
 #include <atomic>
-#include <chrono>
 #include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <variant>
+#include <vector>
 
 namespace lholo::oreui {
 namespace {
 std::atomic_bool active{}, openPending{}, closePending{}, menuOnTop{}, escapeHeld{};
-bool sendInstalled{}, serverInstalled{}, downInstalled{}, upInstalled{};
+bool sendInstalled{}, serverInstalled{}, downInstalled{}, upInstalled{}, updateInstalled{};
+std::optional<ClientInstanceState> openedState;
+std::string openedScreenName;
 auto& logger() { return LHolo::getInstance().getSelf().getLogger(); }
 bool isMenuScene(std::string const& name) { return name.find("lholo-menu.html") != std::string::npos; }
 
@@ -62,7 +66,7 @@ bool filterMenuCommand(Packet& packet) {
     if (!chat || chat->mType != TextPacketType::Chat || !isMenuCommand(chat->mMessage.get())) return false;
     auto client = ll::service::getClientInstance();
     if (!client || client->$getClientInstanceState() != ClientInstanceState::Playing) return true;
-    ::Bedrock::NonOwnerPointer<ISceneStack> stack = client->$getClientSceneStack();
+    ::Bedrock::NonOwnerPointer<ISceneStack> stack = client->$getCurrentSceneStack();
     auto* top = stack ? stack->getTopScene() : nullptr;
     if (top && top->getScreenName() == "chat_screen") stack->schedulePopScreen(1);
     openPending = true;
@@ -99,15 +103,30 @@ bool ensureRoute(OreUI::Router& router) {
         [] { return active.load(); },
         [](std::string const& route, OreUI::RouteHistoryAction action) {
             auto client = ll::service::getClientInstance();
-            if (!active.load() || !client) return;
+            if (!active.load() || !client || !openedState
+                || client->$getClientInstanceState() != *openedState) return;
             auto scene = client->$getSceneFactory().createSceneFromUrl(kMenuAsset, OreUI::RouteMode::NoLeaveDelay);
-            ::Bedrock::NonOwnerPointer<ISceneStack> stack = client->$getClientSceneStack();
+            ::Bedrock::NonOwnerPointer<ISceneStack> stack = client->$getCurrentSceneStack();
             if (scene && stack) {
+                openedScreenName = scene->getScreenName();
                 OreUI::RouteAction const routeAction{route, action};
                 stack->pushScreenWithRouteAction(scene, routeAction);
             }
         });
     return true;
+}
+
+// Client update runs with and without a world; opening must not depend on an
+// existing OreUI View (the title screen may use a different UI implementation).
+LL_TYPE_INSTANCE_HOOK(MenuClientUpdate, ll::memory::HookPriority::Normal,
+    ClientInstance, &ClientInstance::$update, bool, bool isInitFinished) {
+    auto const result = origin(isInitFinished);
+    auto client = ll::service::getClientInstance();
+    if (active.load() && client && &client.get() == this) {
+        try { processMenuScreen(); }
+        catch (std::exception const& error) { logger().error("[oreui] menu navigation failed: {}", error.what()); }
+    }
+    return result;
 }
 
 LL_TYPE_INSTANCE_HOOK(MenuSendToServer, ll::memory::HookPriority::Normal,
@@ -143,48 +162,74 @@ void requestMenuClose() { closePending = true; }
 
 void processMenuScreen() {
     if (!active.load()) return;
-    static std::chrono::steady_clock::time_point waitingSince{};
     auto client = ll::service::getClientInstance();
-    if (!client || client->$getClientInstanceState() != ClientInstanceState::Playing) {
+    if (!client) {
+        if (openedState) resetMenuBridge();
+        openedState.reset();
+        openedScreenName.clear();
         openPending = closePending = menuOnTop = false;
-        resetMenuBridge();
-        waitingSince = {};
         return;
     }
-    ::Bedrock::NonOwnerPointer<ISceneStack> stack = client->$getClientSceneStack();
-    if (!stack) return;
+    auto const state = client->$getClientInstanceState();
+    // The current stack and current router are a pair, for both title and world UI.
+    ::Bedrock::NonOwnerPointer<ISceneStack> stack = client->$getCurrentSceneStack();
     auto* top = stack->getTopScene();
     auto const name = top ? top->getScreenName() : std::string{};
-    menuOnTop = isMenuScene(name);
-    if (closePending.exchange(false)) {
-        if (menuOnTop.load()) {
-            stack->schedulePopScreen(1);
-            resetMenuBridge();
-        }
+    auto const visible = isMenuScene(name);
+    if (openedState && state != *openedState) {
+        openedState.reset();
+        openPending = closePending = false;
+        resetMenuBridge();
+        structure::resetHotkeyState();
+    }
+    auto const close = closePending.exchange(false);
+    menuOnTop = visible && openedState.has_value() && !close;
+    if (visible && (!openedState || close)) {
+        // Use the stack's queued-operation state and expected-name pop API.
+        // No local close timer or duplicate scene-stack state machine is needed.
+        if (stack->getScheduledPopCount() == 0)
+            stack->schedulePopScreenWithExpectedNames(std::vector<std::string>{name});
+        openedState.reset();
+        openPending = false;
+        resetMenuBridge();
         return;
     }
-    if (!openPending.load()) { waitingSince = {}; return; }
-    auto const now = std::chrono::steady_clock::now();
-    if (waitingSince.time_since_epoch().count() == 0) waitingSince = now;
-    if (name == "chat_screen") {
-        if (now - waitingSince > std::chrono::seconds{5}) {
-            openPending = false;
-            waitingSince = {};
-            logger().warn("[oreui] chat did not close; navigation cancelled");
-        }
+    if (close) {
+        // Invalidate an opening route before its scene has been pushed.
+        openedState.reset();
+        openedScreenName.clear();
+        openPending = false;
+        resetMenuBridge();
         return;
     }
+    if (!openedScreenName.empty() && !stack->isOnSceneStack(openedScreenName)
+        && !stack->hasScheduledScreens()) {
+        openedState.reset();
+        openedScreenName.clear();
+        resetMenuBridge();
+    }
+    // A covered page still belongs to the stack. Keep its state, but only the
+    // top page can exchange UI events. The existing request cannot open twice.
+    if (openedState) { openPending = false; return; }
+    if (!openPending.load()) return;
+    if (name == "chat_screen") return;
     openPending = false;
-    waitingSince = {};
-    if (menuOnTop.load() || structure::isMenuInputCaptured()) return;
+    if (!canOpenMenuContext(state == ClientInstanceState::Playing,
+            state == ClientInstanceState::Idle, name) || structure::isMenuInputCaptured()) return;
     if (!resourcesAvailable()) return;
     auto& router = client->$getCurrentUIRouter();
     if (!ensureRoute(router)) return;
     resetMenuBridge();
+    openedState = state; // The callback may run inside _pushRoute.
+    openedScreenName.clear();
     auto const pushed = router._pushRoute(kMenuRoute, OreUI::Router::RouterPushMode::Normal);
-    menuOnTop = pushed;
+    if (!pushed) {
+        openedState.reset();
+        logger().error("[oreui] Failed to open the LHolo menu route");
+    }
+    auto* currentTop = stack->getTopScene();
+    menuOnTop = pushed && currentTop && isMenuScene(currentTop->getScreenName());
     structure::resetHotkeyState();
-    if (!pushed) logger().error("[oreui] Failed to open the LHolo menu route");
 }
 
 bool installMenuScreen() {
@@ -198,6 +243,8 @@ bool installMenuScreen() {
         uninstallMenuScreen();
         return false;
     }
+    updateInstalled = MenuClientUpdate::hook() == 0;
+    if (!updateInstalled) { uninstallMenuScreen(); return false; }
     active = true;
     return true;
 }
@@ -209,6 +256,10 @@ void uninstallMenuScreen() {
         processMenuScreen();
     }
     active = false;
+    if (updateInstalled) MenuClientUpdate::unhook();
+    updateInstalled = false;
+    openedState.reset();
+    openedScreenName.clear();
     uninstallMenuResources();
     if (upInstalled) MenuEscapeUp::unhook();
     if (downInstalled) MenuEscapeDown::unhook();

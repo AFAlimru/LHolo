@@ -102,3 +102,5 @@ App 只装配 useSettings 与四个具体页面 hook。useSettings 串行提交�
 打开材料清单通过 `lholo.materials.request` 请求原生统计，经 `lholo:materials` 下发 `{ready, items:[{displayName,nameKey,typeName,iconId,count}]}`。StructureUiState 提供同一锁内的版本、就绪状态和列表快照；绑定层仅在版本变化或强制同步时复制并序列化。未完成时显示计算提示，完成的空结果显示空列表提示。
 
 浏览器 preview/runtime 只渲染中性 SVG 占位，不请求游戏协议或复制游戏贴图。隔离测试覆盖等待/空结果、真实快照、完整 ID 透传与适配器转换。原版图标通路已由用户在当前游戏版本实测通过；本次职责整理仍需游戏内回归，尤其是液体图标与反复开关。
+
+主界面入口试验复用当前页面：投影快照 worldAvailable 由原生下发，未进入世界时禁用加载、恢复与辅助放置启用；创建页沿用 CaptureState.worldAvailable。浏览器“未进入世界”场景用于检查此布局和禁用状态，不代表游戏主界面路由实测。

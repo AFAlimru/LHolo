@@ -9,6 +9,7 @@ export function ProjectionPage({ labels, file, projection: controls, onBrowse, o
   const { projection, ready, busy } = controls;
   return <>
     <div className="lholo-section-title">{labels['section.projectionFile']}</div>
+    {!projection.worldAvailable ? <div className="lholo-muted">{labels['captureStatus.noWorld']}</div> : null}
     <div className="lholo-status">{projection.status || labels['status.notLoaded']}</div>
     <div className="lholo-file-row">
       <div className="lholo-file-field" title={file.path}>{file.path}</div>
@@ -18,12 +19,12 @@ export function ProjectionPage({ labels, file, projection: controls, onBrowse, o
     <div className="lholo-muted">{labels['label.structurePath']}</div>
     {file.error ? <div className="lholo-notice">{labels['oreui.browseFailed']}</div> : null}
     <div className="lholo-action-row">
-      <LHoloButton label={labels['button.load']} disabled={!ready || busy || file.browsing || !file.path} onClick={controls.load} />
+      <LHoloButton label={labels['button.load']} disabled={!ready || !projection.worldAvailable || busy || file.browsing || !file.path} onClick={controls.load} />
       <LHoloButton label={labels['button.closeProjection']} disabled={!ready || controls.closing || (!projection.hasProjection && !busy)} onClick={controls.close} />
       <LHoloButton label={labels['material.listTitle']} onClick={onMaterials} />
     </div>
     <div className="lholo-restore-row">
-      <LHoloButton label={labels['button.restoreLastProjection']} disabled={!ready || busy || file.browsing || !projection.canRestore} onClick={controls.restore} />
+      <LHoloButton label={labels['button.restoreLastProjection']} disabled={!ready || !projection.worldAvailable || busy || file.browsing || !projection.canRestore} onClick={controls.restore} />
     </div>
     <div className="lholo-muted">{projection.canRestore ? projection.savedOrigin : labels['hint.noSavedProjection']}</div>
   </>;

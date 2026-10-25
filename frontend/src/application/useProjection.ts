@@ -3,7 +3,7 @@ import type { ProjectionBridge, ProjectionState } from '../platform/bridge';
 
 type Action = 'load' | 'close' | 'restore';
 const initialState: ProjectionState = {
-  status: '', loading: false, hasProjection: false, canRestore: false, savedOrigin: '',
+  worldAvailable: false, status: '', loading: false, hasProjection: false, canRestore: false, savedOrigin: '',
 };
 
 export function useProjection(bridge: ProjectionBridge) {
@@ -17,6 +17,7 @@ export function useProjection(bridge: ProjectionBridge) {
   }), [bridge]);
   const submit = useCallback((action: Action) => {
     if (!ready || pending === 'close') return;
+    if (action !== 'close' && !projection.worldAvailable) return;
     if (action !== 'close' && (pending || projection.loading)) return;
     if (action === 'restore' && !projection.canRestore) return;
     setPending(action);
@@ -25,7 +26,7 @@ export function useProjection(bridge: ProjectionBridge) {
       else if (action === 'close') bridge.closeProjection();
       else bridge.restoreProjection();
     } catch { setPending(null); }
-  }, [bridge, pending, projection.loading, projection.canRestore, ready]);
+  }, [bridge, pending, projection.loading, projection.canRestore, projection.worldAvailable, ready]);
   return { projection, ready, busy: projection.loading || pending !== null,
     closing: pending === 'close',
     load: () => submit('load'), close: () => submit('close'), restore: () => submit('restore') };

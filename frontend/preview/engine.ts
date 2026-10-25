@@ -23,7 +23,7 @@ export function createPreviewEngine(labels: MenuLabels, notice: (message: string
   ];
   let materials: MaterialsState = { ready: false, items: [] };
   let projection: ProjectionState = {
-    status: labels['status.notLoaded'], loading: false, hasProjection: false, canRestore: false, savedOrigin: '',
+    worldAvailable: true, status: labels['status.notLoaded'], loading: false, hasProjection: false, canRestore: false, savedOrigin: '',
   };
   let capture: CaptureState = {
     draft: { first: null, second: null, includeEntities: false }, revision: 0, ack: 0,
@@ -159,12 +159,13 @@ export function createPreviewEngine(labels: MenuLabels, notice: (message: string
       file = { ...file, browsing: false };
       capture = { ...capture, busy: false, revision: capture.revision + 1, error: '' };
       projection = { ...projection, loading: false };
+      if (name !== 'no-world') projection = {...projection, worldAvailable: true};
       if (name === 'loaded') {
         render = {...render, maximum: [11, 15, 4]};
         file = { path: '预览目录\\示例结构.mcstructure', browsing: false, error: 0 };
         materials = { ready: true, items: previewMaterials };
         projection = {
-          status: '已加载: 示例结构.mcstructure (16 × 12 × 16)',
+          worldAvailable: true, status: '已加载: 示例结构.mcstructure (16 × 12 × 16)',
           loading: false,
           hasProjection: true,
           canRestore: true,
@@ -174,6 +175,8 @@ export function createPreviewEngine(labels: MenuLabels, notice: (message: string
         capture = { ...capture, worldAvailable: true, status: labels['captureStatus.selectionReady'],
           draft: { first: { x: -79, y: -60, z: 43 }, second: { x: -80, y: -60, z: 29 }, includeEntities: false } };
       } else if (name === 'no-world') {
+        projection = {...projection, worldAvailable: false, hasProjection: false, loading: false};
+        materials = {ready: false, items: []};
         render = {...render, maximum: [0, 0, 0], values: {...render.values, layer: 0}};
         capture = { ...capture, worldAvailable: false, status: labels['captureStatus.noWorld'],
           draft: { first: null, second: null, includeEntities: false } };
@@ -184,7 +187,7 @@ export function createPreviewEngine(labels: MenuLabels, notice: (message: string
       } else if (name === 'reset') {
         render = {...render, maximum: [0, 0, 0], values: {...render.values, axis: 0, mode: 0, layer: 0}};
         file = { path: '', browsing: false, error: 0 };
-        projection = { status: labels['status.notLoaded'], loading: false, hasProjection: false, canRestore: false, savedOrigin: '' };
+        projection = { worldAvailable: true, status: labels['status.notLoaded'], loading: false, hasProjection: false, canRestore: false, savedOrigin: '' };
         materials = { ready: false, items: [] };
         capture = { ...capture, worldAvailable: true, status: labels['captureStatus.needTwoPoints'],
           draft: { first: null, second: null, includeEntities: false } };

@@ -10,6 +10,14 @@
 
 收尾审计见 [OREUI_AUDIT.md](OREUI_AUDIT.md)：包含异步回退修复、官方接口边界、线程亲和性待核验与正式分发限制。
 
+## 主界面入口试验
+
+默认菜单快捷键（Alt+M 或用户自定义绑定）可尝试在主界面 `Idle + start_screen` 打开同一菜单，不改写原版主界面布局。登录、加载中和其他无世界页面不开放入口。世界内仍保留原有快捷键/聊天命令。
+
+导航使用主 `ClientInstance::$update` 回调，不依赖主界面是否已有 OreUI View；只处理主客户端，配对使用 getCurrentSceneStack / getCurrentUIRouter，不保存 ClientInstance/Scene 指针。页面记录打开时的客户端状态和场景名称；通过原生 isOnSceneStack / hasScheduledScreens 判断页面归属，覆盖时暂停通信，实际出栈后清理订阅。状态改变时清理桥接；关闭使用原生 schedulePopScreenWithExpectedNames 和 getScheduledPopCount，不重复维护超时兜底或自定义关闭状态机。ESC 和关闭按钮回到原有主界面。
+
+`lholo:projection` 新增 `worldAvailable:boolean`，来源为原生 Playing 状态和当前玩家。无世界时禁用加载/恢复投影（应用 hook 和原生绑定双重保护），创建页沿用原有世界可用性校验；辅助放置模式禁止启用，普通偏好和文件浏览继续可用。主界面打开/关闭、进入世界、退出世界及资源包在主界面可用性仍需实机验收。
+
 ## 分层与依赖
 
 ```text
@@ -32,9 +40,9 @@ ui/StructureFilePicker        异步打开/另存为、扩展名校验与取消
 ui/FileDialog                  Win32 系统对话框与过滤器
 ```
 
-菜单快捷键沿用原有绑定、去重和释放处理，只向 input/MenuOpenRequest 提交无参数意图；AppKernel 控制帧消费并调用 OreUiScreen::requestMenuOpen，路由仍在 View update 执行。structure/input 不直接依赖 OreUI，菜单内关闭使用 ESC 或关闭按钮。
+菜单快捷键沿用原有绑定、去重和释放处理，只向 input/MenuOpenRequest 提交无参数意图；AppKernel 控制帧消费并调用 OreUiScreen::requestMenuOpen，路由统一在主 ClientInstance::update 回调中执行。structure/input 不直接依赖 OreUI，菜单内关闭使用 ESC 或关闭按钮。
 
-OreUiScreen 单独负责路由、命令入口、开关屏和 ESC；AppKernel 统一编排启停。
+OreUiScreen 单独负责路由、命令入口、开关屏和 ESC；主客户端更新负责调度，菜单原生状态下发仍在 View update 执行；AppKernel 统一编排启停。
 OreUiMenuResources 负责内置资源包的限定 URL 读取适配，只处理 LHolo 自有 HTML/JS，不改变全局包信任判断，不依赖业务模块。
 资源加载诊断与页面诊断浮层已在实测成功后移除；只保留正常错误处理、资源版本校验和菜单 ready 初始化协议。
 页面不访问 engine 或原版私有符号，业务层不依赖 OreUI。
@@ -128,7 +136,7 @@ lholo.transform.intent 接收 {id, context, field, expected, value}；lholo:tran
 | JS → C++ | lholo.projection.close | 关闭当前投影或取消待发布加载 |
 | JS → C++ | lholo.projection.restore | 恢复已保存的投影记录 |
 | JS → C++ | lholo.materials.request | 请求计算并发布当前加载结构的材料清单 |
-| C++ → JS | lholo:projection | status / loading / hasProjection / canRestore / savedOrigin |
+| C++ → JS | lholo:projection | worldAvailable / status / loading / hasProjection / canRestore / savedOrigin |
 | C++ → JS | lholo:materials | ready:boolean / items:[{displayName, nameKey, typeName, iconId, count}] |
 | JS → C++ | facet:discard / facet:request | lholo.capture.intent，同名固定 id；payload.request 为 JSON 字符串：id / revision / action / draft |
 | C++ → JS | lholo:capture | draft / revision / ack / worldAvailable / busy / status / error |
@@ -209,3 +217,5 @@ xmake
 文件选择器实现依据：[Common Item Dialog](https://learn.microsoft.com/en-us/windows/win32/shell/common-file-dialog)、[IFileDialog::Close](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ifiledialog-close)。
 
 物品图标使用独立 LHoloItemIcon 与运行时 ItemIcon 适配，版本私有组件只放在 tools/oreui/runtime_adapter.js；显示身份通过独立 iconId 传递，不改变材料背包计数语义；命名空间转换仅在版本适配器执行。原生列表按版本读取一致快照，未变化时不复制和序列化。浏览器仅显示占位，详情见 frontend/README.md。
+
+官方约定核对：本地 ore-ui 仅公开 React/Facet 等基础设施，其 useFacetEffect 文档要求在依赖变化和卸载时清理订阅/副作用；本项复用现有页面订阅清理，不引入第二个渲染 root。原生场景栈与路由使用 LeviLamina SDK 暴露的接口，属于游戏版本适配，不宣称是 ore-ui 提供的稳定路由 API。

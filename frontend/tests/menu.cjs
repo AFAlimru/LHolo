@@ -80,7 +80,7 @@ assert.equal(tree.root.findAllByType('button').filter(node => node.props.classNa
 const fileState = (path, browsing = false, error = 0) => receive(JSON.stringify({ path, browsing, error }), 'lholo:structure-file');
 const buttonByLabel = label => tree.root.findAllByType('button').find(node => nodeText(node) === label);
 const projectionState = (changes = {}) => receive(JSON.stringify({
-  status: labels['status.notLoaded'], loading: false, hasProjection: false, canRestore: false, savedOrigin: '', ...changes,
+  worldAvailable: true, status: labels['status.notLoaded'], loading: false, hasProjection: false, canRestore: false, savedOrigin: '', ...changes,
 }), 'lholo:projection');
 projectionState();
 assert.equal(buttonByLabel(labels['button.load']).props.disabled, true);
@@ -114,6 +114,14 @@ click(labels['page.render']);
 click(labels['page.projection']);
 assert(JSON.stringify(tree.toJSON()).includes('房屋.mcstructure'), 'Page navigation retains the selected path');
 assert.equal(buttonByLabel(labels['button.load']).props.disabled, false);
+projectionState({worldAvailable: false, canRestore: true});
+assert.equal(buttonByLabel(labels['button.load']).props.disabled, true);
+assert.equal(buttonByLabel(labels['button.restoreLastProjection']).props.disabled, true);
+const beforeTitleActions = events.length;
+renderer.act(() => buttonByLabel(labels['button.load']).props.onClick());
+renderer.act(() => buttonByLabel(labels['button.restoreLastProjection']).props.onClick());
+assert.equal(events.length, beforeTitleActions, 'World actions cannot queue from the title menu');
+projectionState();
 click(labels['button.load']);
 assert(events.some(args => args[0] === 'query:subscribe/lholo.projection.load'));
 assert.equal(buttonByLabel(labels['button.load']).props.disabled, true);

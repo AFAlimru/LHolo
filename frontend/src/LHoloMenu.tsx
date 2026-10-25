@@ -78,7 +78,7 @@ export function LHoloMenu({
               : page === 'hud' ? <HudPage labels={labels} hud={hud} />
               : page === 'hotkeys' ? <HotkeysPage labels={labels} hotkeys={hotkeys} />
               : page === 'interface' ? <InterfacePage labels={labels} interfaceSettings={interfaceSettings} />
-              : <ExperimentalPage labels={labels} experimental={experimental} />}
+              : <ExperimentalPage labels={labels} experimental={experimental} worldAvailable={projection.projection.worldAvailable} />}
           </div>
         </NativeScrollView></div>
       </div>

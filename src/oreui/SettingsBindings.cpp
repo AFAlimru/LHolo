@@ -5,10 +5,22 @@
 #include "i18n/Translator.h"
 #include "nlohmann/json.hpp"
 #include <mutex>
+#include "ll/api/service/Bedrock.h"
+#include "mc/client/game/ClientInstance.h"
+#include "mc/client/game/ClientInstanceState.h"
 namespace lholo::oreui {
 namespace { std::mutex mutex; std::string published; }
 bool queueSettingsIntent(std::string_view payload) {
-    auto i = parseSettingsIntent(payload); return i && app::submitSettingsIntent(*i);
+    auto i = parseSettingsIntent(payload);
+    if (!i) return false;
+    if ((i->action == app::SettingsAction::Consent
+         || (i->action == app::SettingsAction::Set && i->field == app::SettingsField::Mode))
+        && std::get<int>(i->value) != 0) {
+        auto client = ll::service::getClientInstance();
+        if (!client || client->$getClientInstanceState() != ClientInstanceState::Playing || !client->getLocalPlayer())
+            return false;
+    }
+    return app::submitSettingsIntent(*i);
 }
 std::optional<std::string> takeSettingsUpdate(bool force) {
     std::lock_guard lock(mutex);

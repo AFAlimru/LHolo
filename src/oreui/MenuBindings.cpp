@@ -9,6 +9,9 @@
 #include "structure/StructureSession.h"
 #include "ui/StructureFilePicker.h"
 #include "nlohmann/json.hpp"
+#include "ll/api/service/Bedrock.h"
+#include "mc/client/game/ClientInstance.h"
+#include "mc/client/game/ClientInstanceState.h"
 
 #include <mutex>
 #include <exception>
@@ -25,6 +28,10 @@ bool fileDirty{}, publishedBusy{};
 std::string publishedProjection;
 std::optional<std::uint64_t> publishedMaterialsRevision;
 std::uint64_t observedGeneration{};
+bool worldAvailable() {
+    auto client = ll::service::getClientInstance();
+    return client && client->$getClientInstanceState() == ClientInstanceState::Playing && client->getLocalPlayer();
+}
 }
 
 std::string buildMenuLabels() {
@@ -53,7 +60,7 @@ void requestStructureFileBrowse() {
 
 void loadSelectedProjection() {
     std::lock_guard lock(bindingsMutex);
-    if (!fileBrowser.busy()) (void)structure::requestProjectionLoad(selectedPath);
+    if (worldAvailable() && !fileBrowser.busy()) (void)structure::requestProjectionLoad(selectedPath);
 }
 
 void closeActiveProjection() { structure::requestProjectionClose(); }
@@ -62,7 +69,7 @@ void requestMaterialList() { structure::requestMaterialList(); }
 
 void restoreLastProjection() {
     std::lock_guard lock(bindingsMutex);
-    if (fileBrowser.busy()) return;
+    if (!worldAvailable() || fileBrowser.busy()) return;
     auto const saved = structure::detail::StructureSession::getInstance().savedProjection();
     if (structure::requestProjectionRestore() && saved.available) {
         selectedPath = saved.structurePath;
@@ -83,6 +90,7 @@ std::optional<std::string> takeProjectionUpdate(bool force) {
         i18n::tr(i18n::TextKey::LabelSavedOrigin), snapshot.saved.anchorX, snapshot.saved.anchorY, snapshot.saved.anchorZ);
     auto state = nlohmann::json{
         {"status", snapshot.status},
+        {"worldAvailable", worldAvailable()},
         {"loading", structure::projectionActionPending() || structure::detail::isStructureFileLoading()},
         {"hasProjection", static_cast<bool>(snapshot.loaded)},
         {"canRestore", snapshot.saved.available && !snapshot.saved.structurePath.empty()},

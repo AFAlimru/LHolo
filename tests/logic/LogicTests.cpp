@@ -11,6 +11,7 @@
 #include "i18n/Message.h"
 #include "i18n/Translator.h"
 #include "input/ViewMoveBasis.h"
+#include "oreui/MenuContextPolicy.h"
 #include "place/PlacementState.h"
 #include "projection/core/ProjectionRules.h"
 #include "projection/runtime/ProjectionProgress.h"
@@ -1101,6 +1102,11 @@ int main(int argc, char** argv) {
     testStructureSession();
     testLayerHotkeyBounds();
     testPlacementState();
+    LHOLO_CHECK(lholo::oreui::canOpenMenuContext(false, true, "start_screen"));
+    LHOLO_CHECK(lholo::oreui::canOpenMenuContext(true, false, "hud_screen"));
+    LHOLO_CHECK(!lholo::oreui::canOpenMenuContext(false, false, "start_screen"));
+    LHOLO_CHECK(!lholo::oreui::canOpenMenuContext(false, true, "loading_screen"));
+    LHOLO_CHECK(!lholo::oreui::canOpenMenuContext(false, true, "settings_screen"));
     testStructureUiState();
     testLoadingActionHint();
     testHotkeyFormat();
