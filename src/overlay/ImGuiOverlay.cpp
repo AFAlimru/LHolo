@@ -699,6 +699,9 @@ void render(IDXGISwapChain* swapChain) {
     // attempt is intentionally retried on the next Present.
     if (auto callback = gControlFrameCallback.load(std::memory_order_acquire)) callback();
     if (!initializeImGui(swapChain)) return;
+    // Keep input/backend initialization and control processing above, but do
+    // not draw the projection HUD or action hints over the native menu.
+    if (oreui::isMenuOnTop()) return;
     auto const showGui = structure::isGuiVisible();
     auto const showHud = !showGui && structure::hasHudInfo();
     if (gGuiVisibleLastFrame != showGui) {
