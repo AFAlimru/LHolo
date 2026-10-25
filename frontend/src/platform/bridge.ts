@@ -26,7 +26,8 @@ export interface MaterialItem {
   displayName: string;
   nameKey?: string;
   typeName: string;
-  itemId?: string;
+  // Display identity only; never used for inventory availability or placement.
+  iconId?: string;
   count: number;
 }
 export interface MaterialsState {
@@ -135,7 +136,7 @@ export function parseMaterials(payload: string): MaterialsState {
       && typeof (item as Record<string, unknown>).displayName === 'string'
       && typeof (item as Record<string, unknown>).typeName === 'string'
       && ((item as Record<string, unknown>).nameKey === undefined || typeof (item as Record<string, unknown>).nameKey === 'string')
-      && ((item as Record<string, unknown>).itemId === undefined || typeof (item as Record<string, unknown>).itemId === 'string')
+      && ((item as Record<string, unknown>).iconId === undefined || typeof (item as Record<string, unknown>).iconId === 'string')
       && typeof (item as Record<string, unknown>).count === 'number'
       && Number.isSafeInteger((item as Record<string, unknown>).count)
       && ((item as Record<string, unknown>).count as number) >= 0)) {

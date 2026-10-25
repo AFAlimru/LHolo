@@ -36,6 +36,13 @@ struct MaterialRequirement {
     int           stackSize{64};
 };
 
+// One coherent, versioned snapshot for material-list consumers.
+struct MaterialListSnapshot {
+    std::uint64_t revision{};
+    bool ready{};
+    std::vector<MaterialRequirement> requirements;
+};
+
 struct ActionHintSnapshot {
     std::string   text;
     std::uint64_t expiry{};
@@ -91,7 +98,6 @@ public:
     StructureUiState& operator=(StructureUiState&&)      = delete;
 
     [[nodiscard]] bool guiVisible() const;
-    [[nodiscard]] bool toggleGuiVisible();
     void setGuiVisible(bool visible);
     [[nodiscard]] bool openingInputBlocked() const;
     void setOpeningInputBlockFrames(int frames);
@@ -169,6 +175,9 @@ public:
     void requestMaterialList();
     [[nodiscard]] bool consumeMaterialListRequest();
     [[nodiscard]] bool materialListReady() const;
+    [[nodiscard]] std::optional<MaterialListSnapshot> materialListSnapshotIfChanged(
+        std::optional<std::uint64_t> revision
+    ) const;
     void replaceMaterialRequirements(std::vector<MaterialRequirement> materials);
     [[nodiscard]] std::vector<MaterialRequirement> materialRequirements() const;
     // The material-list popup and the current-layer HUD deliberately own
@@ -244,6 +253,7 @@ private:
     mutable std::mutex                mMaterialMutex;
     std::atomic_bool                  mMaterialListRequested{false};
     std::atomic_bool                  mMaterialListReady{false};
+    std::uint64_t                     mMaterialListRevision{}; // protected by mMaterialMutex
     std::vector<MaterialRequirement>  mMaterialRequirements;
     std::vector<MaterialRequirement>  mMaterialHudRequirements;
     std::vector<int>                  mMaterialHudAvailability;

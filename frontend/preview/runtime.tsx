@@ -34,10 +34,10 @@ export function installPreviewRuntime() {
     Scroll: ({ children }) => <div className="lholo-preview-scroll">{children}</div>,
     Completion: () => null,
     // Browser preview has no inventory renderer; never issue game URLs here.
-    ItemIcon: () => <svg viewBox="0 0 24 24" className="lholo-preview-item-icon"
+    ItemIcon: () => <div className="lholo-preview-item-icon"><svg viewBox="0 0 24 24"
       fill="none" stroke="currentColor" strokeWidth="1.3">
       <path d="m12 3 9 5v9l-9 4-9-4V8l9-5Zm0 10L3 8m9 5 9-5m-9 5v8" />
-    </svg>,
+    </svg></div>,
   };
   window.__LHoloOreUiRuntime = runtime;
 }

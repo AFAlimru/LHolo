@@ -11,10 +11,11 @@
 - 模组名称、DLL、目录和内部命名空间：`LHolo` / `LHolo.dll` / `mods/LHolo` / `lholo`
 - 支持格式：Bedrock `.mcstructure`、Java Litematica `.litematic`
 
-OreUI 渐进迁移状态（2026-10-25）：聊天命令打开当前自有样式的 OreUI 菜单，快捷键继续打开旧 UI。
+OreUI 渐进迁移状态（2026-10-25）：聊天命令和菜单快捷键均打开当前自有样式的 OreUI 主菜单，旧 ImGui 菜单保留代码但不开放入口。
 浏览、加载、关闭投影、恢复、材料清单弹窗、创建结构选区/导出、结构变换、渲染设置、HUD、快捷键、语言和实验性功能已接入；OreUI 缩放保留本地占位，不写旧 ImGui 缩放。前端 → 通信桥 → MenuBindings，
 浏览进入独立异步文件选择服务；投影意图进入 structure/ProjectionActions，在现有应用控制帧执行并复用加载器与会话，业务模块不依赖 OreUI。协议、取消、测试与部署要求见
 [OreUI 迁移说明](docs/OREUI_MIGRATION.md)；前端入口见 [frontend/README.md](frontend/README.md)。
+材料清单经 useMaterials → MaterialsBridge → MenuBindings 读取 StructureUiState 的版本化一致快照。协议 iconId 仅用于显示，保留完整命名空间；版本私有格式转换集中在 tools/oreui/runtime_adapter.js，不借图标显示改变材料背包计数或辅助放置规则。原生快照未变化时不复制材料数组或重建 JSON。
 收尾审计、官方依据/私有适配边界与未闭合事项见 [OreUI 审计报告](docs/OREUI_AUDIT.md)。
 前端可运行 `npm.cmd --prefix frontend run preview`，在 http://127.0.0.1:4173/ 实时预览，不启动游戏；preview/ 的渲染环境与模拟数据只用于开发，正式构建禁止引入。
 
@@ -48,7 +49,7 @@ LHolo 的投影、纠错、HUD 和菜单都只存在于客户端，不产生碰�
 - HUD 可显示文件名、显示层、建造进度、放置错误数、朝向错误数、多余方块数、准心指向的投影方块名称和当前辅助放置模式（手动/轻松/范围）；支持四角定位和单项关闭，各类错误可分别配置。
 - GUI 使用外部注入 Dear ImGui，不使用游戏表单。
 - 界面语言由 `src/i18n/lang/*.json` 自动发现，可在“界面设置”页切换，默认简体中文；语言代码随配置文件持久化。
-- 默认 `Alt + M` 打开旧菜单；聊天栏输入 `LHolo`（ASCII 大小写不敏感）打开 OreUI 菜单，消息在客户端拦截，不发往服务器。
+- 默认 `Alt + M` 打开 OreUI 主菜单；聊天栏输入 `LHolo`（ASCII 大小写不敏感）打开 OreUI 菜单，消息在客户端拦截，不发往服务器。
 - LHolo 菜单打开及关闭过渡期间，客户端阻止本地控制玩家开始或继续破坏方块；本地存档和远程服务器均有效，服务器无需安装 LHolo。
 - 默认结构移动：`Ctrl + 方向键` 按玩家朝向水平移动（左右垂直于朝向、前后沿朝向），`Shift + ↑/↓` 调整 Y。
 - 默认显示层：`Alt + ↑/↓`；“完整结构”模式下按键无效。

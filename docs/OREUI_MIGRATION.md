@@ -3,7 +3,7 @@
 ## 当前状态（2026-10-25）
 
 保留当前自有深色菜单，原版设置页风格试验已回滚。
-聊天输入 LHolo 打开 OreUI 菜单，快捷键继续打开旧功能菜单。
+聊天输入 LHolo 或使用已配置的菜单快捷键（默认 Alt+M）打开 OreUI 主菜单。旧 ImGui 菜单保留代码但隐藏，不再提供打开入口。
 已接通系统文件浏览、加载、关闭投影与恢复上次投影、创建结构的选区与导出，以及结构变换、渲染设置、HUD、快捷键、语言和实验性功能。
 材料清单弹窗已接入原生 `MaterialTracker` / `StructureUiState` 统计快照并复用原版物品缩略图渲染通路；OreUI 界面缩放保留本地占位，暂不接后端。
 选择路径仍是菜单草稿，不自动加载或写配置；明确点击加载后复用现有加载器与投影会话，不改变配置格式。
@@ -31,6 +31,8 @@ ui/StructureFilePicker        异步打开/另存为、扩展名校验与取消
     ↓
 ui/FileDialog                  Win32 系统对话框与过滤器
 ```
+
+菜单快捷键沿用原有绑定、去重和释放处理，只向 input/MenuOpenRequest 提交无参数意图；AppKernel 控制帧消费并调用 OreUiScreen::requestMenuOpen，路由仍在 View update 执行。structure/input 不直接依赖 OreUI，菜单内关闭使用 ESC 或关闭按钮。
 
 OreUiScreen 单独负责路由、命令入口、开关屏和 ESC；AppKernel 统一编排启停。
 OreUiMenuResources 负责内置资源包的限定 URL 读取适配，只处理 LHolo 自有 HTML/JS，不改变全局包信任判断，不依赖业务模块。
@@ -127,10 +129,7 @@ lholo.transform.intent 接收 {id, context, field, expected, value}；lholo:tran
 | JS → C++ | lholo.projection.restore | 恢复已保存的投影记录 |
 | JS → C++ | lholo.materials.request | 请求计算并发布当前加载结构的材料清单 |
 | C++ → JS | lholo:projection | status / loading / hasProjection / canRestore / savedOrigin |
-| C++ → JS | lholo:materials | ready:boolean / items:[{displayName, nameKey, typeName, itemId, count}] |
-
-
-
+| C++ → JS | lholo:materials | ready:boolean / items:[{displayName, nameKey, typeName, iconId, count}] |
 | JS → C++ | facet:discard / facet:request | lholo.capture.intent，同名固定 id；payload.request 为 JSON 字符串：id / revision / action / draft |
 | C++ → JS | lholo:capture | draft / revision / ack / worldAvailable / busy / status / error |
 | JS → C++ | lholo.transform.intent（facet） | id / context / field / expected / value |
@@ -215,4 +214,4 @@ package_menu.ps1 当前生成本机测试包，仍依赖指定版本游戏资源
 
 文件选择器实现依据：[Common Item Dialog](https://learn.microsoft.com/en-us/windows/win32/shell/common-file-dialog)、[IFileDialog::Close](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ifiledialog-close)。
 
-物品图标使用独立 LHoloItemIcon 与运行时 ItemIcon 适配，版本私有组件只放在 tools/oreui/runtime_adapter.js；不修改 structure 材料统计或既有业务协议。浏览器仅显示占位，详情见 frontend/README.md。
+物品图标使用独立 LHoloItemIcon 与运行时 ItemIcon 适配，版本私有组件只放在 tools/oreui/runtime_adapter.js；显示身份通过独立 iconId 传递，不改变材料背包计数语义；命名空间转换仅在版本适配器执行。原生列表按版本读取一致快照，未变化时不复制和序列化。浏览器仅显示占位，详情见 frontend/README.md。

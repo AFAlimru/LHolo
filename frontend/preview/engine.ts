@@ -12,14 +12,14 @@ export function createPreviewEngine(labels: MenuLabels, notice: (message: string
     correctionSeeThrough: false, missingSeeThrough: false}, maximum: [0, 0, 0], context: 0, ack: 0, accepted: false};
   let file: StructureFileState = { path: '', browsing: false, error: 0 };
   const previewMaterials: readonly MaterialItem[] = [
-    { displayName: '砂岩', typeName: 'minecraft:sandstone', itemId: 'sandstone', count: 141542 },
-    { displayName: '白色混凝土', typeName: 'minecraft:white_concrete', itemId: 'white_concrete', count: 131839 },
-    { displayName: '橡树叶', typeName: 'minecraft:oak_leaves', itemId: 'oak_leaves', count: 50624 },
-    { displayName: '青色玻璃', typeName: 'minecraft:cyan_stained_glass', itemId: 'cyan_stained_glass', count: 19196 },
-    { displayName: '草方块', typeName: 'minecraft:grass_block', itemId: 'grass_block', count: 13938 },
-    { displayName: '石砖', typeName: 'minecraft:stone_bricks', itemId: 'stone_bricks', count: 12809 },
-    { displayName: '青色玻璃板', typeName: 'minecraft:cyan_stained_glass_pane', itemId: 'cyan_stained_glass_pane', count: 10738 },
-    { displayName: '', nameKey: 'material.water', typeName: 'minecraft:water', itemId: 'water_bucket', count: 16 },
+    { displayName: '砂岩', typeName: 'minecraft:sandstone', iconId: 'sandstone', count: 141542 },
+    { displayName: '白色混凝土', typeName: 'minecraft:white_concrete', iconId: 'white_concrete', count: 131839 },
+    { displayName: '橡树叶', typeName: 'minecraft:oak_leaves', iconId: 'oak_leaves', count: 50624 },
+    { displayName: '青色玻璃', typeName: 'minecraft:cyan_stained_glass', iconId: 'cyan_stained_glass', count: 19196 },
+    { displayName: '草方块', typeName: 'minecraft:grass_block', iconId: 'grass_block', count: 13938 },
+    { displayName: '石砖', typeName: 'minecraft:stone_bricks', iconId: 'stone_bricks', count: 12809 },
+    { displayName: '青色玻璃板', typeName: 'minecraft:cyan_stained_glass_pane', iconId: 'cyan_stained_glass_pane', count: 10738 },
+    { displayName: '', nameKey: 'material.water', typeName: 'minecraft:water', iconId: 'minecraft:water', count: 16 },
   ];
   let materials: MaterialsState = { ready: false, items: [] };
   let projection: ProjectionState = {

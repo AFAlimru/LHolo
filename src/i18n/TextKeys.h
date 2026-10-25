@@ -46,6 +46,7 @@
     LHOLO_TEXT_KEY("button.load", ButtonLoad, "")                                                        \
     LHOLO_TEXT_KEY("button.closeProjection", ButtonCloseProjection, "")                                  \
     LHOLO_TEXT_KEY("material.listTitle", MaterialListTitle, "")                                          \
+    LHOLO_TEXT_KEY("material.loading", MaterialLoading, "") \
     LHOLO_TEXT_KEY("button.restoreLastProjection", ButtonRestoreLastProjection, "")                      \
     LHOLO_TEXT_KEY("label.savedOrigin", LabelSavedOrigin, "")                                            \
     LHOLO_TEXT_KEY("hint.noSavedProjection", HintNoSavedProjection, "")                                  \

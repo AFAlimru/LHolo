@@ -18,6 +18,7 @@
   "button.load": "Загрузить",
   "button.closeProjection": "Закрыть проекцию",
   "material.listTitle": "Материалы",
+  "material.loading": "Подсчёт материалов…",
   "button.restoreLastProjection": "Восстановить последнюю проекцию",
   "label.savedOrigin": "Начало координат X %d  Y %d  Z %d",
   "hint.noSavedProjection": "Нет сохранённой проекции для восстановления",

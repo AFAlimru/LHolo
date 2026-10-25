@@ -70,7 +70,8 @@ struct LoadedStructure {
     std::vector<RenderBlock>              renderBlocks;
 };
 
-void requestOpenGui();
+// Legacy ImGui is retained for compatibility but has no opening entry point.
+void closeLegacyGui();
 bool isGuiVisible();
 bool shouldShowProjectedBlockName();
 bool isInputTransitionBlocked();

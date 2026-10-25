@@ -8,6 +8,7 @@ bool installMenuScreen();
 void uninstallMenuScreen();
 // Called by View update; never retain a View or Scene between frames.
 void processMenuScreen();
+void requestMenuOpen();
 void requestMenuClose();
 bool isMenuOnTop();
 }

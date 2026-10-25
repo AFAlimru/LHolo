@@ -579,7 +579,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         }
         if (message == WM_KEYDOWN && wParam == VK_ESCAPE) {
             gConsumeEscapeRelease.store(true, std::memory_order_release);
-            structure::requestOpenGui();
+            structure::closeLegacyGui();
             confineMouseToClientCenter(window);
             return 1;
         }

@@ -2,8 +2,8 @@ import React from 'react';
 import {
   formatMaterialDisplayName,
   formatMaterialSummary,
-  type MaterialsDraftControls,
-} from '../application/useMaterialsDraft';
+  type MaterialsControls,
+} from '../application/useMaterials';
 import type { MenuLabels } from '../platform/bridge';
 import { NativeScrollView } from '../platform/native';
 import { LHoloButton } from '../components/LHoloControls';
@@ -12,14 +12,14 @@ import { LHoloItemIcon } from '../components/LHoloItemIcon';
 export function MaterialListModal({
   labels,
   hasLoadedStructure,
-  materialsDraft,
+  materialsState,
 }: {
   labels: MenuLabels;
   hasLoadedStructure: boolean;
-  materialsDraft: MaterialsDraftControls;
+  materialsState: MaterialsControls;
 }) {
-  if (!materialsDraft.isOpen) return null;
-  const { materials, closeModal } = materialsDraft;
+  if (!materialsState.isOpen) return null;
+  const { materials, ready, closeModal } = materialsState;
 
   return <div className="lholo-modal-backdrop">
     <div className="lholo-material-modal">
@@ -29,6 +29,8 @@ export function MaterialListModal({
       </div>
       {!hasLoadedStructure ? (
         <div className="lholo-muted lholo-material-empty">{labels['status.notLoaded']}</div>
+      ) : !ready ? (
+        <div className="lholo-muted lholo-material-empty">{labels['material.loading']}</div>
       ) : (
         <>
           <div className="lholo-material-summary">
@@ -51,7 +53,7 @@ export function MaterialListModal({
                     {materials.map((item, index) => (
                       <div key={item.typeName + ':' + index} className="lholo-material-table-row">
                         <div className="lholo-material-col-item">
-                          <LHoloItemIcon itemId={item.itemId} />
+                          <LHoloItemIcon iconId={item.iconId} />
                           <div className="lholo-material-name">{formatMaterialDisplayName(item, labels)}</div>
                         </div>
                         <div className="lholo-material-col-id">{item.typeName}</div>

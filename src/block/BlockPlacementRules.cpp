@@ -13,27 +13,13 @@
 namespace lholo::block {
 
 ItemStack makePlacementItem(Block const& block) {
-    // 1. Bedrock native dynamic resolution via BlockType::asItemInstance
-    try {
-        ItemInstance const pickItem = block.getBlockType().asItemInstance(block, nullptr);
-        if (!pickItem.isNull()) {
-            ItemStack item;
-            item.reinit(pickItem.getTypeName(), 1, 0);
-            if (!item.isNull()) return item;
-        }
-    } catch (...) {
-    }
-
-    // 2. Base name mapping (for runtime-lit variants) and known placement names
     std::string const blockName{placeableBaseName(block.getTypeName())};
     auto const itemName = placementItemName(blockName);
     std::string_view const name = itemName.empty() ? std::string_view{blockName} : itemName;
+    // 26.40 removed the ItemStack(name, count, aux, tag) constructor; the
+    // remaining route is default construction followed by reinit().
     ItemStack item;
     item.reinit(name, 1, 0);
-    if (!item.isNull()) return item;
-
-    // 3. Fallback: native reinit directly from block
-    item.reinit(block, 1);
     return item;
 }
 

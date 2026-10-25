@@ -7,6 +7,7 @@
 
 #include "i18n/LanguageStore.h"
 #include "input/MenuInputGuard.h"
+#include "input/MenuOpenRequest.h"
 #include "oreui/OreUiBridge.h"
 #include "oreui/OreUiScreen.h"
 #include "overlay/ImGuiOverlay.h"
@@ -29,6 +30,7 @@ AppKernel& AppKernel::getInstance() {
 }
 
 void AppKernel::processControlFrame() {
+    if (input::consumeMenuOpenRequest()) oreui::requestMenuOpen();
     structure::processPendingActions();
     if (processRenderSettingsEdits()) structure::saveSettings();
     if (processSettingsActions()) structure::saveSettings();
@@ -41,6 +43,7 @@ bool AppKernel::load() {
 }
 
 bool AppKernel::enable() {
+    input::clearMenuOpenRequest();
     auto& logger = LHolo::getInstance().getSelf().getLogger();
 
     projection::detail::resetMeshWorkerForSession();
@@ -80,13 +83,14 @@ bool AppKernel::enable() {
         logger.warn("GUI overlay hotkey hooks are not ready; lholo will retry initialization");
     }
 
-    logger.info("LHolo enabled. Chat LHolo opens the OreUI preview; the menu hotkey opens the existing UI.");
+    logger.info("LHolo enabled. Chat LHolo and the configured menu hotkey open the OreUI main menu.");
     return true;
 }
 
 bool AppKernel::disable() {
     auto& logger = LHolo::getInstance().getSelf().getLogger();
     overlay::setControlFrameCallback(nullptr);
+    input::clearMenuOpenRequest();
 
     oreui::uninstallMenuScreen();
     oreui::uninstallMenuBridge();

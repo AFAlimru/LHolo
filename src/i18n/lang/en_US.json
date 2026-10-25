@@ -18,6 +18,7 @@
   "button.load": "Load",
   "button.closeProjection": "Close projection",
   "material.listTitle": "Materials",
+  "material.loading": "Calculating materials…",
   "button.restoreLastProjection": "Restore last projection",
   "label.savedOrigin": "Origin X %d  Y %d  Z %d",
   "hint.noSavedProjection": "No saved projection to restore",

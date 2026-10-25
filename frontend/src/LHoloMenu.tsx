@@ -13,7 +13,7 @@ import type { InterfaceSettingsControls } from './application/useInterfaceSettin
 import { ExperimentalPage } from './pages/ExperimentalPage';
 import type { ExperimentalSettingsControls } from './application/useExperimentalSettings';
 import { MaterialListModal } from './pages/MaterialListModal';
-import type { MaterialsDraftControls } from './application/useMaterialsDraft';
+import type { MaterialsControls } from './application/useMaterials';
 import { CreateStructurePage } from './pages/CreateStructurePage';
 import type { CaptureControls } from './application/useCapture';
 import { ProjectionPage } from './pages/ProjectionPage';
@@ -33,7 +33,7 @@ export function LHoloMenu({
   hotkeys,
   interfaceSettings,
   experimental,
-  materialsDraft,
+  materialsState,
   onBrowse,
   onClose,
 }: {
@@ -47,13 +47,13 @@ export function LHoloMenu({
   hotkeys: HotkeySettingsControls;
   interfaceSettings: InterfaceSettingsControls;
   experimental: ExperimentalSettingsControls;
-  materialsDraft: MaterialsDraftControls;
+  materialsState: MaterialsControls;
   onBrowse(): void;
   onClose(): void;
 }) {
   const [page, setPage] = useState<MenuPage>('projection');
   const selectPage = (next: MenuPage) => {
-    materialsDraft.closeModal();
+    materialsState.closeModal();
     experimental.closeModal();
     if (page === 'hotkeys' && next !== 'hotkeys') hotkeys.cancelCapture();
     setPage(next);
@@ -71,7 +71,7 @@ export function LHoloMenu({
         <div className="lholo-content-viewport"><NativeScrollView>
           <div className="lholo-content" key={page}>
             {page === 'projection'
-              ? <ProjectionPage labels={labels} file={file} projection={projection} onBrowse={onBrowse} onMaterials={materialsDraft.openModal} />
+              ? <ProjectionPage labels={labels} file={file} projection={projection} onBrowse={onBrowse} onMaterials={materialsState.openModal} />
               : page === 'createStructure' ? <CreateStructurePage labels={labels} capture={capture} fileBrowsing={file.browsing} />
               : page === 'transform' ? <TransformPage labels={labels} transform={transform} />
               : page === 'render' ? <RenderPage labels={labels} render={render} />
@@ -86,7 +86,7 @@ export function LHoloMenu({
     <MaterialListModal
       labels={labels}
       hasLoadedStructure={projection.projection.hasProjection}
-      materialsDraft={materialsDraft}
+      materialsState={materialsState}
     />
   </div>;
 }

@@ -706,6 +706,20 @@ void testStructureUiState() {
     state.clearMaterialHud();
     LHOLO_CHECK(!state.materialHudSnapshot().ready);
 
+    // Incremental consumers see readiness and contents from the same version.
+    auto snapshot = state.materialListSnapshotIfChanged(std::nullopt);
+    LHOLO_CHECK(snapshot && snapshot->ready && snapshot->requirements.size() == 1);
+    auto const revision = snapshot->revision;
+    LHOLO_CHECK(!state.materialListSnapshotIfChanged(revision));
+    state.clearMaterials();
+    snapshot = state.materialListSnapshotIfChanged(revision);
+    LHOLO_CHECK(snapshot && !snapshot->ready && snapshot->requirements.empty());
+    auto const clearedRevision = snapshot->revision;
+    state.replaceMaterialRequirements({});
+    snapshot = state.materialListSnapshotIfChanged(clearedRevision);
+    LHOLO_CHECK(snapshot && snapshot->ready && snapshot->requirements.empty());
+    LHOLO_CHECK(!state.materialListSnapshotIfChanged(snapshot->revision));
+
     state.setExperimentalConsentGiven(true);
     state.setMaterialHudEnabled(true);
     state.setMaterialHudPosition(3);
@@ -718,7 +732,8 @@ void testStructureUiState() {
     LHOLO_CHECK(hint.expiry == 1234);
 
     state.setGuiVisible(false);
-    LHOLO_CHECK(state.toggleGuiVisible());
+    state.setGuiVisible(true); // Fixture for legacy-state cleanup, not an opening entry point.
+    LHOLO_CHECK(state.guiVisible());
     LHOLO_CHECK(state.guiVisible());
     state.setOpeningInputBlockFrames(1);
     LHOLO_CHECK(state.openingInputBlocked());

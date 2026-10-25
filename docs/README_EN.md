@@ -7,7 +7,7 @@
 ## Development architecture
 
 OreUI is being introduced feature by feature. Chat `LHolo` opens the new menu;
-Browse, load, close, restore, selection editing, structure export, transforms, render settings, HUD, hotkeys, language and experimental settings are connected. OreUI scale remains a local placeholder. Selecting a file alone does not load it. Material lists will follow later. The hotkey still opens the existing functional menu. See the [development guide](../DEVELOPMENT.md),
+Browse, load, close, restore, selection editing, structure export, transforms, render settings, HUD, hotkeys, language and experimental settings are connected. OreUI scale remains a local placeholder. Selecting a file alone does not load it. Material lists are connected. The configured menu hotkey (Alt+M by default) opens the same OreUI main menu; the legacy ImGui menu has no opening entry point. See the [development guide](../DEVELOPMENT.md),
 [OreUI migration architecture](OREUI_MIGRATION.md), and [frontend guide](../frontend/README.md) (Chinese).
 
 ## Versioning

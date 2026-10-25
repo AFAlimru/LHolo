@@ -138,6 +138,7 @@ LL_TYPE_INSTANCE_HOOK(MenuEscapeUp, ll::memory::HookPriority::Highest,
 }
 
 bool isMenuOnTop() { return menuOnTop.load(); }
+void requestMenuOpen() { if (active.load()) openPending = true; }
 void requestMenuClose() { closePending = true; }
 
 void processMenuScreen() {

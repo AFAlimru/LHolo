@@ -153,17 +153,20 @@ assert.equal(events.at(-1)[0], 'query:subscribe/lholo.materials.request', 'Openi
 assert.equal(events.length, beforeMaterials + 1);
 const materialModal = tree.root.findByProps({ className: 'lholo-material-modal' });
 
-assert(nodeText(materialModal).includes(labels['hint.noPlaceableMaterials']), 'Empty native material snapshot shows empty hint');
+assert(nodeText(materialModal).includes(labels['material.loading']), 'Pending snapshot shows calculation hint');
+assert(!nodeText(materialModal).includes(labels['hint.noPlaceableMaterials']));
+receive(JSON.stringify({ready: true, items: []}), 'lholo:materials');
+assert(nodeText(materialModal).includes(labels['hint.noPlaceableMaterials']), 'Completed empty snapshot shows empty hint');
 receive(JSON.stringify({
   ready: true,
   items: [
-    { displayName: '石头', typeName: 'minecraft:stone', itemId: 'stone', count: 128 },
-    { displayName: '橡木木板', typeName: 'minecraft:oak_planks', itemId: 'oak_planks', count: 96 },
-    { displayName: '玻璃', typeName: 'minecraft:glass', itemId: 'glass', count: 48 },
-    { displayName: '圆石楼梯', typeName: 'minecraft:stone_stairs', itemId: 'stone_stairs', count: 32 },
-    { displayName: '橡木原木', typeName: 'minecraft:oak_log', itemId: 'oak_log', count: 24 },
-    { displayName: '', nameKey: 'material.water', typeName: 'minecraft:water', itemId: 'water_bucket', count: 16 },
-    { displayName: '灯笼', typeName: 'minecraft:lantern', itemId: 'lantern', count: 8 },
+    { displayName: '石头', typeName: 'minecraft:stone', iconId: 'minecraft:stone', count: 128 },
+    { displayName: '橡木木板', typeName: 'minecraft:oak_planks', iconId: 'oak_planks', count: 96 },
+    { displayName: '玻璃', typeName: 'minecraft:glass', iconId: 'glass', count: 48 },
+    { displayName: '圆石楼梯', typeName: 'minecraft:stone_stairs', iconId: 'stone_stairs', count: 32 },
+    { displayName: '橡木原木', typeName: 'minecraft:oak_log', iconId: 'oak_log', count: 24 },
+    { displayName: '', nameKey: 'material.water', typeName: 'minecraft:water', iconId: 'minecraft:water', count: 16 },
+    { displayName: '灯笼', typeName: 'minecraft:lantern', iconId: 'lantern', count: 8 },
   ],
 }), 'lholo:materials');
 receive('{"ready":"bad","items":[]}', 'lholo:materials');
@@ -176,7 +179,7 @@ assert(materialModalText.includes(labels['column.total']));
 assert(materialModalText.includes('minecraft:stone'));
 assert.equal(materialModal.findAllByType('native-item-icon').length, 7,
   'All materials including liquids use native icons');
-assert.equal(materialModal.findAllByType('native-item-icon')[0].props.itemId, 'stone');
+assert.equal(materialModal.findAllByType('native-item-icon')[0].props.itemId, 'minecraft:stone');
 assert(materialModalText.includes(labels['material.water']));
 renderer.act(() => materialModal.findAllByType('button').find(node => nodeText(node) === labels['button.close']).props.onClick());
 assert.equal(tree.root.findAllByProps({ className: 'lholo-material-modal' }).length, 0, 'Close button dismisses material modal');
@@ -677,4 +680,6 @@ assert.equal(icon.type, adapterContext.u_);
 assert.equal(icon.props.itemID, 'stone');
 assert.equal(icon.props.width, '1.6rem');
 assert.equal(icon.props.height, '1.6rem');
+assert.equal(adapterContext.window.__LHoloOreUiRuntime.ItemIcon({itemId: 'custom:stone'}).props.itemID, 'custom:stone',
+  'Version adapter preserves non-vanilla namespaces');
 console.log('Menu tests passed: native transform, render, HUD, hotkeys, interface language, experimental settings and material list; local-only OreUI scale; automatic selection synchronization, preserved in-flight edits, no extra button, hidden scroll rails; capture coordinates, selection, export/cancel, invalid input and native input adapters; file selection, Unicode path, cancellation, duplicate click, invalid payload, navigation, cleanup/reopen, load/close/restore protocol, cancellation controls and native-state reconciliation.');

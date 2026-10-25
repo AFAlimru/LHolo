@@ -18,6 +18,7 @@
   "button.load": "載入",
   "button.closeProjection": "關閉投影",
   "material.listTitle": "材料清單",
+  "material.loading": "正在計算材料清單，請稍候…",
   "button.restoreLastProjection": "恢復上次投影",
   "label.savedOrigin": "原點 X %d  Y %d  Z %d",
   "hint.noSavedProjection": "沒有可恢復的上次投影記錄",

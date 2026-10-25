@@ -15,6 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "structure/StructureLoader.h"
+#include "input/MenuOpenRequest.h"
 
 #include "i18n/Message.h"
 #include "input/ViewMoveBasis.h"
@@ -121,16 +122,9 @@ void requestMaterialList() {
     detail::requestMaterialListRefresh();
 }
 
-void requestOpenGui() {
-    auto const opening = uiState().toggleGuiVisible();
-    if (opening) {
-        uiState().setOpeningInputBlockFrames(3);
-    } else {
-        // Consume the release half of the key/click that closed the menu.
-        // Without this, Minecraft receives an unmatched Esc or mouse-up after
-        // the ImGui window has already disappeared.
-        uiState().setBlockGameInputUntil(GetTickCount64() + 180);
-    }
+void closeLegacyGui() {
+    uiState().setGuiVisible(false);
+    uiState().setBlockGameInputUntil(GetTickCount64() + 180);
 }
 
 bool isGuiVisible() { return uiState().guiVisible(); }
@@ -179,7 +173,7 @@ bool handleGuiHotkeyKeyDown(unsigned int virtualKey) {
         && modifiers == guiHotkey.modifiers) {
         if (GetTickCount64() >= uiState().ignoreHotkeyUntil()
             && uiState().tryPressHotkey(kGuiHotkeyIndex)) {
-            requestOpenGui();
+            input::requestMenuOpen();
         }
         return true;
     }

@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { MaterialItem, MaterialsBridge, MaterialsState, MenuLabels } from '../platform/bridge';
 
-export type MaterialItemDraft = MaterialItem;
-
 const initialState: MaterialsState = { ready: false, items: [] };
 
-export function formatMaterialDisplayName(item: MaterialItemDraft, labels: MenuLabels): string {
+export function formatMaterialDisplayName(item: MaterialItem, labels: MenuLabels): string {
   if (item.nameKey && labels[item.nameKey]) {
     return labels[item.nameKey];
   }
@@ -13,7 +11,7 @@ export function formatMaterialDisplayName(item: MaterialItemDraft, labels: MenuL
 }
 
 export function formatMaterialSummary(
-  materials: readonly MaterialItemDraft[],
+  materials: readonly MaterialItem[],
   labels: MenuLabels
 ): string {
   let total = 0;
@@ -26,7 +24,7 @@ export function formatMaterialSummary(
 }
 
 // Native material list modal state backed by StructureUiState / MaterialTracker.
-export function useMaterialsDraft(bridge: MaterialsBridge) {
+export function useMaterials(bridge: MaterialsBridge) {
   const [isOpen, setIsOpen] = useState(false);
   const [state, setState] = useState<MaterialsState>(initialState);
   useEffect(() => bridge.subscribeMaterials(setState), [bridge]);
@@ -46,4 +44,4 @@ export function useMaterialsDraft(bridge: MaterialsBridge) {
   };
 }
 
-export type MaterialsDraftControls = ReturnType<typeof useMaterialsDraft>;
+export type MaterialsControls = ReturnType<typeof useMaterials>;

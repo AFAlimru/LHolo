@@ -70,12 +70,6 @@ bool StructureUiState::guiVisible() const {
     return mGuiVisible.load(std::memory_order_acquire);
 }
 
-bool StructureUiState::toggleGuiVisible() {
-    auto const opening = !mGuiVisible.load(std::memory_order_acquire);
-    mGuiVisible.store(opening, std::memory_order_release);
-    return opening;
-}
-
 void StructureUiState::setGuiVisible(bool visible) {
     mGuiVisible.store(visible, std::memory_order_release);
 }
@@ -437,14 +431,20 @@ bool StructureUiState::materialListReady() const {
     return mMaterialListReady.load(std::memory_order_acquire);
 }
 
+std::optional<MaterialListSnapshot> StructureUiState::materialListSnapshotIfChanged(
+    std::optional<std::uint64_t> revision
+) const {
+    std::lock_guard lock(mMaterialMutex);
+    if (revision && *revision == mMaterialListRevision) return std::nullopt;
+    return MaterialListSnapshot{mMaterialListRevision,
+        mMaterialListReady.load(std::memory_order_acquire), mMaterialRequirements};
+}
+
 void StructureUiState::replaceMaterialRequirements(std::vector<MaterialRequirement> materials) {
-    {
-        std::lock_guard lock(mMaterialMutex);
-        mMaterialRequirements = std::move(materials);
-    }
-    // Publish readiness only after the complete snapshot is visible. An empty
-    // list is also a valid cached result and must not trigger endless rescans.
+    std::lock_guard lock(mMaterialMutex);
+    mMaterialRequirements = std::move(materials);
     mMaterialListReady.store(true, std::memory_order_release);
+    ++mMaterialListRevision;
 }
 
 std::vector<MaterialRequirement> StructureUiState::materialRequirements() const {
@@ -481,8 +481,9 @@ void StructureUiState::clearMaterialHud() {
 
 void StructureUiState::clearMaterials() {
     mMaterialListRequested.store(false, std::memory_order_release);
-    mMaterialListReady.store(false, std::memory_order_release);
     std::lock_guard lock(mMaterialMutex);
+    mMaterialListReady.store(false, std::memory_order_release);
+    ++mMaterialListRevision;
     mMaterialRequirements.clear();
     mMaterialHudRequirements.clear();
     mMaterialHudAvailability.clear();
