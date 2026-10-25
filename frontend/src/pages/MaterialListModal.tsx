@@ -23,10 +23,9 @@ export function MaterialListModal({
   return <div className="lholo-modal-backdrop">
     <div className="lholo-material-modal">
       <div className="lholo-material-modal-header">
-        <div className="lholo-modal-title">{labels['material.listTitle']}</div>
+        <div className="lholo-material-title">{labels['material.listTitle']}</div>
         <LHoloButton label={labels['button.close']} onClick={closeModal} />
       </div>
-      <div className="lholo-transform-divider" />
       {!hasLoadedStructure ? (
         <div className="lholo-muted lholo-material-empty">{labels['status.notLoaded']}</div>
       ) : (
@@ -34,7 +33,6 @@ export function MaterialListModal({
           <div className="lholo-material-summary">
             {formatMaterialSummary(materials, labels)}
           </div>
-          <div className="lholo-transform-divider" />
           {materials.length === 0 ? (
             <div className="lholo-muted lholo-material-empty">
               {labels['hint.noPlaceableMaterials']}

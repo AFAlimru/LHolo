@@ -39,17 +39,17 @@ export function RenderPage({ labels, render }: { labels: MenuLabels; render: Ren
     </div>
 
     <div className="lholo-section-title lholo-render-section">{labels['section.layerSettings']}</div>
-    <div className="lholo-transform-row">
+    <div className="lholo-transform-row lholo-setting-row">
       <div className="lholo-transform-label">{labels['label.layerAxis']}</div>
       <LHoloSelect disabled={!render.ready} label={labels['label.layerAxis']} value={render.layerAxis}
         options={axisOptions} onChange={render.setLayerAxis} />
     </div>
-    <div className="lholo-transform-row">
+    <div className="lholo-transform-row lholo-setting-row">
       <div className="lholo-transform-label">{labels['label.displayRange']}</div>
       <LHoloSelect disabled={!render.ready} label={labels['label.displayRange']} value={render.layerDisplayMode}
         options={rangeOptions} onChange={render.setLayerDisplayMode} />
     </div>
-    <div className="lholo-transform-row">
+    <div className="lholo-transform-row lholo-setting-row">
       <div className="lholo-transform-label">{currentLayerLabel}</div>
       <div className="lholo-stepper">
         <LHoloButton disabled={!render.ready} label="-" className="lholo-stepper-button" onClick={() => render.stepDisplayLayer(-1)} />
@@ -69,12 +69,12 @@ export function RenderPage({ labels, render }: { labels: MenuLabels; render: Ren
     ] as const satisfies readonly [OpacityField, string][]).map(([field, labelKey]) => {
       const label = labels[labelKey];
       const item = render.opacity[field];
-      return <div className="lholo-opacity-row" key={field}>
+      return <div className="lholo-opacity-row lholo-setting-row" key={field}>
+        <div className="lholo-opacity-label">{label}</div>
         <div className="lholo-opacity-field">
           <LHoloTextField disabled={!render.ready} label={label} value={item.text} maxLength={4}
             onChange={text => render.editOpacity(field, text)} onBlur={() => render.commitOpacity(field)} />
         </div>
-        <div className="lholo-opacity-label">{label}</div>
       </div>;
     })}
     <div className="lholo-action-row">

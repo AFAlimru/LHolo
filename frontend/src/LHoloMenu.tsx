@@ -69,7 +69,7 @@ export function LHoloMenu({
           <MenuNavigation page={page} labels={labels} onSelect={selectPage} />
         </NativeScrollView></div>
         <div className="lholo-content-viewport"><NativeScrollView>
-          <div className="lholo-content">
+          <div className="lholo-content" key={page}>
             {page === 'projection'
               ? <ProjectionPage labels={labels} file={file} projection={projection} onBrowse={onBrowse} onMaterials={materialsDraft.openModal} />
               : page === 'createStructure' ? <CreateStructurePage labels={labels} capture={capture} fileBrowsing={file.browsing} />

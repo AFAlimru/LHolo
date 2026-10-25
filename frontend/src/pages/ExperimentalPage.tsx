@@ -54,7 +54,7 @@ export function ExperimentalPage({ labels, experimental }: {
       <div className="lholo-muted">{labels['hint.assistedDisabled']}</div>
     )}
 
-    <div className="lholo-experimental-row">
+    <div className="lholo-experimental-row lholo-setting-row">
       <div className="lholo-experimental-label">{radiusLabel}</div>
       <div className="lholo-stepper">
         <LHoloButton disabled={!experimental.ready} label="-" className="lholo-stepper-button"
@@ -69,7 +69,7 @@ export function ExperimentalPage({ labels, experimental }: {
       </div>
     </div>
 
-    <div className="lholo-experimental-row">
+    <div className="lholo-experimental-row lholo-setting-row">
       <div className="lholo-experimental-label">{cooldownLabel}</div>
       <div className="lholo-stepper">
         <LHoloButton disabled={!experimental.ready} label="-" className="lholo-stepper-button"

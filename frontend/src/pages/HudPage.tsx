@@ -28,7 +28,7 @@ export function HudPage({ labels, hud }: { labels: MenuLabels; hud: HudSettingsC
       <LHoloCheckbox disabled={!hud.ready} label={labels['checkbox.hudEnabled']}
         value={hud.hudEnabled} onChange={hud.setHudEnabled} />
     </div>
-    <div className="lholo-transform-row">
+    <div className="lholo-transform-row lholo-setting-row">
       <div className="lholo-hud-label">{labels['label.hudPosition']}</div>
       <LHoloSelect label={labels['label.hudPosition']} value={hud.hudPosition}
         options={positions} onChange={hud.setHudPosition} disabled={!hud.ready || !hud.hudEnabled} />
@@ -44,7 +44,7 @@ export function HudPage({ labels, hud }: { labels: MenuLabels; hud: HudSettingsC
       <LHoloCheckbox disabled={!hud.ready} label={labels['checkbox.materialHudEnabled']}
         value={hud.materialHudEnabled} onChange={hud.setMaterialHudEnabled} />
     </div>
-    <div className="lholo-transform-row">
+    <div className="lholo-transform-row lholo-setting-row">
       <div className="lholo-hud-label">{labels['label.materialHudPosition']}</div>
       <LHoloSelect label={labels['label.materialHudPosition']} value={hud.materialHudPosition}
         options={positions} onChange={hud.setMaterialHudPosition} disabled={!hud.ready || !hud.materialHudEnabled} />

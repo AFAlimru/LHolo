@@ -2,8 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { NativeInteractive } from '../platform/native';
 import { LHoloButton } from './LHoloControls';
 
-export function LHoloSelect({ label, value, options, onChange, disabled }: {
+export function LHoloSelect({ label, value, options, onChange, disabled, size = 'regular' }: {
   label: string; value: number; options: readonly string[]; onChange(value: number): void; disabled?: boolean;
+  size?: 'regular' | 'compact';
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -25,7 +26,7 @@ export function LHoloSelect({ label, value, options, onChange, disabled }: {
       document.removeEventListener('keydown', escape);
     };
   }, [open]);
-  return <div className="lholo-select" ref={root}>
+  return <div className={'lholo-select' + (size === 'compact' ? ' lholo-select-compact' : '')} ref={root}>
     <NativeInteractive label={label + ' · ' + options[value]} disabled={disabled}
       className="lholo-button lholo-select-trigger"
       onClick={() => { if (!disabled) setOpen(previous => !previous); }}>

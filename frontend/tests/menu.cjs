@@ -274,10 +274,12 @@ const ackTransform = () => {
 };
 receiveTransform();
 click(labels['page.transform']);
-assert.equal(tree.root.findAllByProps({className: 'lholo-select'}).length, 2);
+const selectNodes = () => tree.root.findAll(node => typeof node.type === 'string'
+  && node.props.className?.split(' ').includes('lholo-select'));
+assert.equal(selectNodes().length, 2);
 assert.equal(tree.root.findAllByProps({className: 'lholo-stepper'}).length, 3);
 const transformInputs = () => tree.root.findAllByType('input');
-const selectTrigger = index => tree.root.findAllByProps({className: 'lholo-select'})[index].findAllByType('button')[0];
+const selectTrigger = index => selectNodes()[index].findAllByType('button')[0];
 renderer.act(() => selectTrigger(0).props.onClick());
 assert.equal(dropdownListeners.size, 2, 'Open dropdown listens for outside click and Escape');
 assert.deepEqual(tree.root.findByProps({className: 'lholo-select-options'}).findAllByType('button').map(nodeText), ['0°','90°','180°','270°']);
@@ -374,7 +376,7 @@ const ackRender = () => {
 };
 receiveRender();
 click(labels['page.render']);
-assert.equal(tree.root.findAllByProps({className: 'lholo-select'}).length, 2);
+assert.equal(selectNodes().length, 2);
 assert.equal(tree.root.findAllByProps({className: 'lholo-stepper'}).length, 1);
 const pageChecks = () => tree.root.findAllByType('button').filter(node => node.props.className?.includes('lholo-checkbox'));
 assert.equal(pageChecks().length, 3);

@@ -11,7 +11,7 @@ export function InterfacePage({ labels, interfaceSettings }: { labels: MenuLabel
   const languageLabel = labels['label.language'];
   return <>
     <div className="lholo-section-title">{labels['section.interfaceSettings']}</div>
-    <div className="lholo-interface-row">
+    <div className="lholo-interface-row lholo-setting-row">
       <div className="lholo-interface-label">{scaleLabel}</div>
       <div className="lholo-stepper">
         <LHoloButton label="-" className="lholo-stepper-button"
@@ -26,7 +26,7 @@ export function InterfacePage({ labels, interfaceSettings }: { labels: MenuLabel
       </div>
     </div>
     <div className="lholo-muted">{labels['oreui.scalePlaceholder']}</div>
-    <div className="lholo-interface-row">
+    <div className="lholo-interface-row lholo-setting-row">
       <div className="lholo-interface-label">{languageLabel}</div>
       <LHoloSelect label={languageLabel} value={interfaceSettings.language}
         disabled={!interfaceSettings.ready} options={interfaceSettings.languages.map(item => item.name)} onChange={interfaceSettings.setLanguage} />

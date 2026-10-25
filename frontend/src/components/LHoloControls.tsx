@@ -3,12 +3,14 @@ import { NativeInteractive } from '../platform/native';
 
 interface ButtonProps {
   label: string; onClick(): void; disabled?: boolean; className?: string;
+  icon?: React.ReactNode;
 }
 
-export function LHoloButton({ label, onClick, disabled, className = '' }: ButtonProps) {
+export function LHoloButton({ label, onClick, disabled, className = '', icon }: ButtonProps) {
   return <NativeInteractive label={label} disabled={disabled}
     className={'lholo-button ' + className} onClick={() => { if (!disabled) onClick(); }}>
     <div className="lholo-button-indicator" />
+    {icon ? <div className="lholo-button-icon">{icon}</div> : null}
     <div className="lholo-button-label">{label}</div>
   </NativeInteractive>;
 }
