@@ -253,7 +253,16 @@
     LHOLO_TEXT_KEY("actionHint.loadProjection", ActionHintLoadProjection, "")                            \
     LHOLO_TEXT_KEY("actionHint.closeProjection", ActionHintCloseProjection, "")                          \
     LHOLO_TEXT_KEY("actionHint.noMatchingItem", ActionHintNoMatchingItem, "")                            \
-    LHOLO_TEXT_KEY("actionHint.manualModeBlocked", ActionHintManualModeBlocked, "")
+    LHOLO_TEXT_KEY("actionHint.manualModeBlocked", ActionHintManualModeBlocked, "")                      \
+    LHOLO_TEXT_KEY("oreui.scalePlaceholder", OreUiScalePlaceholder, "") \
+    LHOLO_TEXT_KEY("oreui.previewActionNotice", OreUiPreviewActionNotice, "")                              \
+    LHOLO_TEXT_KEY("oreui.browsing", OreUiBrowsing, "")                                                    \
+    LHOLO_TEXT_KEY("oreui.applySelection", OreUiApplySelection, "") \
+    LHOLO_TEXT_KEY("oreui.captureChanged", OreUiCaptureChanged, "") \
+    LHOLO_TEXT_KEY("oreui.invalidCoordinates", OreUiInvalidCoordinates, "") \
+    LHOLO_TEXT_KEY("oreui.captureBusy", OreUiCaptureBusy, "") \
+    LHOLO_TEXT_KEY("oreui.saveFailed", OreUiSaveFailed, "") \
+    LHOLO_TEXT_KEY("oreui.browseFailed", OreUiBrowseFailed, "")
 
 namespace lholo::i18n {
 

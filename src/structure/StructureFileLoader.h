@@ -14,6 +14,7 @@ struct StructureLoadOrigin;
 // before the world's registry or this DLL can be released.
 void enableStructureFileLoader();
 void shutdownStructureFileLoader();
+bool isStructureFileLoading();
 bool startStructureFileLoad(std::string path, StructureLoadOrigin origin);
 bool startSavedProjectionLoad();
 

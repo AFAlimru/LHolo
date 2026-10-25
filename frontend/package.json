@@ -1,0 +1,23 @@
+{
+  "name": "lholo-oreui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && node build.mjs",
+    "test": "npm run build && node tests/menu.cjs",
+    "preview": "node preview.mjs",
+    "preview:check": "tsc -p preview/tsconfig.json --noEmit",
+    "preview:build": "npm run preview:check && node preview.mjs --build"
+  },
+  "devDependencies": {
+    "@react-facet/core": "18.6.0",
+    "@react-facet/dom-fiber": "18.6.0",
+    "@types/react": "18.3.28",
+    "esbuild": "0.28.2",
+    "react": "18.2.0",
+    "react-test-renderer": "18.2.0",
+    "typescript": "7.0.2"
+  }
+}

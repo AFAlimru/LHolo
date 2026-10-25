@@ -1,0 +1,127 @@
+@font-face { font-family: LHoloSans; src: url('/hbui/fonts/NotoSansSC-Regular-a4317c614d07055b56ed.otf'); }
+/* Native divs inherit column flex; rows must be explicit. */
+.lholo-backdrop { position:absolute; top:0; left:0; width:100vw; height:100vh; align-items:center; justify-content:center; background-color:rgba(0,0,0,0.28); font-family:LHoloSans,sans-serif; color:#ededed; }
+.lholo-menu { width:93vw; height:90vh; min-height:0; flex-shrink:0; padding:1.25rem; border-radius:0.6rem; background-color:#121212; }
+.lholo-menu-header { flex-direction:row; flex-shrink:0; align-items:center; justify-content:space-between; padding-bottom:1rem; border-bottom:0.06rem solid #303030; }
+.lholo-brand { font-size:1.5rem; line-height:1.5; }
+.lholo-menu-body { flex:1; min-height:0; flex-direction:row; overflow:hidden; padding-top:0.7rem; }
+.lholo-navigation { width:11rem; flex-shrink:0; min-height:0; overflow:hidden; padding-right:0.8rem; }
+.lholo-content-viewport { flex:1; min-width:0; min-height:0; overflow:hidden; }
+.lholo-navigation > div, .lholo-content-viewport > div { min-height:0; }
+.lholo-content { flex-shrink:0; padding:0 0.5rem 1rem; }
+.lholo-section-title { font-size:1.3rem; line-height:1.5; padding-bottom:0.6rem; border-bottom:0.06rem solid #303030; }
+.lholo-status { font-size:1.15rem; line-height:1.5; margin:1rem 0; }
+.lholo-muted { color:#909090; font-size:1rem; line-height:1.5; margin-top:0.4rem; }
+.lholo-file-row, .lholo-action-row, .lholo-restore-row { flex-direction:row; align-items:center; }
+.lholo-file-field { flex:1; min-width:0; min-height:3rem; justify-content:center; padding:0.4rem 0.8rem; overflow-wrap:break-word; background-color:#242424; border-radius:0.25rem; font-size:1.1rem; }
+.lholo-file-row > .lholo-button { margin-left:0.65rem; }
+.lholo-action-row, .lholo-restore-row { margin-top:1rem; flex-wrap:wrap; }
+.lholo-action-row > .lholo-button { margin-right:0.65rem; margin-bottom:0.4rem; }
+.lholo-notice { color:#b6cde3; font-size:1rem; line-height:1.5; margin-top:1rem; }
+.lholo-button { position:relative; flex-direction:row; flex-shrink:0; align-items:center; justify-content:center; height:3rem; padding:0 1rem; background-color:#282828; border-radius:0.25rem; }
+.lholo-button-label { font-size:1.1rem; line-height:1.5; flex-shrink:0; }
+.lholo-button.lholo-control-hovered { background-color:#383838; }
+.lholo-button.lholo-control-focused { border:0.08rem solid #ededed; }
+.lholo-button.lholo-control-pressed { background-color:#464646; }
+.lholo-navigation-item { width:100%; height:3.25rem; justify-content:flex-start; background-color:transparent; margin-bottom:0.1rem; }
+.lholo-navigation-item.is-selected { background-color:#333333; }
+.lholo-button-indicator { display:none; }
+.lholo-navigation-item.is-selected .lholo-button-indicator { display:flex; position:absolute; left:0.25rem; top:0.8rem; width:0.25rem; height:1.6rem; border-radius:0.1rem; background-color:#0795e7; }
+.lholo-loading { position:absolute; top:1rem; left:1rem; flex-direction:row; align-items:center; color:white; }
+
+.lholo-control-disabled { opacity:0.5; }
+
+.lholo-capture-selection { margin-top:1.2rem; }
+.lholo-capture-point { margin-top:0.9rem; margin-bottom:0.3rem; }
+.lholo-capture-point-title { font-size:1.1rem; line-height:1.5; margin-bottom:0.5rem; }
+.lholo-coordinate-row { flex-direction:row; align-items:center; flex-wrap:wrap; }
+.lholo-coordinate-fields { flex-direction:row; flex-shrink:0; margin-bottom:0.5rem; }
+.lholo-coordinate { flex-direction:row; align-items:center; flex-shrink:0; margin-right:0.8rem; }
+.lholo-coordinate-label { font-size:1.1rem; line-height:1.5; margin-right:0.45rem; }
+.lholo-coordinate-row > .lholo-button { margin-bottom:0.5rem; }
+.lholo-input-shell { width:5.6rem; height:3rem; min-height:0; flex-shrink:0; border-radius:0.25rem; background-color:#242424; }
+.lholo-input-shell input.lholo-text-input { width:100%; flex:1; border:none; border-radius:0.25rem; background-color:transparent; min-width:0; min-height:0; height:3rem; padding:0.45rem 0.55rem; font-family:LHoloSans,sans-serif; font-size:1.1rem; line-height:1.5; text-shadow:none; color:#ededed; }
+.lholo-capture-entities { margin-top:1rem; }
+
+/* Match src/ui/FluentTheme.cpp: neutral frames/actions, blue for state. */
+.lholo-mode-row { flex-direction:row; align-items:center; font-size:1.1rem; margin-top:1rem; margin-bottom:0.6rem; }
+.lholo-mode-value { justify-content:center; min-height:3rem; padding:0.4rem 0.9rem; margin-left:0.7rem; border-radius:0.25rem; background-color:#242424; }
+.lholo-input-shell { flex-direction:row; align-items:center; }
+.lholo-input-shell.lholo-control-hovered { background-color:#2f2f2f; }
+.lholo-input-shell.lholo-control-focused, .lholo-input-shell.is-editing { border:0.08rem solid #ededed; }
+.lholo-checkbox { flex-direction:row; align-items:center; align-self:flex-start; min-height:2.2rem; padding:0.15rem 0; }
+.lholo-checkbox-box { width:1.38rem; height:1.38rem; flex-shrink:0; align-items:center; justify-content:center; border:0.09rem solid #5a5a5a; border-radius:0.32rem; background-color:#1c1c1c; }
+.lholo-checkbox-label { margin-left:0.65rem; font-size:1.1rem; line-height:1.5; }
+.lholo-checkbox.lholo-control-hovered .lholo-checkbox-box { background-color:#272727; border-color:#7a7a7a; }
+.lholo-checkbox.lholo-control-pressed .lholo-checkbox-box { background-color:#303030; border-color:#4f4f4f; }
+.lholo-checkbox.is-checked .lholo-checkbox-box { background-color:#0f82f2; border-color:#0f82f2; }
+.lholo-checkbox.is-checked.lholo-control-hovered .lholo-checkbox-box { background-color:#2892f7; border-color:#2892f7; }
+.lholo-checkbox.is-checked.lholo-control-pressed .lholo-checkbox-box { background-color:#006cbe; border-color:#006cbe; }
+.lholo-checkbox.lholo-control-focused .lholo-checkbox-box { border-color:#ededed; }
+
+/* Keep the native scroll rail measurable, but hide it without taking input. */
+.lholo-hidden-scrollbar { opacity:0; pointer-events:none; }
+
+.lholo-transform-row { flex-direction:row; align-items:center; flex-wrap:wrap; margin-top:0.9rem; }
+.lholo-transform-label { width:7.6rem; flex-shrink:0; margin-right:0.6rem; font-size:1.1rem; line-height:1.5; }
+.lholo-transform-divider { border-bottom:0.06rem solid #303030; margin-top:1rem; }
+.lholo-select { position:relative; min-width:7.5rem; flex-shrink:0; }
+.lholo-select-trigger { justify-content:space-between; }
+.lholo-select-arrow { font-size:0.8rem; margin-left:1rem; }
+.lholo-select-options { position:absolute; top:100%; left:0; z-index:30; min-width:100%; padding:0.2rem; margin-top:0.2rem; background-color:#242424; border:0.06rem solid #3b3b3b; border-radius:0.25rem; }
+.lholo-select-option { height:2.7rem; justify-content:flex-start; padding:0 0.75rem; background-color:transparent; }
+.lholo-select-option.is-selected { background-color:#333333; }
+.lholo-stepper { flex-direction:row; align-items:center; }
+.lholo-stepper-button { width:3rem; padding:0; }
+.lholo-stepper-value { min-width:3.2rem; margin:0 0.4rem; }
+.lholo-stepper-value > .lholo-input-shell { width:100%; }
+.lholo-stepper-value .lholo-text-input { text-align:center; }
+
+.lholo-render-section { margin-top:1.2rem; }
+.lholo-render-check { margin-top:0.7rem; }
+.lholo-layer-hint { margin-top:0; margin-left:0.65rem; }
+.lholo-opacity-row { flex-direction:row; align-items:center; flex-wrap:wrap; margin-top:0.9rem; }
+.lholo-opacity-field { width:4.6rem; flex-shrink:0; margin-right:0.7rem; }
+.lholo-opacity-field > .lholo-input-shell { width:100%; }
+.lholo-opacity-label { font-size:1.1rem; line-height:1.5; }
+.lholo-vibrant-hint { margin-top:1.1rem; }
+
+.lholo-hud-label { width:10.5rem; flex-shrink:0; margin-right:0.6rem; font-size:1.1rem; line-height:1.5; }
+
+.lholo-hotkey-list { margin-top:0.4rem; }
+.lholo-hotkey-row { flex-direction:row; align-items:center; flex-wrap:wrap; margin-top:0.55rem; }
+.lholo-hotkey-label { width:11.5rem; flex-shrink:0; margin-right:0.8rem; font-size:1.1rem; line-height:1.5; }
+.lholo-hotkey-actions { flex-direction:row; align-items:center; flex-wrap:wrap; }
+.lholo-hotkey-actions > .lholo-button { margin-right:0.5rem; }
+.lholo-hotkey-bind { min-width:11rem; }
+.lholo-hotkey-bind.is-capturing { border:0.08rem solid #0078d6; background-color:#1f3242; }
+
+.lholo-interface-row { flex-direction:row; align-items:center; flex-wrap:wrap; margin-top:0.9rem; }
+.lholo-interface-label { width:9.5rem; flex-shrink:0; margin-right:0.6rem; font-size:1.1rem; line-height:1.5; }
+
+.lholo-danger-button { background-color:#b83338; }
+.lholo-danger-button.lholo-control-hovered { background-color:#d94247; }
+.lholo-danger-button.lholo-control-pressed { background-color:#9e292e; }
+.lholo-experimental-row { flex-direction:row; align-items:center; flex-wrap:wrap; margin-top:0.9rem; }
+.lholo-experimental-label { width:16.8rem; flex-shrink:0; margin-right:0.6rem; font-size:1.1rem; line-height:1.5; }
+
+.lholo-modal-backdrop { position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:60; align-items:center; justify-content:center; background-color:rgba(0,0,0,0.62); }
+.lholo-modal { width:42rem; max-width:86vw; padding:1.25rem; border-radius:0.5rem; border:0.06rem solid #3d3d40; background-color:#1d1d1d; }
+.lholo-modal-title { font-size:1.3rem; line-height:1.5; }
+.lholo-modal-body { margin-top:0.4rem; }
+.lholo-modal-paragraph { font-size:1.05rem; line-height:1.55; margin-top:0.55rem; color:#e0e0e0; }
+
+/* Material list popup matching renderMaterialPopup in MenuPages.cpp */
+.lholo-material-modal { width:46rem; max-width:86vw; max-height:84vh; min-height:0; padding:1.35rem; border-radius:0.5rem; border:0.06rem solid #3d3d40; background-color:#1d1d1d; }
+.lholo-material-modal-header { flex-direction:row; flex-shrink:0; align-items:center; justify-content:space-between; }
+.lholo-material-summary { font-size:1.15rem; line-height:1.5; margin-top:0.75rem; }
+.lholo-material-empty { margin-top:0.9rem; }
+.lholo-material-table { flex:1; min-height:0; margin-top:0.75rem; border:0.06rem solid #3b3b3d; border-radius:0.25rem; overflow:hidden; background-color:#19191b; }
+.lholo-material-table-header { flex-direction:row; flex-shrink:0; align-items:center; min-height:2.75rem; padding:0.45rem 0.75rem; background-color:#262629; border-bottom:0.06rem solid #3b3b3d; font-size:1.1rem; line-height:1.5; }
+.lholo-material-table-viewport { height:18rem; max-height:54vh; min-height:0; overflow:hidden; }
+.lholo-material-table-viewport > div { min-height:0; }
+.lholo-material-table-body { flex-shrink:0; }
+.lholo-material-table-row { flex-direction:row; flex-shrink:0; align-items:center; min-height:2.75rem; padding:0.45rem 0.75rem; border-bottom:0.06rem solid #2b2b2e; font-size:1.1rem; line-height:1.5; }
+.lholo-material-col-item { flex:38; min-width:0; padding-right:0.6rem; overflow-wrap:break-word; }
+.lholo-material-col-id { flex:42; min-width:0; padding-right:0.6rem; overflow-wrap:break-word; }
+.lholo-material-col-total { flex:20; min-width:0; }

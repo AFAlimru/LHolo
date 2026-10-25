@@ -10,6 +10,8 @@
 #include "i18n/Message.h"
 #include "structure/LayerDisplayTypes.h"
 #include "structure/StructureLoader.h"
+#include "structure/TransformTypes.h"
+#include "structure/LayerSettings.h"
 
 #include <atomic>
 #include <memory>
@@ -96,6 +98,10 @@ public:
     bool failFileLoad(StructureLoadRequest const& request, i18n::Message status);
 
     [[nodiscard]] StructureTransformSnapshot transform() const;
+    [[nodiscard]] TransformState transformEditorState() const;
+    bool applyTransformEdit(TransformEdit const& edit);
+    [[nodiscard]] LayerSettingsSnapshot layerSettings() const;
+    bool applyLayerSettings(std::uint64_t context, LayerSettings const& expected, LayerSettings desired);
     [[nodiscard]] bool layerDisplayEnabled() const;
     void resetTransform();
     bool setRotation(int value);

@@ -3,6 +3,13 @@
 build/
 bin/
 
+# OreUI frontend dependencies and generated assets
+frontend/node_modules/
+frontend/dist/
+frontend/.preview/
+__pycache__/
+*.pyc
+
 # IDE and compiler artifacts
 .vs/
 .vscode/

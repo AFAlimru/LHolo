@@ -4,6 +4,7 @@
 #include "ui/MenuController.h"
 
 #include "place/PlaceHelper.h"
+#include "structure/ProjectionActions.h"
 #include "projection/Projection.h"
 #include "structure/StructurePaths.h"
 #include "structure/StructureLoader.h"
@@ -14,6 +15,7 @@
 #include "ui/FileDialog.h"
 #include "ui/FluentTheme.h"
 #include "ui/HotkeyFormat.h"
+#include "ui/HotkeyDefinitions.h"
 #include "ui/LHoloMenu.h"
 
 #include <algorithm>
@@ -44,20 +46,7 @@ std::array<char, 2048> gPathBuffer{};
 bool                   gPathInitialized{};
 MenuPage               gActivePage{MenuPage::Projection};
 
-struct HotkeyDefinition { HotkeyId id; i18n::TextKey label; };
-constexpr std::array<HotkeyDefinition, input::kHotkeyCount> kHotkeyDefinitions{{
-    {HotkeyId::Gui, i18n::TextKey::HotkeyOpenMenu},
-    {HotkeyId::MoveLeft, i18n::TextKey::HotkeyMoveLeft},
-    {HotkeyId::MoveRight, i18n::TextKey::HotkeyMoveRight},
-    {HotkeyId::MoveForward, i18n::TextKey::HotkeyMoveForward},
-    {HotkeyId::MoveBackward, i18n::TextKey::HotkeyMoveBackward},
-    {HotkeyId::MoveUp, i18n::TextKey::HotkeyMoveUp},
-    {HotkeyId::MoveDown, i18n::TextKey::HotkeyMoveDown},
-    {HotkeyId::LayerIncrease, i18n::TextKey::HotkeyLayerIncrease},
-    {HotkeyId::LayerDecrease, i18n::TextKey::HotkeyLayerDecrease},
-    {HotkeyId::LoadProjection, i18n::TextKey::HotkeyLoadProjection},
-    {HotkeyId::CloseProjection, i18n::TextKey::HotkeyCloseProjection}
-}};
+
 
 } // namespace
 
@@ -283,41 +272,18 @@ MenuActions buildStructureMenuActions(bool& refreshModel) {
                         : std::nullopt;
     };
     actions.loadStructure = [&refreshModel](std::string_view pathValue) {
-        auto& session = structure::detail::StructureSession::getInstance();
-        auto const pathText = std::string{pathValue};
-        if (pathText.empty()) {
-            session.setStatus(i18n::Message{i18n::TextKey::StatusPathEmpty});
-            return;
-        }
-        auto client = ll::service::getClientInstance();
-        auto* player = client ? client->getLocalPlayer() : nullptr;
-        if (!player) {
-            session.setStatus(i18n::Message{i18n::TextKey::CaptureStatusNoWorld});
-            refreshModel = true;
-            return;
-        }
-        auto const position = player->getPosition();
-        structure::detail::startStructureFileLoad(pathText, structure::detail::StructureLoadOrigin{
-            static_cast<int>(std::floor(position.x)),
-            static_cast<int>(std::floor(position.y)) - 1,
-            static_cast<int>(std::floor(position.z)),
-            static_cast<int>(player->getDimensionId())
-        });
+        (void)structure::requestProjectionLoad(std::string{pathValue});
         refreshModel = true;
     };
     actions.restoreProjection = [&refreshModel] {
-        if (structure::detail::startSavedProjectionLoad()) {
-            auto const savedPath =
-                structure::detail::StructureSession::getInstance().savedProjection().structurePath;
+        if (structure::requestProjectionRestore()) {
+            auto const savedPath = structure::detail::StructureSession::getInstance().savedProjection().structurePath;
             std::snprintf(gPathBuffer.data(), gPathBuffer.size(), "%s", savedPath.c_str());
         }
         refreshModel = true;
     };
     actions.closeProjection = [&refreshModel] {
-        structure::clear();
-        // clear() freezes the active transform before releasing the loaded
-        // structure; persist that restore snapshot while closing from the UI.
-        structure::saveSettings();
+        structure::requestProjectionClose();
         refreshModel = true;
     };
     actions.requestMaterials = [] { structure::requestMaterialList(); };

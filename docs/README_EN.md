@@ -4,6 +4,12 @@
 
 `LHolo` is a client-side structure projection mod for [LeviLamina](https://github.com/LiteLDev/LeviLamina)
 
+## Development architecture
+
+OreUI is being introduced feature by feature. Chat `LHolo` opens the new menu;
+Browse, load, close, restore, selection editing, structure export, transforms, render settings, HUD, hotkeys, language and experimental settings are connected. OreUI scale remains a local placeholder. Selecting a file alone does not load it. Material lists will follow later. The hotkey still opens the existing functional menu. See the [development guide](../DEVELOPMENT.md),
+[OreUI migration architecture](OREUI_MIGRATION.md), and [frontend guide](../frontend/README.md) (Chinese).
+
 ## Versioning
 
 Example version: `v26.51.2`
@@ -13,7 +19,7 @@ Example version: `v26.51.2`
 
 ## Quick Start
 
-1. After installing the mod, type `LHolo` in the chat, or press `Alt + M` to open the mod menu
+1. After installing the mod, type `LHolo` in chat for the OreUI menu, or press `Alt + M` for the existing functional menu
 2. The mod is operated through a GUI and hotkeys (for the full hotkey list, just check the mod menu)
 3. Please disable Vibrant Visuals while using this mod
 

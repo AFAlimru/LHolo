@@ -4,6 +4,11 @@
 
 `LHolo` 是一个 [LeviLamina](https://github.com/LiteLDev/LeviLamina) 客户端投影模组
 
+## 开发架构
+
+OreUI 正在按功能逐步接入：聊天命令打开新菜单，已接通浏览、加载、关闭投影与恢复上次投影、创建结构选区与导出、结构变换、渲染设置、HUD、快捷键、语言和实验性功能；OreUI 缩放暂为占位，材料清单后续迁移，快捷键继续打开旧功能菜单。
+开发入口见 [开发手册](DEVELOPMENT.md)、[OreUI 架构与迁移说明](docs/OREUI_MIGRATION.md) 和 [前端说明](frontend/README.md)。
+
 ## 版本号说明
 
 示例版本：`v26.51.2`
@@ -15,7 +20,7 @@
 
 [安装教程](https://www.bilibili.com/opus/1239631121935761412)
 
-1. 安装本模组以后,聊天栏输入 `LHolo`,或按 `Alt + M` 打开模组菜单
+1. 安装本模组以后，聊天栏输入 `LHolo` 打开 OreUI 菜单，或按 `Alt + M` 打开旧功能菜单
 2. 本模组交互为GUI与快捷键(具体快捷键直接看模组菜单)
 3. 使用本模组时,请关闭灵动视效
 

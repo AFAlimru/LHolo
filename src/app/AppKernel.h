@@ -2,7 +2,7 @@
 // Copyright (C) 2026  MarmieQi
 //
 // Single application entry point. The plugin facade only delegates here;
-// AppKernel owns the enable/disable/load orchestration order.
+// AppKernel owns enable/disable/load and application control-frame orchestration.
 
 #pragma once
 
@@ -18,6 +18,7 @@ public:
     bool load();
     bool enable();
     bool disable();
+    void processControlFrame();
 
 private:
     AppKernel() = default;

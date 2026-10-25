@@ -194,5 +194,14 @@
   "actionHint.loadProjection": "Загрузка проекции",
   "actionHint.closeProjection": "Закрытие проекции",
   "actionHint.noMatchingItem": "В инвентаре нет соответствующего блока проекции",
-  "actionHint.manualModeBlocked": "Заблокировано режимом ручной установки (наведите на блок проекции)"
+  "actionHint.manualModeBlocked": "Заблокировано режимом ручной установки (наведите на блок проекции)",
+  "oreui.scalePlaceholder": "Заглушка: масштаб OreUI задаётся игрой; этот параметр пока не действует.",
+  "oreui.previewActionNotice": "Только предпросмотр интерфейса. Действие пока не подключено.",
+  "oreui.browsing": "Выбор…",
+  "oreui.browseFailed": "Не удалось выбрать файл. Выберите файл .mcstructure или .litematic.",
+  "oreui.applySelection": "Применить выделение",
+  "oreui.captureChanged": "Мир или выделение изменились. Проверьте и повторите.",
+  "oreui.invalidCoordinates": "Введите целые координаты XYZ или оставьте все поля точки пустыми.",
+  "oreui.captureBusy": "Создание структуры…",
+  "oreui.saveFailed": "Не удалось выбрать место сохранения. Используйте файл .mcstructure."
 }

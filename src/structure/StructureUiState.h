@@ -63,6 +63,7 @@ struct HudStateSnapshot {
     int   position{1};
     float uiScale{2.0f};
 };
+enum class HudFlag { Enabled, FileName, Layer, OverallProgress, Progress, WrongState, WrongType, ExtraBlocks, ProjectedBlockName };
 
 struct HotkeyBindingSnapshot {
     unsigned int key{};
@@ -101,6 +102,8 @@ public:
     [[nodiscard]] HudStateSnapshot hud() const;
     bool setUiScale(float scale);
     bool applyHud(HudStateSnapshot const& snapshot);
+    bool setHudFlag(HudFlag field, bool enabled);
+    bool setHudPosition(int position);
 
     [[nodiscard]] HotkeyBindingSnapshot hotkey(std::size_t index) const;
     [[nodiscard]] HotkeyBindingSnapshot inputHotkey(std::size_t index) const;

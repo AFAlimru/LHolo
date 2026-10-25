@@ -1,0 +1,17 @@
+/* Approximate Gameface's flex defaults; the actual LHolo CSS stays unchanged. */
+@font-face { font-family:LHoloSans; src:local("Microsoft YaHei"),local("Noto Sans CJK SC"); }
+* { box-sizing:border-box; }
+html { font-size:18px; }
+html, body, #root { width:100%; height:100%; margin:0; }
+body { background:#384638; font-family:LHoloSans,sans-serif; overflow:hidden; }
+div { display:flex; flex-direction:column; }
+input { font:inherit; outline:none; }
+.lholo-preview-scroll { flex:1; min-width:0; min-height:0; overflow:auto; scrollbar-width:none; -ms-overflow-style:none; }
+.preview-toolbar { position:fixed; top:0; left:0; z-index:100; width:100%; min-height:30px; display:flex; align-items:center; gap:8px; padding:5px 10px; background:#18232f; color:#d5e3f0; font:12px/1.4 "Microsoft YaHei",sans-serif; }
+.preview-toolbar button, .preview-toolbar select { border:1px solid #526170; border-radius:4px; padding:3px 7px; background:#25384a; color:#e8f0f7; cursor:pointer; font:inherit; }
+.preview-toolbar strong { color:#fff; }
+.preview-toolbar label { white-space:nowrap; }
+#preview-status { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+@media (max-width:1000px) { #preview-status { display:none; } }
+
+.lholo-preview-scroll::-webkit-scrollbar { display:none; width:0; height:0; }

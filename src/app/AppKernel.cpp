@@ -2,9 +2,13 @@
 // Copyright (C) 2026  MarmieQi
 
 #include "app/AppKernel.h"
+#include "app/RenderSettingsActions.h"
+#include "app/SettingsActions.h"
 
 #include "i18n/LanguageStore.h"
 #include "input/MenuInputGuard.h"
+#include "oreui/OreUiBridge.h"
+#include "oreui/OreUiScreen.h"
 #include "overlay/ImGuiOverlay.h"
 #include "place/PlaceHelper.h"
 #include "plugin/LHolo.h"
@@ -24,6 +28,12 @@ AppKernel& AppKernel::getInstance() {
     return instance;
 }
 
+void AppKernel::processControlFrame() {
+    structure::processPendingActions();
+    if (processRenderSettingsEdits()) structure::saveSettings();
+    if (processSettingsActions()) structure::saveSettings();
+}
+
 bool AppKernel::load() {
     i18n::initLanguageStore();
     structure::loadSettings();
@@ -38,6 +48,15 @@ bool AppKernel::enable() {
 
     if (!projection::detail::projectionController().installHooks()) {
         logger.error("Failed to install projection hooks");
+        return false;
+    }
+
+    if (!oreui::installMenuBridge() || !oreui::installMenuScreen()) {
+        oreui::uninstallMenuScreen();
+        oreui::uninstallMenuBridge();
+        projection::detail::projectionController().uninstallHooks();
+        structure::detail::shutdownStructureFileLoader();
+        logger.error("Failed to install the LHolo OreUI menu");
         return false;
     }
 
@@ -56,16 +75,21 @@ bool AppKernel::enable() {
         logger.warn("Failed to install menu key-up guard");
     }
 
+    overlay::setControlFrameCallback([] { AppKernel::getInstance().processControlFrame(); });
     if (!overlay::ensureInstalled()) {
         logger.warn("GUI overlay hotkey hooks are not ready; lholo will retry initialization");
     }
 
-    logger.info("LHolo enabled. Type lholo to open the projection menu.");
+    logger.info("LHolo enabled. Chat LHolo opens the OreUI preview; the menu hotkey opens the existing UI.");
     return true;
 }
 
 bool AppKernel::disable() {
     auto& logger = LHolo::getInstance().getSelf().getLogger();
+    overlay::setControlFrameCallback(nullptr);
+
+    oreui::uninstallMenuScreen();
+    oreui::uninstallMenuBridge();
 
     structure::detail::shutdownStructureFileLoader();
     structure::saveSettings();

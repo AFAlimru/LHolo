@@ -15,6 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "overlay/ImGuiOverlay.h"
+#include "input/HotkeyCapture.h"
 
 #include <Windows.h>
 
@@ -44,6 +45,7 @@
 #include "plugin/LHolo.h"
 #include "structure/StructureLoader.h"
 #include "ui/FluentTheme.h"
+#include "oreui/OreUiScreen.h"
 #include "ll/api/mod/NativeMod.h"
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
@@ -89,6 +91,8 @@ IDXGISwapChain*      gActiveSwapChain{};
 HWND    gWindow{};
 WNDPROC gOriginalWndProc{};
 std::atomic_bool gInstalled{false};
+std::atomic<ControlFrameCallback> gControlFrameCallback{};
+std::array<bool, 256> gCaptureKeyReleases{}; // WndProc thread only
 std::atomic_bool gShuttingDown{false};
 std::atomic_bool gRendering{false};
 std::atomic_ullong gGraphicsResumeAt{};
@@ -461,6 +465,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         return 0;
     }
     if (message == WM_KILLFOCUS || (message == WM_ACTIVATEAPP && wParam == FALSE)) {
+        gCaptureKeyReleases.fill(false);
         structure::resetHotkeyState();
         gMouseHandoffActive.store(false, std::memory_order_release);
         releaseMenuCursor();
@@ -482,6 +487,36 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             );
         }
         logger().info("ImGui graphics backend suspended for fullscreen transition");
+    }
+    // The native scene owns input. Do not let old hotkeys/wheel handlers
+    // compete with it; retain the graphics/F11 lifecycle handling above.
+    unsigned captureKey{};
+    bool captureDown{}, captureUp{};
+    if (message == WM_KEYDOWN || message == WM_SYSKEYDOWN) { captureKey = static_cast<unsigned>(wParam); captureDown = true; }
+    if (message == WM_KEYUP || message == WM_SYSKEYUP) { captureKey = static_cast<unsigned>(wParam); captureUp = true; }
+    if (message == WM_MBUTTONDOWN || message == WM_MBUTTONUP) {
+        captureKey = VK_MBUTTON; captureDown = message == WM_MBUTTONDOWN; captureUp = !captureDown;
+    }
+    if (message == WM_XBUTTONDOWN || message == WM_XBUTTONUP) {
+        captureKey = GET_XBUTTON_WPARAM(wParam) == XBUTTON1 ? VK_XBUTTON1 : VK_XBUTTON2;
+        captureDown = message == WM_XBUTTONDOWN; captureUp = !captureDown;
+    }
+    if (captureUp && captureKey < gCaptureKeyReleases.size() && gCaptureKeyReleases[captureKey]) {
+        gCaptureKeyReleases[captureKey] = false; return 1;
+    }
+    if (captureDown && captureKey < gCaptureKeyReleases.size() && gCaptureKeyReleases[captureKey]) return 1;
+    if (oreui::isMenuOnTop()) {
+        if (captureDown && input::hotkeyCaptureActive()) {
+            auto modifiers = ((GetAsyncKeyState(VK_CONTROL) & 0x8000) ? 1u : 0u)
+                | ((GetAsyncKeyState(VK_MENU) & 0x8000) ? 2u : 0u)
+                | ((GetAsyncKeyState(VK_SHIFT) & 0x8000) ? 4u : 0u);
+            if (input::captureHotkeyKey(captureKey, modifiers)) {
+                if (captureKey < gCaptureKeyReleases.size()) gCaptureKeyReleases[captureKey] = true;
+                return 1;
+            }
+        }
+        return gOriginalWndProc ? CallWindowProcW(gOriginalWndProc, window, message, wParam, lParam)
+                                : DefWindowProcW(window, message, wParam, lParam);
     }
     auto const guiWasVisible = structure::isGuiVisible();
     if (!gShuttingDown.load(std::memory_order_acquire) && gImGuiInitialized
@@ -662,8 +697,8 @@ void render(IDXGISwapChain* swapChain) {
     // lifecycle: input must be ready before a hotkey can make the UI visible.
     // D3D12 startup may not have exposed its command queue yet, so a failed
     // attempt is intentionally retried on the next Present.
+    if (auto callback = gControlFrameCallback.load(std::memory_order_acquire)) callback();
     if (!initializeImGui(swapChain)) return;
-    structure::processPendingActions();
     auto const showGui = structure::isGuiVisible();
     auto const showHud = !showGui && structure::hasHudInfo();
     if (gGuiVisibleLastFrame != showGui) {
@@ -1027,9 +1062,14 @@ void shutdownLocked() {
 
 } // namespace
 
+void setControlFrameCallback(ControlFrameCallback callback) {
+    gControlFrameCallback.store(callback, std::memory_order_release);
+}
+
 void shutdown() {
     std::lock_guard installLock(gInstallMutex);
     shutdownLocked();
+    setControlFrameCallback(nullptr);
 }
 
 } // namespace lholo::overlay

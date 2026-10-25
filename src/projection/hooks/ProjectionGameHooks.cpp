@@ -3,26 +3,19 @@
 
 #include "projection/hooks/ProjectionGameHooks.h"
 
-#include "overlay/ImGuiOverlay.h"
-#include "plugin/LHolo.h"
 #include "projection/world/ProjectionVirtualWorld.h"
 #include "projection/core/ProjectionTintRules.h"
-#include "structure/StructureLoader.h"
 
 #include <cstddef>
 #include <memory>
 #include <string_view>
 #include <variant>
 
-#include "mc/network/LoopbackPacketSender.h"
 #include "mc/client/world/level/biome/biome_color_sampling/GrassTessellationPolicy.h"
 #include "mc/deps/core/math/Color.h"
 #include "mc/world/level/biome/Biome.h"
 #include "mc/world/level/biome/biome_color_sampling/BiomeColorSampling.h"
 #include "mc/world/level/biome/biome_color_sampling/MapPolicy.h"
-#include "mc/network/MinecraftPacketIds.h"
-#include "mc/network/Packet.h"
-#include "mc/network/packet/TextPacket.h"
 #include "mc/world/level/ActorBlockSyncMessage.h"
 #include "mc/world/level/BlockSource.h"
 #include "mc/world/level/block/Block.h"
@@ -30,42 +23,9 @@
 #include "mc/world/level/block/actor/BlockActor.h"
 
 #include "ll/api/memory/Hook.h"
-#include "ll/api/mod/NativeMod.h"
 
 namespace lholo::projection::detail {
 namespace {
-
-auto& logger() {
-    return LHolo::getInstance().getSelf().getLogger();
-}
-
-bool isMenuCommand(std::string_view message) {
-    constexpr std::string_view command{"lholo"};
-    if (message.size() != command.size()) return false;
-    for (std::size_t index = 0; index < command.size(); ++index) {
-        auto character = message[index];
-        if (character >= 'A' && character <= 'Z') character += 'a' - 'A';
-        if (character != command[index]) return false;
-    }
-    return true;
-}
-
-bool filterProjectionPacket(Packet& packet) {
-    if (packet.getId() != MinecraftPacketIds::Text) return false;
-    auto& textPacket = static_cast<TextPacket&>(packet);
-    auto const* chat = std::get_if<TextPacketPayload::AuthorAndMessage>(
-        &textPacket.mBody.get()
-    );
-    if (!chat || chat->mType != TextPacketType::Chat
-        || !isMenuCommand(chat->mMessage.get())) return false;
-
-    if (overlay::ensureInstalled()) {
-        structure::requestOpenGui();
-    } else {
-        logger().error("Could not initialize the injected ImGui overlay");
-    }
-    return true;
-}
 
 LL_TYPE_INSTANCE_HOOK(
     ProjectionGrassTintHook,
@@ -174,30 +134,6 @@ LL_TYPE_INSTANCE_HOOK(
     return origin(position, block, updateFlags, blockEntity, syncMsg, changeSourceContext);
 }
 
-LL_TYPE_INSTANCE_HOOK(
-    LoopbackPacketSenderSendToServerHook,
-    ll::memory::HookPriority::Normal,
-    LoopbackPacketSender,
-    &LoopbackPacketSender::$sendToServer,
-    void,
-    Packet& packet
-) {
-    if (filterProjectionPacket(packet)) return;
-    origin(packet);
-}
-
-LL_TYPE_INSTANCE_HOOK(
-    LoopbackPacketSenderSendHook,
-    ll::memory::HookPriority::Normal,
-    LoopbackPacketSender,
-    &LoopbackPacketSender::$send,
-    void,
-    Packet& packet
-) {
-    if (filterProjectionPacket(packet)) return;
-    origin(packet);
-}
-
 } // namespace
 
 bool installProjectionGameHooks() {
@@ -224,26 +160,7 @@ bool installProjectionGameHooks() {
         BlockSourceGetBlockHook::unhook();
         return false;
     }
-    if (LoopbackPacketSenderSendToServerHook::hook() < 0) {
-        BlockSourceSetBlockWithActorHook::unhook();
-        BlockSourceSetBlockHook::unhook();
-        BlockSourceGetBlockEntityHook::unhook();
-        BlockSourceGetBlockLayerHook::unhook();
-        BlockSourceGetBlockHook::unhook();
-        return false;
-    }
-    if (LoopbackPacketSenderSendHook::hook() < 0) {
-        LoopbackPacketSenderSendToServerHook::unhook();
-        BlockSourceSetBlockWithActorHook::unhook();
-        BlockSourceSetBlockHook::unhook();
-        BlockSourceGetBlockEntityHook::unhook();
-        BlockSourceGetBlockLayerHook::unhook();
-        BlockSourceGetBlockHook::unhook();
-        return false;
-    }
     if (ProjectionGrassTintHook::hook() < 0) {
-        LoopbackPacketSenderSendHook::unhook();
-        LoopbackPacketSenderSendToServerHook::unhook();
         BlockSourceSetBlockWithActorHook::unhook();
         BlockSourceSetBlockHook::unhook();
         BlockSourceGetBlockEntityHook::unhook();
@@ -256,8 +173,6 @@ bool installProjectionGameHooks() {
 
 void uninstallProjectionGameHooks() {
     ProjectionGrassTintHook::unhook();
-    LoopbackPacketSenderSendHook::unhook();
-    LoopbackPacketSenderSendToServerHook::unhook();
     BlockSourceSetBlockWithActorHook::unhook();
     BlockSourceSetBlockHook::unhook();
     BlockSourceGetBlockEntityHook::unhook();

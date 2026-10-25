@@ -194,5 +194,14 @@
   "actionHint.loadProjection": "Loading projection",
   "actionHint.closeProjection": "Closing projection",
   "actionHint.noMatchingItem": "No matching block in your inventory",
-  "actionHint.manualModeBlocked": "Blocked by manual placement mode (aim at a projected block)"
+  "actionHint.manualModeBlocked": "Blocked by manual placement mode (aim at a projected block)",
+  "oreui.scalePlaceholder": "Placeholder: the game manages OreUI scaling; this control has no effect yet.",
+  "oreui.previewActionNotice": "Interface preview only. This action is not connected yet.",
+  "oreui.browsing": "Selecting…",
+  "oreui.browseFailed": "Could not select the file. Try a .mcstructure or .litematic file.",
+  "oreui.applySelection": "Apply selection",
+  "oreui.captureChanged": "The world or selection changed. Review it and try again.",
+  "oreui.invalidCoordinates": "Enter complete integer XYZ coordinates, or leave the entire point blank.",
+  "oreui.captureBusy": "Processing structure creation…",
+  "oreui.saveFailed": "Could not choose a save location. Use a .mcstructure file."
 }

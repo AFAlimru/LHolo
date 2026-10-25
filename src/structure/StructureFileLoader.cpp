@@ -2,6 +2,7 @@
 // Copyright (C) 2026  MarmieQi
 
 #include "structure/StructureFileLoader.h"
+#include "structure/ProjectionActions.h"
 
 #include "plugin/LHolo.h"
 #include "structure/MaterialTracker.h"
@@ -39,6 +40,7 @@ struct FileLoader final : LevelListener {
         // registry. Stop publication and finish parsing BEFORE it is freed,
         // including a first load which has no active projection listener yet.
         level = nullptr;
+        resetProjectionActions();
         StructureSession::getInstance().clearLoaded(i18n::Message{i18n::TextKey::StatusWorldExited});
         if (task.valid()) task.wait();
         // The dying Level removes its listeners; never remove through it later.
@@ -141,6 +143,12 @@ void shutdownStructureFileLoader() {
 
 bool startStructureFileLoad(std::string path, StructureLoadOrigin origin) {
     return startLoad(std::move(path), origin, std::nullopt);
+}
+
+bool isStructureFileLoading() {
+    auto& loader = fileLoader();
+    std::lock_guard lock(loader.mutex);
+    return loader.task.valid() && loader.task.wait_for(std::chrono::seconds{0}) != std::future_status::ready;
 }
 
 bool startSavedProjectionLoad() {

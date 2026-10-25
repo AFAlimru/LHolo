@@ -1,0 +1,15 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "LHolo UI",
+    "description": "LHolo OreUI menu resources",
+    "uuid": "0a39de84-4bf1-4166-87ee-256940996c77",
+    "min_engine_version": [1, 26, 51]
+  },
+  "modules": [
+    {
+      "type": "resources",
+      "uuid": "771c36d6-45db-4f93-9523-48d8ee085922"
+    }
+  ]
+}

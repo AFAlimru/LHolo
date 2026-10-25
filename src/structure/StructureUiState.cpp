@@ -122,6 +122,22 @@ bool StructureUiState::setUiScale(float scale) {
     return updateRelaxed(mUiScale, scale);
 }
 
+bool StructureUiState::setHudFlag(HudFlag field, bool enabled) {
+    switch (field) {
+    case HudFlag::Enabled: return updateRelaxed(mHudEnabled, enabled);
+    case HudFlag::FileName: return updateRelaxed(mHudShowFileName, enabled);
+    case HudFlag::Layer: return updateRelaxed(mHudShowLayer, enabled);
+    case HudFlag::OverallProgress: return updateRelaxed(mHudShowOverallProgress, enabled);
+    case HudFlag::Progress: return updateRelaxed(mHudShowProgress, enabled);
+    case HudFlag::WrongState: return updateRelaxed(mHudShowWrongState, enabled);
+    case HudFlag::WrongType: return updateRelaxed(mHudShowWrongType, enabled);
+    case HudFlag::ExtraBlocks: return updateRelaxed(mHudShowExtraBlocks, enabled);
+    case HudFlag::ProjectedBlockName: return updateRelaxed(mHudShowProjectedBlockName, enabled);
+    }
+    return false;
+}
+bool StructureUiState::setHudPosition(int position) { return updateRelaxed(mHudPosition, std::clamp(position, 0, 3)); }
+
 bool StructureUiState::applyHud(HudStateSnapshot const& snapshot) {
     bool changed = false;
     changed = updateRelaxed(mHudEnabled, snapshot.enabled) || changed;

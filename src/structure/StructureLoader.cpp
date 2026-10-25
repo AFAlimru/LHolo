@@ -18,6 +18,7 @@
 
 #include "i18n/Message.h"
 #include "input/ViewMoveBasis.h"
+#include "input/HotkeyCapture.h"
 #include "settings/SettingsStore.h"
 #include "structure/MaterialTracker.h"
 #include "structure/StructureFileLoader.h"
@@ -25,8 +26,11 @@
 #include "structure/StructurePaths.h"
 #include "structure/StructureUiState.h"
 #include "ui/HotkeyFormat.h"
+#include "structure/ProjectionActions.h"
+#include "structure/TransformActions.h"
 #include "ui/MenuController.h"
 #include "structure/capture/StructureCapture.h"
+#include "structure/capture/CaptureActions.h"
 #include "structure/java_to_bedrock/JavaToBedrock.h"
 #include "ui/FileDialog.h"
 #include "ui/FluentTheme.h"
@@ -154,25 +158,8 @@ bool handleGuiHotkeyKeyDown(unsigned int virtualKey) {
         uiState().setShiftHeld(true);
     }
 
-    auto const captureIndex = uiState().capturingHotkey();
-    if (captureIndex) {
-        // F11 belongs to Minecraft's fullscreen toggle. Never capture or
-        // consume it as a mod shortcut, including while rebinding controls.
-        if (virtualKey == VK_F11) return false;
-        if (virtualKey == VK_ESCAPE) {
-            uiState().stopHotkeyCapture();
-        } else if (virtualKey == VK_DELETE || virtualKey == VK_BACK) {
-            uiState().clearHotkey(*captureIndex);
-            uiState().stopHotkeyCapture();
-            uiState().requestSettingsSave();
-        } else if (!modifierKey) {
-            auto const modifiers = currentHotkeyModifiers();
-            uiState().bindCapturedHotkey(*captureIndex, virtualKey, modifiers);
-            uiState().setIgnoreHotkeyUntil(GetTickCount64() + 250);
-            uiState().requestSettingsSave();
-        }
-        return true;
-    }
+    if (input::hotkeyCaptureActive())
+        return input::captureHotkeyKey(virtualKey, currentHotkeyModifiers());
 
     // The projection-offset trigger is the fixed Alt key. Only claim the bare
     // key while the gesture is enabled and an active projection can actually
@@ -313,14 +300,17 @@ void processPendingActions() {
     if (layerActionEnabled) session.adjustDisplayLayer(pending.layerDelta);
 
     if (pending.loadProjection) {
-        restoreSavedProjection();
+        requestProjectionRestore();
         showActionHint(i18n::Message{i18n::TextKey::ActionHintLoadProjection});
     }
     if (pending.closeProjection) {
-        clear();
-        saveSettings();
+        requestProjectionClose();
         showActionHint(i18n::Message{i18n::TextKey::ActionHintCloseProjection});
     }
+
+    processProjectionActions();
+    changed = processTransformEdits() || changed;
+    capture::processActions();
 
     changed = pending.settingsSave || changed;
     if (changed) saveSettings();
@@ -993,6 +983,9 @@ void clearProjectionSession(i18n::Message status) {
 } // namespace
 
 void resetWorldSession() {
+    resetProjectionActions();
+    resetTransformEdits();
+    capture::resetActions();
     clearProjectionSession(i18n::Message{i18n::TextKey::StatusWorldExited});
     uiState().resetWorldSession();
 }

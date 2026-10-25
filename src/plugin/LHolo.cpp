@@ -17,6 +17,7 @@
 #include "plugin/LHolo.h"
 
 #include "app/AppKernel.h"
+#include "oreui/OreUiBridge.h"
 
 #include "ll/api/mod/NativeMod.h"
 #include "ll/api/mod/RegisterHelper.h"
@@ -42,6 +43,12 @@ bool LHolo::enable() {
 
 bool LHolo::disable() {
     return app::AppKernel::getInstance().disable();
+}
+
+bool LHolo::unload() {
+    if (!oreui::hasMenuRegistrations()) return true;
+    mSelf.getLogger().warn("LHolo OreUI callbacks are registered for this process. Restart Minecraft to replace the DLL.");
+    return false;
 }
 
 } // namespace lholo

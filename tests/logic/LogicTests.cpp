@@ -27,6 +27,12 @@ int runProjectionDrawCacheTests();
 int runProjectionBiomeRefreshTests();
 int runStructureLoadOriginTests();
 int runOverlayRenderingTests();
+int runStructureFilePickerTests();
+int runCaptureActionsTests();
+int runTransformActionsTests();
+int runRenderSettingsTests();
+int runSettingsActionsTests();
+int runCaptureFacetLifetimeTests();
 void benchmarkProjectionDrawCache();
 
 namespace {
@@ -1069,6 +1075,11 @@ int main(int argc, char** argv) {
     LHOLO_CHECK(runProjectionBiomeRefreshTests() == 0);
     LHOLO_CHECK(runStructureLoadOriginTests() == 0);
     LHOLO_CHECK(runOverlayRenderingTests() == 0);
+    LHOLO_CHECK(runStructureFilePickerTests() == 0);
+    LHOLO_CHECK(runCaptureActionsTests() == 0);
+    LHOLO_CHECK(runTransformActionsTests() == 0);
+    LHOLO_CHECK(runRenderSettingsTests() == 0);
+    LHOLO_CHECK(runCaptureFacetLifetimeTests() == 0);
     testLayoutRules();
     testProgress();
     testSettingsStore();
@@ -1082,6 +1093,7 @@ int main(int argc, char** argv) {
     testBlockPlacementRules();
     testJavaTextComponents();
     testI18n();
+    LHOLO_CHECK(runSettingsActionsTests() == 0);
     std::printf("LHoloLogicTests: %d checks, %d failures\n", gChecks, gFailures);
     return gFailures == 0 ? 0 : 1;
 }

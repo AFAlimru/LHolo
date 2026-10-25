@@ -184,9 +184,55 @@ void StructureSession::clearLoaded(i18n::Message status) {
 
 StructureTransformSnapshot StructureSession::transform() const { return transformRelaxed(); }
 
+TransformState StructureSession::transformEditorState() const {
+    std::lock_guard lock(mMutex);
+    auto const t = transformRelaxed();
+    return {{t.rotation, t.mirror, t.offsetX, t.offsetY, t.offsetZ}, mLoadRevision};
+}
+
+bool StructureSession::applyTransformEdit(TransformEdit const& edit) {
+    std::lock_guard lock(mMutex);
+    if (!validTransformEdit(edit) || edit.context != mLoadRevision) return false;
+    std::atomic_int* target{};
+    switch (edit.field) {
+    case TransformField::Rotation: target = &mRotationQuarterTurns; break;
+    case TransformField::Mirror: target = &mMirrorMode; break;
+    case TransformField::X: target = &mOffsetX; break;
+    case TransformField::Y: target = &mOffsetY; break;
+    case TransformField::Z: target = &mOffsetZ; break;
+    }
+    auto expected = edit.expected;
+    return target && target->compare_exchange_strong(expected, edit.value, std::memory_order_relaxed);
+}
+
 bool StructureSession::layerDisplayEnabled() const {
     return layerDisplayModeFromInt(mLayerDisplayMode.load(std::memory_order_acquire))
         != LayerDisplayMode::All;
+}
+
+LayerSettingsSnapshot StructureSession::layerSettings() const {
+    std::lock_guard lock(mMutex);
+    auto t = transformRelaxed();
+    LayerSettingsSnapshot result{{t.layerAxis, t.layerDisplayMode, t.displayLayer}, {}, mLoadRevision};
+    if (mLoaded) result.maximum = {maxLayerFor(*mLoaded, LayerAxis::Y), maxLayerFor(*mLoaded, LayerAxis::X),
+        std::max(0, static_cast<int>(std::min(mLoaded->materialCount, static_cast<std::size_t>(std::numeric_limits<int>::max()))) - 1)};
+    return result;
+}
+
+bool StructureSession::applyLayerSettings(std::uint64_t context, LayerSettings const& expected, LayerSettings desired) {
+    std::lock_guard lock(mMutex);
+    auto const t = transformRelaxed();
+    if (context != mLoadRevision || LayerSettings{t.layerAxis, t.layerDisplayMode, t.displayLayer} != expected
+        || toInt(desired.axis) < 0 || toInt(desired.axis) > 2 || toInt(desired.mode) < 0 || toInt(desired.mode) > 3) return false;
+    if (desired == expected) return true;
+    auto const maximum = !mLoaded ? 0 : desired.axis == LayerAxis::Material
+        ? static_cast<int>(std::min(mLoaded->materialCount, static_cast<std::size_t>(std::numeric_limits<int>::max()))) - 1
+        : maxLayerFor(*mLoaded, desired.axis);
+    desired.layer = std::clamp(desired.layer, 0, std::max(0, maximum));
+    setLayerAxis(desired.axis);
+    setLayerDisplayMode(desired.mode);
+    setDisplayLayer(desired.layer);
+    return true;
 }
 
 void StructureSession::resetTransform() {

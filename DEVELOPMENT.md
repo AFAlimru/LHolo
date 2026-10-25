@@ -11,7 +11,22 @@
 - 模组名称、DLL、目录和内部命名空间：`LHolo` / `LHolo.dll` / `mods/LHolo` / `lholo`
 - 支持格式：Bedrock `.mcstructure`、Java Litematica `.litematic`
 
+OreUI 渐进迁移状态（2026-10-25）：聊天命令打开当前自有样式的 OreUI 菜单，快捷键继续打开旧 UI。
+浏览、加载、关闭投影、恢复、创建结构选区/导出、结构变换、渲染设置、HUD、快捷键、语言和实验性功能已接入；材料清单弹窗仍为前端草稿，OreUI 缩放保留本地占位，不写旧 ImGui 缩放。前端 → 通信桥 → MenuBindings，
+浏览进入独立异步文件选择服务；投影意图进入 structure/ProjectionActions，在现有应用控制帧执行并复用加载器与会话，业务模块不依赖 OreUI。协议、取消、测试与部署要求见
+[OreUI 迁移说明](docs/OREUI_MIGRATION.md)；前端入口见 [frontend/README.md](frontend/README.md)。
+收尾审计、官方依据/私有适配边界与未闭合事项见 [OreUI 审计报告](docs/OREUI_AUDIT.md)。
+前端可运行 `npm.cmd --prefix frontend run preview`，在 http://127.0.0.1:4173/ 实时预览，不启动游戏；preview/ 的渲染环境与模拟数据只用于开发，正式构建禁止引入。
+
 ---
+
+渲染设置经 application/useRenderSettings → RenderSettingsBindings/Protocol → app/RenderSettingsActions 接入。AppKernel::processControlFrame 在 ImGui 初始化前编排结构动作与渲染设置，并复用 saveSettings。应用启用时向 Overlay 注册原子帧回调，Overlay 不依赖 AppKernel，关闭时移除回调。投影视觉参数仍由 projection 持有，分层和真实范围由 StructureSession / LayerSettings 持有；下层不得反向依赖 app 或 OreUI。请求只包含改动字段，控制帧校验原值、会话和分层轴，避免整页配置覆盖。
+
+HUD/快捷键/语言/实验性功能由 app/SettingsActions 统一接收字段或具体命令，原生持有实际状态；前端共享 useSettings 的应答调度，各页 hook 只持有局部编辑状态。语言列表/快捷键标签与默认值不在正式前端复制；input/HotkeyCapture 共用原有输入规则。模式不持久化，知情确认和参数沿用原有保存；缩放协议不开放。详见迁移说明。
+
+OreUI 可视控件集中在 frontend/src/components/LHoloControls.tsx，视觉与排版以当前旧 ImGui 的 FluentTheme.cpp / MenuPages.cpp 为准；原版仅提供交互焦点/激活原语，输入框显式绑定真实 DOM input 事件，不直接套用原版表单外观。
+
+迁移必须逐项对照旧 UI 的按钮、选项和操作流程，不擅自增加应用/确认等步骤。创建结构页自动同步有效输入，连续编辑合并并防止旧应答覆盖新内容。浏览器与游戏菜单隐藏滚动条，但保留滚轮、触摸及焦点滚动；不以禁用滚动替代隐藏。
 
 ## 1. 产品行为与边界
 
@@ -33,7 +48,7 @@ LHolo 的投影、纠错、HUD 和菜单都只存在于客户端，不产生碰�
 - HUD 可显示文件名、显示层、建造进度、放置错误数、朝向错误数、多余方块数、准心指向的投影方块名称和当前辅助放置模式（手动/轻松/范围）；支持四角定位和单项关闭，各类错误可分别配置。
 - GUI 使用外部注入 Dear ImGui，不使用游戏表单。
 - 界面语言由 `src/i18n/lang/*.json` 自动发现，可在“界面设置”页切换，默认简体中文；语言代码随配置文件持久化。
-- 默认 `Alt + M` 打开菜单；聊天栏输入 `LHolo`（ASCII 大小写不敏感）也可打开，消息在客户端拦截，不发往服务器。
+- 默认 `Alt + M` 打开旧菜单；聊天栏输入 `LHolo`（ASCII 大小写不敏感）打开 OreUI 菜单，消息在客户端拦截，不发往服务器。
 - LHolo 菜单打开及关闭过渡期间，客户端阻止本地控制玩家开始或继续破坏方块；本地存档和远程服务器均有效，服务器无需安装 LHolo。
 - 默认结构移动：`Ctrl + 方向键` 按玩家朝向水平移动（左右垂直于朝向、前后沿朝向），`Shift + ↑/↓` 调整 Y。
 - 默认显示层：`Alt + ↑/↓`；“完整结构”模式下按键无效。
@@ -62,7 +77,8 @@ LHolo/
 │  │  ├─ LHolo.h
 │  │  └─ MemoryOperators.cpp    Windows 客户端内存运算符适配
 │  ├─ app/
-│  │  └─ AppKernel.*            唯一应用入口：启停编排与加载顺序
+│  │  ├─ AppKernel.*            唯一应用入口：启停、加载顺序与控制帧编排
+│  │  └─ RenderSettingsActions.* 渲染设置用例，协调会话分层与 projection 参数
 │  ├─ block/
 │  │  └─ BlockPlacementRules.*  共享运行态方块身份与“方块→实际放置物品”规则
 │  ├─ i18n/
@@ -88,6 +104,7 @@ LHolo/
 │  │  ├─ java_to_bedrock/       Java 方块状态映射、文本组件与方块实体到 Bedrock 的转换
 │  │  ├─ StructurePaths.*       UTF-8 路径转换
 │  │  ├─ LayerDisplayTypes.h    分层轴/显示范围枚举与持久化整数边界转换
+│  │  ├─ LayerSettings.h        分层值与真实范围快照，不含 UI 或通信协议
 │  │  ├─ MaterialTracker.*      材料需求聚合、物品标识缓存与游戏线程背包快照
 │  │  ├─ StructureSession.*    结构会话状态（已加载结构、变换/分层、恢复快照、状态文案）
 │  │  ├─ StructureUiState.*     UI 会话状态（GUI、热键、HUD、待处理动作、材料清单）
@@ -248,7 +265,7 @@ LHolo/
 - `projection/runtime/ProjectionFramePipeline.*` 只在 opaque pass 按固定顺序执行纠错扫描与进度发布、完成队列上传、
   轻量结构边框准备和下一 section 调度；它不采集 GUI 设置、不判断 placement 失效，也不提交最终渲染 pass。
 - `projection/hooks/ProjectionGameHooks.*` 隔离不依赖活动投影状态的 Minecraft 接口：Tessellation thread-local
-  虚拟 BlockSource 查询和 `/lholo` 客户端命令包拦截；安装失败时必须按原逆序回滚已挂 Hook。
+  虚拟 BlockSource 查询；安装失败时必须按原逆序回滚已挂 Hook。LHolo 聊天命令已移入 oreui/OreUiScreen。
 - `projection/hooks/ProjectionRenderHooks.*` 只保留有状态渲染 Hook 薄壳：命中选择抑制与 `$renderBlockEntities`
   后的投影帧入口。Hook 不读取投影状态，仅调用 `runtime/ProjectionRenderFrame` 回调；两个 Hook 的安装失败
   回滚顺序与门面原有的 LevelRenderer 顺序保持一致。
@@ -440,6 +457,10 @@ Java→Bedrock 映射不再手工散落维护。`GeneratedChunkerMappings.inc` �
 - 解析异常转换为用户可见错误，不允许越界继续。
 
 ### 4.5 客户端创建与导出
+
+原生 IntentFacet 必须在构造时建立 EnableNonOwnerReferences::mControlBlock；SDK 生成头文件未提供初始化构造，不能直接依赖默认空指针。销毁、discard 和 init 失败都会经过游戏基类析构。回归测试同时覆盖原生对象生命周期与前端协议；具体转储依据见 OreUI 迁移说明。
+
+OreUI 创建页使用 application/useCapture → bridge → CaptureProtocol/CaptureBindings → capture/CaptureActions。坐标文本暂存在前端，有效坐标和实体选项自动同步原生选区，不增加“应用选区”按钮；取玩家位置和捕获在现有应用控制帧执行。另存为使用独立 STA 的现代 IFileSaveDialog，关闭页面取消选择；提交前校验 revision，防止旧保存结果用于已变化的世界或选区。旧 ImGui 页仍复用原有捕获 API。
 
 “创建结构”不经过 `LoadedStructure`，也不会自动载入投影。选区端点先按每轴最小值/最大值归一化，两个端点都包含在内；导出前由 `BlockSource::areChunksFullyLoaded(min, max)` 拒绝客户端尚未完整加载的范围。
 
@@ -725,7 +746,10 @@ HUD 每帧只读取原子计数，不查询世界、不遍历结构。
 
 ### 9.1 ImGui 页面
 
-GUI 覆盖当前 `ImGuiIO::DisplaySize`，顶部导航包含：投影、结构变换、渲染设置、快捷键、HUD。界面缩放范围 1～5。
+GUI 覆盖当前 `ImGuiIO::DisplaySize`，侧栏导航包含：投影、创建结构、结构变换、渲染设置、HUD、快捷键、界面设置和实验性功能。界面缩放范围 1～5。
+
+此处记录仍在使用的 ImGui 实现。OreUI 在 `frontend/` 独立开发，按功能接入后逐步删除对应旧页面；
+菜单迁移不等于 HUD 已迁移。新增原生接入集中于 `src/oreui/`，不要把 JS 协议加入结构或投影内部模块。
 
 GUI 是全屏 ImGui 窗口，不是切换 Minecraft 窗口模式。
 
@@ -1001,6 +1025,8 @@ bin/LHolo/
 
 ### 14.3 本机部署
 
+OreUI 随模组资源包分发的目标目录、Mojang 清单规则和升级保留策略见 [OreUI 发布与更新方案](docs/OREUI_PACKAGING.md)。2026-10-25 用户已实测内置资源包菜单启动成功：由 `OreUiMenuResources` 仅适配 LHolo HTML/JS，解决原版 Hybrid 对未受信任包的读取限制。上述目录仍是当前原生 CI 发布现状；包含资源包的独立本机测试 ZIP 已验证，正式运行时资源生成和发行 CI 尚未完成。
+
 测试路径：
 
 ```text
@@ -1265,8 +1291,11 @@ xmake r LHoloLogicTests
 - `place/PlacementState`：模式开关、手动放置时间、节流时间、自动放置抑制和缓存到期边界与准心名称读写。
 - `structure/StructureUiState`：HUD 快照、快捷键绑定/去重、按键释放抑制、待处理动作与材料快照。
 - `ui/HotkeyFormat`：修饰键判定、未设置与 Ctrl/Alt/Shift 和弦字符串。
+- `ui/StructureFilePicker`：异步单任务、Unicode 路径、扩展名校验、取消与过期结果丢弃（替换系统对话框回调的隔离验证）。
 - `i18n`：动态 locale 注册表、语言代码查找与未知代码回退、内嵌 JSON 解析统计（解析成功、元数据有效、
   无缺键/空值/未知键/非字符串项）、每个键在所有已发现语言下均非空、越界键返回空串、切换语言后的查表结果
   与显式语言查询、消息占位符参数渲染。
 
 新增可独立链接的纯逻辑时必须同步补充对应断言；涉及 Minecraft 运行时对象（Block、BlockSource、Tessellator）的代码不进入该测试目标。
+
+结构变换通过 useTransform → bridge → TransformBindings/TransformProtocol → structure/TransformActions → StructureSession，在现有控制帧执行并复用 saveSettings。TransformTypes 提供纯数据与范围校验，会话不依赖 OreUI 或队列。请求按字段校验 context 与 expected 原值，避免旧输入覆盖新加载或快捷键；细节与回归要求见 docs/OREUI_MIGRATION.md。
