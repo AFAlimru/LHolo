@@ -31,9 +31,22 @@ jobs:
 
       # Upload the complete xmake output from the release machine to the draft.
       # Native-only CI builds never replace this package or accepted notes.
-      - name: Download installation package and checksum
+      - name: Download installation package and GitHub asset digest
         run: |
-          gh release download "$RELEASE_TAG" --pattern 'LHolo-client-windows-x64.zip' --pattern 'LHolo-client-windows-x64.zip.sha256' --dir release
+          gh release download "$RELEASE_TAG" --pattern 'LHolo-client-windows-x64.zip' --dir release
+          gh release view "$RELEASE_TAG" --json assets > release/asset-metadata.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import re
+          archive = Path("release/LHolo-client-windows-x64.zip")
+          assets = json.loads(Path("release/asset-metadata.json").read_text())["assets"]
+          digest = next(asset["digest"] for asset in assets if asset["name"] == archive.name)
+          if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+              raise ValueError("Missing GitHub asset SHA256")
+          archive.with_name(archive.name + ".sha256").write_text(
+              f"{digest[7:]}  {archive.name}\n", encoding="ascii")
+          PY
 
       - name: Verify version, resource pack, UI protocol and installation inventory
         run: python tools/oreui/release_package.py --verify release/LHolo-client-windows-x64.zip --tag "$RELEASE_TAG"

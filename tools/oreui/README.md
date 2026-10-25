@@ -10,7 +10,7 @@
 - `runtime_adapter.js`：目标版本私有 React/Facet、输入、滚动、图标与音效适配。
 - `resource_pack.json`：固定资源包 UUID 与引擎要求；版本来自原生 manifest。
 - `assemble_package.py`：组装 `bin/LHolo` 的六项必需文件，校验版本、UUID、协议和哈希，报告写入 `build/oreui/package-validation.json`。
-- `release_package.py`：仅在正式发布阶段从完整目录生成六文件 ZIP 和 SHA256；同一校验器也供发行 CI 验证下载附件。
+- `release_package.py`：仅在正式发布阶段从完整目录生成六文件 ZIP 和本地 SHA256；只上传 ZIP，CI 使用 GitHub 附件摘要校验下载结果。
 - `deploy.ps1`：可选的测试部署工具，校验报告和 bin 文件后复制到目标 mods；不参与编译，不操作游戏进程，不生成 ZIP，不处理用户配置。
 - `tests/`：验证目录完整性、重复组装、版本冲突及资源不兼容时拒绝发布。
 
