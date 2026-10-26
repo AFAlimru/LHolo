@@ -559,18 +559,24 @@ const nativeCapture = (key,modifiers=0) => {
 };
 emitSettings();
 receive(JSON.stringify('hud'), 'lholo:menu-entry');
-assert.equal(pageChecks().length, 10, 'native editor return selects the HUD settings page');
+assert.equal(pageChecks().length, 9, 'native editor return selects the projection HUD tab');
 projectionState({worldAvailable: false});
 assert.equal(buttonByLabel(labels['hud.layout.edit']).props.disabled, true, 'HUD layout editing requires a world');
 projectionState({worldAvailable: true});
 click(labels['hud.layout.edit']);
 assert(events.some(e=>e[0]==='query:subscribe/lholo.hud.edit-layout'), 'HUD editor entry uses the native command bridge');
-assert.equal(pageChecks().length,10);
+assert.equal(pageChecks().length,9);
 renderer.act(()=>pageChecks()[0].props.onClick());settleSettings();
 assert.equal(settingsState.values.hudEnabled,false);
 assert.equal(tree.root.findAllByProps({className: 'lholo-select-trigger'}).length, 0, 'HUD positions use drag editing instead of corner dropdowns');
 for(let n=1;n<=8;++n)assert.equal(pageChecks()[n].props.disabled,true);
-renderer.act(()=>pageChecks()[9].props.onClick());settleSettings();
+click(labels['hud.tabMaterials']);
+assert.equal(pageChecks().length,1,'Materials HUD settings have a separate tab');
+assert.equal(pageChecks()[0].props.disabled,false,'Materials HUD remains independent of projection HUD');
+renderer.act(()=>pageChecks()[0].props.onClick());settleSettings();
+assert.equal(settingsState.values.materialHudEnabled,true);
+click(labels['hud.tabProjection']);
+assert.equal(pageChecks().length,9);
 
 // Consecutive local HUD changes cannot be lost to the first ack.
 renderer.act(()=>pageChecks()[0].props.onClick());renderer.act(()=>pageChecks()[0].props.onClick());

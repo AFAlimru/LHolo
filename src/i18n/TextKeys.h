@@ -109,6 +109,11 @@
                                                                                                          \
     /* HUD page */                                                                                       \
     LHOLO_TEXT_KEY("section.hud", SectionHud, "")                                                        \
+    LHOLO_TEXT_KEY("hud.tabProjection", HudTabProjection, "")                                            \
+    LHOLO_TEXT_KEY("hud.tabMaterials", HudTabMaterials, "")                                              \
+    LHOLO_TEXT_KEY("hud.groupInfo", HudGroupInfo, "")                                                    \
+    LHOLO_TEXT_KEY("hud.groupProgress", HudGroupProgress, "")                                            \
+    LHOLO_TEXT_KEY("hud.groupErrors", HudGroupErrors, "")                                                \
     LHOLO_TEXT_KEY("hud.layout.edit", HudLayoutEdit, "") \
     LHOLO_TEXT_KEY("hud.layout.sample.stone", HudLayoutStone, "") \
     LHOLO_TEXT_KEY("hud.layout.sample.planks", HudLayoutPlanks, "") \

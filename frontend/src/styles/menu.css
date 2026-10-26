@@ -12,7 +12,6 @@
 .lholo-navigation > div, .lholo-content-viewport > div { min-height:0; }
 .lholo-content { box-sizing:border-box; width:100%; flex-shrink:0; padding:0.15rem 1rem 1.25rem; }
 .lholo-section-title { font-size:1.2rem; font-weight:600; line-height:1.5; padding-bottom:0.65rem; border-bottom:0.06rem solid #303030; }
-.lholo-hud-layout-action { flex-direction:row; align-items:center; margin-top:0.8rem; margin-bottom:0.2rem; }
 .lholo-status { font-size:1rem; line-height:1.5; margin:1rem 0; }
 .lholo-muted { color:#909090; font-size:0.9rem; line-height:1.5; margin-top:0.4rem; }
 .lholo-file-row, .lholo-action-row, .lholo-restore-row { flex-direction:row; align-items:center; }
@@ -27,6 +26,23 @@
 .lholo-button.lholo-control-hovered { background-color:#383838; }
 .lholo-button.lholo-control-focused { border:0.08rem solid #ededed; }
 .lholo-button.lholo-control-pressed { background-color:#464646; }
+.lholo-hud-header { flex-direction:row; align-items:center; justify-content:space-between; flex-wrap:wrap; padding-bottom:0.65rem; border-bottom:0.06rem solid #303030; }
+.lholo-hud-title { font-size:1.2rem; font-weight:600; line-height:1.5; }
+.lholo-hud-header > .lholo-button { margin-left:0.65rem; }
+.lholo-hud-tabs { flex-direction:row; align-items:center; margin-top:0.8rem; border-bottom:0.06rem solid #303030; }
+.lholo-hud-tab { height:2.4rem; padding:0 0.9rem; background-color:transparent; border-radius:0; border-bottom:0.12rem solid transparent; color:#a0a0a0; }
+.lholo-hud-tab.lholo-control-hovered { background-color:#242424; color:#ededed; }
+.lholo-hud-tab.lholo-control-pressed { background-color:#303030; }
+.lholo-hud-tab.is-selected { border-bottom-color:#0f82f2; color:#ffffff; }
+.lholo-hud-tab.is-selected.lholo-control-hovered { background-color:#242424; }
+.lholo-hud-tab-content { padding-top:0.7rem; }
+.lholo-hud-master { padding-bottom:0.65rem; border-bottom:0.06rem solid #303030; }
+.lholo-hud-columns { flex-direction:row; flex-wrap:wrap; margin-top:0.9rem; }
+.lholo-hud-column { box-sizing:border-box; flex:1 1 16rem; min-width:16rem; }
+.lholo-hud-column:first-child { padding-right:1.3rem; }
+.lholo-hud-group + .lholo-hud-group { margin-top:0.75rem; }
+.lholo-hud-group-title { color:#a0a0a0; font-size:0.9rem; line-height:1.5; margin-bottom:0.2rem; }
+.lholo-hud-option { min-height:2.2rem; }
 /* A single selection surface moves between fixed 3.1rem navigation rows.
    The same row cadence is used by MenuNavigation's translateY. */
 .lholo-navigation-list { position:relative; flex-shrink:0; }
@@ -168,6 +184,8 @@
   .lholo-navigation-item .lholo-button-label { font-size:0.9rem; }
   .lholo-navigation-item .lholo-button-icon { width:1rem; height:1rem; margin-right:0.4rem; }
   .lholo-content { padding-left:0.6rem; padding-right:0.6rem; }
+  .lholo-hud-column { flex-basis:100%; min-width:0; }
+  .lholo-hud-column:first-child { padding-right:0; }
   .lholo-hotkey-label { width:100%; margin-right:0; margin-bottom:0.3rem; }
   .lholo-hotkey-actions { max-width:100%; }
   .lholo-hotkey-bind { min-width:0; max-width:100%; }

@@ -1,39 +1,72 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { HudSettingsControls } from '../application/useHudSettings';
 import type { MenuLabels } from '../platform/bridge';
 import { LHoloButton, LHoloCheckbox } from '../components/LHoloControls';
 
+type HudTab = 'projection' | 'materials';
+
 export function HudPage({ labels, hud, worldAvailable }: { labels: MenuLabels; hud: HudSettingsControls; worldAvailable: boolean }) {
-  const hudItems = [
+  const [tab, setTab] = useState<HudTab>('projection');
+  const infoItems = [
     ['checkbox.hudFileName', hud.hudShowFileName, hud.setHudShowFileName],
     ['checkbox.hudLayer', hud.hudShowLayer, hud.setHudShowLayer],
+    ['checkbox.hudProjectedBlockName', hud.hudShowProjectedBlockName, hud.setHudShowProjectedBlockName],
+  ] as const;
+  const progressItems = [
     ['checkbox.hudOverallProgress', hud.hudShowOverallProgress, hud.setHudShowOverallProgress],
     ['checkbox.hudProgress', hud.hudShowProgress, hud.setHudShowProgress],
-    ['checkbox.hudProjectedBlockName', hud.hudShowProjectedBlockName, hud.setHudShowProjectedBlockName],
+  ] as const;
+  const errorItems = [
     ['checkbox.hudWrongState', hud.hudShowWrongState, hud.setHudShowWrongState],
     ['checkbox.hudWrongType', hud.hudShowWrongType, hud.setHudShowWrongType],
     ['checkbox.hudExtraBlocks', hud.hudShowExtraBlocks, hud.setHudShowExtraBlocks],
   ] as const;
+  const renderItems = (items: typeof infoItems | typeof progressItems | typeof errorItems) => items.map(([key, value, onChange]) => (
+    <div className="lholo-hud-option" key={key}>
+      <LHoloCheckbox label={labels[key]} value={value}
+        onChange={onChange} disabled={!hud.ready || !hud.hudEnabled} />
+    </div>
+  ));
 
   return <>
-    <div className="lholo-section-title">{labels['section.hud']}</div>
-    <div className="lholo-hud-layout-action">
+    <div className="lholo-hud-header">
+      <div className="lholo-hud-title">{labels['section.hud']}</div>
       <LHoloButton label={labels['hud.layout.edit']} onClick={hud.editLayout} disabled={!hud.ready || !worldAvailable} />
     </div>
-    <div className="lholo-render-check">
-      <LHoloCheckbox disabled={!hud.ready} label={labels['checkbox.hudEnabled']}
-        value={hud.hudEnabled} onChange={hud.setHudEnabled} />
+    <div className="lholo-hud-tabs">
+      <LHoloButton label={labels['hud.tabProjection']} onClick={() => setTab('projection')}
+        className={'lholo-hud-tab' + (tab === 'projection' ? ' is-selected' : '')} />
+      <LHoloButton label={labels['hud.tabMaterials']} onClick={() => setTab('materials')}
+        className={'lholo-hud-tab' + (tab === 'materials' ? ' is-selected' : '')} />
     </div>
-    {hudItems.map(([key, value, onChange]) => (
-      <div className="lholo-render-check" key={key}>
-        <LHoloCheckbox label={labels[key]} value={value}
-          onChange={onChange} disabled={!hud.ready || !hud.hudEnabled} />
+    {tab === 'projection' ? <div className="lholo-hud-tab-content">
+      <div className="lholo-hud-master">
+        <LHoloCheckbox disabled={!hud.ready} label={labels['checkbox.hudEnabled']}
+          value={hud.hudEnabled} onChange={hud.setHudEnabled} />
       </div>
-    ))}
-    <div className="lholo-transform-divider" />
-    <div className="lholo-render-check">
-      <LHoloCheckbox disabled={!hud.ready} label={labels['checkbox.materialHudEnabled']}
-        value={hud.materialHudEnabled} onChange={hud.setMaterialHudEnabled} />
-    </div>
+      <div className="lholo-hud-columns">
+        <div className="lholo-hud-column">
+          <div className="lholo-hud-group">
+            <div className="lholo-hud-group-title">{labels['hud.groupInfo']}</div>
+            {renderItems(infoItems)}
+          </div>
+          <div className="lholo-hud-group">
+            <div className="lholo-hud-group-title">{labels['hud.groupProgress']}</div>
+            {renderItems(progressItems)}
+          </div>
+        </div>
+        <div className="lholo-hud-column">
+          <div className="lholo-hud-group">
+            <div className="lholo-hud-group-title">{labels['hud.groupErrors']}</div>
+            {renderItems(errorItems)}
+          </div>
+        </div>
+      </div>
+    </div> : <div className="lholo-hud-tab-content">
+      <div className="lholo-hud-master">
+        <LHoloCheckbox disabled={!hud.ready} label={labels['checkbox.materialHudEnabled']}
+          value={hud.materialHudEnabled} onChange={hud.setMaterialHudEnabled} />
+      </div>
+    </div>}
   </>;
 }

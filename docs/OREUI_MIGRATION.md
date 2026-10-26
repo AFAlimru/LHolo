@@ -221,4 +221,4 @@ xmake
 
 官方约定核对：本地 ore-ui 仅公开 React/Facet 等基础设施，其 useFacetEffect 文档要求在依赖变化和卸载时清理订阅/副作用；本项复用现有页面订阅清理，不引入第二个渲染 root。原生场景栈与路由使用 LeviLamina SDK 暴露的接口，属于游戏版本适配，不宣称是 ore-ui 提供的稳定路由 API。
 
-HUD 布局编辑已迁移到 src/ui/hud/editor 的独立原生 UIScene。OreUI 只保留设置页的打开命令；不再有编辑页面、拖动 Facet、布局状态订阅或浏览器模拟编辑。先关闭 OreUI，再由独立原生场景处理鼠标和绘制，完成/取消并移除原生场景后重开 HUD 页；HUD 内容、边框与按钮均原生绘制，详见 NATIVE_HUD_RENDERING.md。
+HUD 布局编辑已迁移到 src/ui/hud/editor 的独立原生 UIScene。OreUI 只保留设置页的打开命令；不再有编辑页面、拖动 Facet、布局状态订阅或浏览器模拟编辑。先关闭 OreUI，再由独立原生场景处理鼠标和绘制，完成/取消并移除原生场景后重开 HUD 页；HUD 内容、边框与按钮均原生绘制，详见 NATIVE_HUD_RENDERING.md。HUD 设置页在前端分为投影 HUD 和材料 HUD 两个标签；投影选项按基本信息、进度、错误统计分组，材料 HUD 保持独立开关。标签仅为页面状态，仍通过现有 settings 字段通路修改设置；布局编辑入口位于页标题旁，继续使用原生场景。

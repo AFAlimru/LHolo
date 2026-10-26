@@ -104,6 +104,9 @@ rule("lholo.i18n.resources")
 
             local absolute_path = path.unix(path.absolute(language_file))
             table.insert(lines, identifier .. " RCDATA \"" .. absolute_path .. "\"")
+            -- rc.exe embeds the JSON bytes, but xmake only sees Languages.rc as
+            -- its input. Change the manifest when a translation file changes.
+            table.insert(lines, "// " .. language_code .. " " .. hash.md5(language_file))
             table.insert(
                 registry_lines,
                 "    {\"" .. language_code .. "\", L\"" .. identifier .. "\"},"
