@@ -76,7 +76,7 @@
   "hud.tabMaterials": "材料 HUD",
   "hud.groupInfo": "基本信息",
   "hud.groupProgress": "进度",
-  "hud.groupErrors": "纠错提示",
+  "hud.groupErrors": "错误统计",
   "checkbox.hudEnabled": "启用 HUD",
   "label.hudPosition": "HUD 位置",
   "corner.topLeft": "左上",
