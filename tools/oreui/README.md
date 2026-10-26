@@ -1,7 +1,7 @@
 # LHolo OreUI 构建工具
 
 日常构建只运行 `xmake`，完整输出为 `bin/LHolo/`，不生成 ZIP。
-首次在本地配置 `oreui_hbui`（目标游戏的 `data/gui/dist/hbui`），或使用环境变量 `LHOLO_OREUI_HBUI`。机器路径不进入源码。
+默认使用仓库内经过哈希校验的目标版本运行时。核对本机游戏资源时才显式配置 `oreui_hbui` 或 `LHOLO_OREUI_HBUI`；机器路径不进入源码。
 
 ## 职责
 

@@ -48,11 +48,6 @@ def main():
     # Write only the owned installation inventory. Never delete the mod
     # directory or copy config/debug/intermediate files into the package.
     output_root = PROJECT / "bin"
-    # Remove only obsolete generated HUD UI assets from previous builds.
-    for name in ("_ui_defs.json", "lholo_hud_editor.json"):
-        stale = native / "resource_packs/LHoloUI/ui" / name
-        if stale.is_file():
-            stale.unlink()
     for relative, content in files.items():
         destination = output_root / relative
         destination.parent.mkdir(parents=True, exist_ok=True)

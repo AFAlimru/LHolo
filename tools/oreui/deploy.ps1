@@ -17,7 +17,6 @@ $projectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $packPrefix = 'mods/LHolo/resource_packs/LHoloUI/'
 $files = @('mods/LHolo/LHolo.dll', 'mods/LHolo/manifest.json', 'mods/LHolo/LICENSE',
     ($packPrefix + 'manifest.json'), ($packPrefix + 'hbui/lholo-menu.html'), ($packPrefix + 'hbui/lholo-menu.js'))
-$legacy = @('data/gui/dist/hbui/lholo-menu.html', 'data/gui/dist/hbui/lholo-menu.js')
 $packageRoot = Join-Path $projectRoot 'bin'
 $reportPath = Join-Path $projectRoot 'build/oreui/package-validation.json'
 $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
@@ -31,12 +30,6 @@ foreach ($relative in $files) {
         throw "Missing or outdated package file: $packagePath. Run xmake first."
     }
 }
-foreach ($relative in $legacy) {
-    $path = Join-Path $GameRoot $relative
-    if ((Test-Path -LiteralPath $path) -and !(Get-Content -LiteralPath $path -Raw).Contains('lholo-menu-v7-settings')) {
-        throw "Legacy file is not the expected LHolo v7 test asset: $path"
-    }
-}
 foreach ($relative in $files) {
     $destination = Join-Path $GameRoot $relative
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
@@ -45,10 +38,6 @@ foreach ($relative in $files) {
     if ((Get-LHoloFileHash $destination) -ne (Get-LHoloFileHash $source)) {
         throw "Deployment hash mismatch: $relative"
     }
-}
-foreach ($relative in $legacy) {
-    $path = Join-Path $GameRoot $relative
-    if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path }
 }
 Write-Host 'Verified complete LHolo deployment from bin/LHolo.'
 Write-Host 'Start Minecraft yourself; use the menu hotkey or chat LHolo to test.'

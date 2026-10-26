@@ -35,10 +35,11 @@ std::string screenName;
 bool updateInstalled{}, renderInstalled{}, pointerInstalled{}, buttonInstalled{}, focusInstalled{};
 bool definitionInstalled{};
 auto& logger() { return LHolo::getInstance().getSelf().getLogger(); }
-bool isEditor(std::string const& name) { return name == screenName; }
 
 // The editor owns this definition; no JSON UI resource is registered for it.
 constexpr char editorScreenName[] = "lholo.hud_editor";
+constexpr char editorSceneName[] = "hud_editor"; // SceneFactory strips the namespace.
+bool isEditor(std::string const& name) { return name == editorSceneName; }
 constexpr char editorDefinitionJson[] = R"json({
   "type": "screen",
   "render_game_behind": true,
@@ -91,28 +92,35 @@ void processScene(ClientInstance& client) {
             if (!closing) prepareNativeHudIconItems();
         }
         if (closing) {
-            if (present && stack->getTopScene()->getScreenName() == screenName && stack->getScheduledPopCount() == 0)
+            auto* top = stack ? stack->getTopScene() : nullptr;
+            if (present && top && top->getScreenName() == screenName && stack->getScheduledPopCount() == 0)
                 stack->schedulePopScreenWithExpectedNames(std::vector<std::string>{screenName});
             if (!present && !scheduled) {
                 opened = closing = false;
+                screenName.clear();
                 completion = accepted ? 1 : 0;
             }
         }
     }
     if (!world || opened || !requested.load() || !stack || stack->hasScheduledScreens()) return;
     auto* top = stack->getTopScene();
-    // A JSON UIScene is opened only after the OreUI menu has actually left.
+    // Open the editor only after the OreUI menu has actually left.
     if (top && top->isShowingMenu()) return;
     requested = false;
     auto controller = std::make_shared<ScreenController>(false);
     controller->registerButtonPressedHandler(controller->_getNameId("button.lholo_hud_cancel"),
         [](UIPropertyBag*) { cancelHudLayoutEditor(); return ::ui::ViewRequest::ConsumeEvent; });
     auto scene = client.$getSceneFactory().createUIScene(editorScreenName, std::move(controller));
-    if (!scene) { logger().error("[native-hud.editor] Could not create {}", editorScreenName); logger().flush(); return; }
-    screenName = scene->getScreenName();
+    if (!scene) {
+        logger().error("[native-hud.editor] Could not create {}", editorScreenName);
+        completion = 0;
+        return;
+    }
+    auto const newScreenName = scene->getScreenName();
+    auto screen = client.$getSceneFactory()._createScreen(std::move(scene));
+    screenName = newScreenName;
     processHudLayoutEditor(true, true, true);
     closing = accepted = false;
-    auto screen = client.$getSceneFactory()._createScreen(std::move(scene));
     stack->pushScreen(std::move(screen), false);
     opened = true;
 }
@@ -146,8 +154,11 @@ LL_TYPE_INSTANCE_HOOK(HudEditorPointer, ll::memory::HookPriority::Normal,
     FocusImpact impact, bool motionless, bool rightStick) {
     if (hudLayoutEditorActive() && isEditor(getScreenName())) {
         auto client = ll::service::getClientInstance();
-        auto const& size = client->$getGuiData()->mScreenSizeData->clientUIScreenSize.get();
-        moveHudEditorPointer(position.x / size.x, position.y / size.y);
+        if (client) {
+            auto const& size = client->$getGuiData()->mScreenSizeData->clientUIScreenSize.get();
+            if (size.x > 0 && size.y > 0)
+                moveHudEditorPointer(position.x / size.x, position.y / size.y);
+        }
     }
     origin(position, impact, motionless, rightStick);
 }
@@ -173,6 +184,7 @@ std::optional<bool> consumeHudEditorCompletion() {
     return result < 0 ? std::nullopt : std::optional<bool>{result == 1};
 }
 bool installHudEditorScene() {
+    if (definitionInstalled) return true;
     definitionInstalled = HudEditorDefinition::hook() == 0;
     if (!definitionInstalled) return false;
     updateInstalled = HudEditorUpdate::hook() == 0;
@@ -196,6 +208,7 @@ void uninstallHudEditorScene() {
     }
     shutdownHudLayoutEditor();
     requested = opened = closing = accepted = false;
+    screenName.clear();
     completion = -1;
     if (focusInstalled) HudEditorFocusLost::unhook();
     if (buttonInstalled) HudEditorButton::unhook();

@@ -76,12 +76,12 @@ bool filterMenuCommand(Packet& packet) {
 }
 
 bool resourcesAvailable() {
-    // Prefer the mod-owned pack. Never silently fall back when a pack is installed:
-    // that could hide a failed resource-pack mount behind old development files.
     auto const pack = LHolo::getInstance().getSelf().getResourceDir() / "LHoloUI";
-    auto const packaged = std::filesystem::exists(pack / "manifest.json");
-    auto const root = packaged ? pack / "hbui"
-                              : std::filesystem::current_path() / "data/gui/dist/hbui";
+    if (!std::filesystem::exists(pack / "manifest.json")) {
+        logger().error("[oreui] Missing LHoloUI resource pack manifest: {}", (pack / "manifest.json").string());
+        return false;
+    }
+    auto const root = pack / "hbui";
     for (auto const* file : {"lholo-menu.html", "lholo-menu.js"}) {
         std::ifstream input(root / file, std::ios::binary);
         std::string const contents{std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};

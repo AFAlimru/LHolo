@@ -40,10 +40,6 @@ class PackageTests(unittest.TestCase):
 
     def test_complete_directory_without_archive(self):
         import hashlib
-        old_ui = self.native / "resource_packs/LHoloUI/ui"
-        old_ui.mkdir(parents=True)
-        (old_ui / "_ui_defs.json").write_text('{"ui_defs":[]}')
-        (old_ui / "lholo_hud_editor.json").write_text('{"namespace":"lholo"}')
         self.run_package()
         report = json.loads((self.assets / "package-validation.json").read_text())
         self.assertEqual(len(report["files"]), 6)
@@ -53,7 +49,6 @@ class PackageTests(unittest.TestCase):
         self.assertFalse(list((self.root / "bin").glob("*.zip")))
         self.assertEqual(list((self.root / "build").iterdir()), [self.assets])
         self.assertTrue((self.native / "LHolo.pdb").is_file())
-        self.assertFalse(list((self.native / "resource_packs/LHoloUI/ui").glob("*.json")))
         manifest_path = self.native / "resource_packs/LHoloUI/manifest.json"
         identity = json.loads(manifest_path.read_text())["header"]["uuid"]
         self.run_package()

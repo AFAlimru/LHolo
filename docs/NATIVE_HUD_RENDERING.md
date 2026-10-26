@@ -78,7 +78,7 @@ Hook 先执行原版 `ScreenView::render`，只在 `hud_screen` 的渲染调用�
 
 使用本地 SDK 的 SceneFactory::createUIScene、ScreenController、ScreenView::_handlePointerLocation/handleButtonEvent 和 UIScene::onFocusLost；Esc 经原生全局 button.menu_cancel 映射交给 ScreenController 的按下回调。ScreenView 提供 GUI 坐标，按当前 clientUIScreenSize 归一化后传入纯编辑模型；直接使用该 ScreenView 初始化的左键按钮 ID。重复 Down 不重新开始拖动，失去焦点释放拖动；无需 ShowCursor、WndProc 拖动或独立鼠标接管。既有 OreUI Escape 钩子在编辑期间将按下传给原生场景，并保留按键对归属到松开，避免长按 Esc 在编辑退出后继续关闭下面的菜单。
 
-编辑场景的可见性、输入属性和游戏自己的 cursor_renderer 定义由 `HudEditorScene` 在内存中提供给 `UIDefRepository::findDef`，仅匹配 `lholo.hud_editor`；其他定义查询交回原函数。HUD、选框和所有按钮仍通过 C++ 原生绘制，HUD 在场景游标之前提交。2026-10-27 用户已在 Minecraft 1.26.51.01 实测无 JSON 注册的编辑场景可打开并操作。资源包仍用于 OreUI 菜单，但不再包含 HUD 编辑器的 JSON UI 文件。
+编辑场景的可见性、输入属性和游戏自己的 cursor_renderer 定义由 `HudEditorScene` 在内存中提供给 `UIDefRepository::findDef`，仅匹配 `lholo.hud_editor`；其他定义查询交回原函数。场景创建失败会报告取消，让应用恢复 HUD 设置页；关闭时待场景离开栈再报告完成。渲染与输入 Hook 仅按 `SceneFactory` 返回的固定编辑场景名识别目标，不跨线程读取可变场景名。HUD、选框和所有按钮仍通过 C++ 原生绘制，HUD 在场景游标之前提交。2026-10-27 用户已在 Minecraft 1.26.51.01 实测无 JSON 注册的编辑场景可打开并操作。资源包仍用于 OreUI 菜单，但不再包含 HUD 编辑器的 JSON UI 文件。
 
 有真实结构时显示实际 HUD 内容；进入编辑会暂时展示两个面板，即使其普通显示开关关闭。没有结构或当前维度暂停时使用 demo.mcstructure 和三种材料示例，材料统计尚未就绪时也用材料示例保持可定位；普通 HUD 全部字段关闭时用示例保证可定位。示例只在 UI 层生成，不写入会话、材料统计或配置。字体、颜色、图标、独立背景 alpha、内边距和行距始终通过同一个 Painter。编辑期间也在客户端更新线程处理已有图标准备队列，避免依赖暂停世界的 LocalPlayer tick。
 
