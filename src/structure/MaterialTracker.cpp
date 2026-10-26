@@ -20,6 +20,7 @@
 #include "mc/world/item/registry/ItemRegistry.h"
 #include "mc/world/item/registry/ItemRegistryManager.h"
 #include "mc/world/level/block/Block.h"
+#include "mc/world/level/block/VanillaStates.h"
 
 #include <Windows.h>
 
@@ -135,21 +136,34 @@ std::vector<MaterialRequirement> resolveMaterials(
         if (!blockValue || blockCount == 0) return;
 
         std::string const typeName{blockValue->getTypeName()};
-        auto const key = block::materialKey(typeName);
+        auto key = block::materialKey(typeName);
         if (key.empty()) return;
-        auto const sample = counts.blockEntitySamples.find(blockValue);
-        auto const* nbt = sample == counts.blockEntitySamples.end() ? nullptr : sample->second.get();
+        bool const water = typeName == "minecraft:water" || typeName == "minecraft:flowing_water";
+        bool const lava = typeName == "minecraft:lava" || typeName == "minecraft:flowing_lava";
         MaterialRequirement requirement;
         requirement.typeName = typeName;
-        if (typeName == "minecraft:water" || typeName == "minecraft:flowing_water") {
-            requirement.nameKey = i18n::TextKey::MaterialWater;
-        } else if (typeName == "minecraft:lava" || typeName == "minecraft:flowing_lava") {
-            requirement.nameKey = i18n::TextKey::MaterialLava;
-        } else if (auto const item = (nbt ? block::resolvePlacementItem(*blockValue, *nbt, level) : block::resolvePlacementItem(*blockValue)); item.valid) {
+        if (water || lava) {
+            // Only a source needs a bucket; the flowing cells around it fill
+            // themselves. Sources in the block layer and in the liquid layer
+            // are the same material, so both go to the liquid rows.
+            if (blockValue->getState<int>(VanillaStates::LiquidDepth()).value_or(0) != 0) return;
+            requirement.nameKey = water ? i18n::TextKey::MaterialWater : i18n::TextKey::MaterialLava;
+            auto const result = byLiquidType.try_emplace(key, std::move(requirement));
+            auto& total = result.first->second.count;
+            auto const maximum = std::numeric_limits<std::uint64_t>::max();
+            total = blockCount > maximum - total ? maximum : total + blockCount;
+            return;
+        }
+        auto const sample = counts.blockEntitySamples.find(blockValue);
+        auto const* nbt = sample == counts.blockEntitySamples.end() ? nullptr : sample->second.get();
+        if (auto const item = (nbt ? block::resolvePlacementItem(*blockValue, *nbt, level) : block::resolvePlacementItem(*blockValue)); item.valid) {
             requirement.displayName = item.displayName;
             requirement.itemId = item.itemId;
             requirement.stackSize = item.stackSize;
             requirement.iconItem = item.displayItem;
+            // Blocks with separate wall and standing forms (banners, signs,
+            // coral fans) are one inventory item: group by that item.
+            key = "item:" + item.itemId;
         } else {
             requirement.displayName = localizedBlockName(*blockValue, localeCode);
         }
