@@ -10,7 +10,7 @@ import { HotkeysPage } from './pages/HotkeysPage';
 import type { HotkeySettingsControls } from './application/useHotkeySettings';
 import { InterfacePage } from './pages/InterfacePage';
 import type { InterfaceSettingsControls } from './application/useInterfaceSettings';
-import { ExperimentalPage } from './pages/ExperimentalPage';
+import { ExperimentalInfoModal, ExperimentalPage } from './pages/ExperimentalPage';
 import type { ExperimentalSettingsControls } from './application/useExperimentalSettings';
 import { MaterialListModal } from './pages/MaterialListModal';
 import type { MaterialsControls } from './application/useMaterials';
@@ -91,5 +91,6 @@ export function LHoloMenu({
       hasLoadedStructure={projection.projection.hasProjection}
       materialsState={materialsState}
     />
+    <ExperimentalInfoModal labels={labels} experimental={experimental} />
   </div>;
 }

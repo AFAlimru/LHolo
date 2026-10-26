@@ -135,10 +135,13 @@
 .lholo-experimental-label { width:16.8rem; flex-shrink:0; margin-right:0.6rem; font-size:1rem; line-height:1.5; }
 
 .lholo-modal-backdrop { position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:60; align-items:center; justify-content:center; background-color:rgba(0,0,0,0.62); }
-.lholo-modal { width:42rem; max-width:86vw; padding:1.25rem; border-radius:0.5rem; border:0.06rem solid #3d3d40; background-color:#1d1d1d; }
-.lholo-modal-title { font-size:1.3rem; line-height:1.5; }
+.lholo-modal { box-sizing:border-box; width:42rem; max-width:86vw; max-height:86vh; min-height:0; padding:1.25rem; overflow:hidden; border-radius:0.5rem; border:0.06rem solid #3d3d40; background-color:#1d1d1d; }
+.lholo-modal-title { flex-shrink:0; font-size:1.3rem; line-height:1.5; }
+.lholo-modal-body-viewport { flex:1; min-height:0; overflow:hidden; }
+.lholo-modal-body-viewport > div { min-height:0; }
 .lholo-modal-body { margin-top:0.4rem; }
 .lholo-modal-paragraph { font-size:1.05rem; line-height:1.55; margin-top:0.55rem; color:#e0e0e0; }
+.lholo-modal > .lholo-action-row, .lholo-modal > .lholo-transform-divider { flex-shrink:0; }
 
 /* Material list uses the same neutral surfaces and type scale as the menu. */
 .lholo-material-modal { padding:1.25rem; border-radius:0.6rem; border:0.06rem solid #303030; background-color:#151515; }

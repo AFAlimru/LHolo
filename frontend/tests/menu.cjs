@@ -617,7 +617,11 @@ assert(JSON.stringify(tree.toJSON()).includes('Settings live'));receive(JSON.str
 click(labels['page.experimental']);
 assert.equal(pageChecks().length,3);
 renderer.act(()=>pageChecks()[0].props.onClick());
-assert(tree.root.findByProps({className:'lholo-modal-backdrop'}));
+const consentBackdrop=tree.root.findByProps({className:'lholo-modal-backdrop'});
+let consentContainer=consentBackdrop.parent;
+while(consentContainer && !consentContainer.props.className) consentContainer=consentContainer.parent;
+assert.equal(consentContainer.props.className,'lholo-backdrop',
+  'Consent modal must sit outside the clipped page viewport');
 const beforeCancel=settingsRequests().length;click(labels['button.cancel']);
 assert.equal(settingsRequests().length,beforeCancel,'Cancelling consent never sends an enable intent');
 renderer.act(()=>pageChecks()[1].props.onClick());click(labels['button.consentEnable']);

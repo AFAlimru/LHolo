@@ -5,6 +5,7 @@ import type {
 } from '../application/useExperimentalSettings';
 import type { MenuLabels } from '../platform/bridge';
 import { LHoloButton, LHoloCheckbox, LHoloTextField } from '../components/LHoloControls';
+import { NativeScrollView } from '../platform/native';
 
 export function ExperimentalPage({ labels, experimental, worldAvailable }: {
   labels: MenuLabels; experimental: ExperimentalSettingsControls; worldAvailable: boolean;
@@ -83,34 +84,38 @@ export function ExperimentalPage({ labels, experimental, worldAvailable }: {
           onClick={() => experimental.stepAutoPlacementCooldown(1)} />
       </div>
     </div>
-
-
-
-    {experimental.pendingConsentFeature !== null && (
-      <div className="lholo-modal-backdrop">
-        <div className="lholo-modal">
-          <div className="lholo-modal-title">{labels['modal.titleExperimental']}</div>
-          <div className="lholo-transform-divider" />
-          <div className="lholo-modal-body">
-            <div className="lholo-modal-paragraph">{labels['experimental.warningIntro']}</div>
-            <div className="lholo-modal-paragraph">{labels['experimental.warningAntiCheat']}</div>
-            <div className="lholo-modal-paragraph">{labels['experimental.warningAllowed']}</div>
-            <div className="lholo-modal-paragraph">{labels['experimental.warningConsequence']}</div>
-            <div className="lholo-modal-paragraph">{labels['experimental.warningResponsibility']}</div>
-            <div className="lholo-modal-paragraph">{labels['experimental.warningManualSafe']}</div>
-          </div>
-          <div className="lholo-transform-divider" />
-          <div className="lholo-action-row">
-            {experimental.experimentalConsent ? (
-              <LHoloButton label={labels['button.close']} onClick={experimental.closeModal} />
-            ) : <>
-              <LHoloButton disabled={!experimental.canCommand} label={labels['button.consentEnable']} className="lholo-danger-button"
-                onClick={experimental.confirmConsent} />
-              <LHoloButton label={labels['button.cancel']} onClick={experimental.closeModal} />
-            </>}
-          </div>
-        </div>
-      </div>
-    )}
   </>;
+}
+
+export function ExperimentalInfoModal({ labels, experimental }: {
+  labels: MenuLabels; experimental: ExperimentalSettingsControls;
+}) {
+  if (experimental.pendingConsentFeature === null) return null;
+
+  return <div className="lholo-modal-backdrop">
+    <div className="lholo-modal">
+      <div className="lholo-modal-title">{labels['modal.titleExperimental']}</div>
+      <div className="lholo-transform-divider" />
+      <div className="lholo-modal-body-viewport"><NativeScrollView>
+        <div className="lholo-modal-body">
+          <div className="lholo-modal-paragraph">{labels['experimental.warningIntro']}</div>
+          <div className="lholo-modal-paragraph">{labels['experimental.warningAntiCheat']}</div>
+          <div className="lholo-modal-paragraph">{labels['experimental.warningAllowed']}</div>
+          <div className="lholo-modal-paragraph">{labels['experimental.warningConsequence']}</div>
+          <div className="lholo-modal-paragraph">{labels['experimental.warningResponsibility']}</div>
+          <div className="lholo-modal-paragraph">{labels['experimental.warningManualSafe']}</div>
+        </div>
+      </NativeScrollView></div>
+      <div className="lholo-transform-divider" />
+      <div className="lholo-action-row">
+        {experimental.experimentalConsent ? (
+          <LHoloButton label={labels['button.close']} onClick={experimental.closeModal} />
+        ) : <>
+          <LHoloButton disabled={!experimental.canCommand} label={labels['button.consentEnable']} className="lholo-danger-button"
+            onClick={experimental.confirmConsent} />
+          <LHoloButton label={labels['button.cancel']} onClick={experimental.closeModal} />
+        </>}
+      </div>
+    </div>
+  </div>;
 }
