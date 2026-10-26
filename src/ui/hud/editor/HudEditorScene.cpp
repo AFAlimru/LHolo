@@ -18,6 +18,9 @@
 #include "mc/client/gui/screens/UIScene.h"
 #include "mc/client/gui/screens/SceneFactory.h"
 #include "mc/client/gui/screens/interfaces/ISceneStack.h"
+#include "mc/client/gui/UIDefRepository.h"
+#include "mc/deps/json/Reader.h"
+#include "mc/deps/json/Value.h"
 #include "mc/deps/input/enums/ButtonState.h"
 #include <atomic>
 #include <string>
@@ -30,8 +33,53 @@ std::atomic_int completion{-1};
 bool opened{}, closing{}, accepted{};
 std::string screenName;
 bool updateInstalled{}, renderInstalled{}, pointerInstalled{}, buttonInstalled{}, focusInstalled{};
+bool probeInstalled{};
 auto& logger() { return LHolo::getInstance().getSelf().getLogger(); }
 bool isEditor(std::string const& name) { return name == screenName; }
+
+// Probe only: no resource pack registers this name. If SceneFactory can create
+// it, the UI definition supplied by findDef is sufficient for this scene.
+constexpr char probeScreenName[] = "lholo.hud_editor_probe";
+constexpr char probeDefinitionJson[] = R"json({
+  "type": "screen",
+  "render_game_behind": true,
+  "render_only_when_topmost": false,
+  "should_steal_mouse": false,
+  "is_showing_menu": true,
+  "is_modal": true,
+  "absorbs_input": true,
+  "low_frequency_rendering": false,
+  "force_render_below": false,
+  "controls": [{
+    "cursor": {"type": "custom", "size": [16, 16], "renderer": "cursor_renderer", "layer": 1000}
+  }],
+  "button_mappings": [{
+    "from_button_id": "button.menu_cancel",
+    "to_button_id": "button.lholo_hud_cancel",
+    "mapping_type": "global"
+  }]
+})json";
+
+Json::Value const& probeDefinition() {
+    static Json::Value const definition = [] {
+        Json::Value result;
+        Json::Reader reader;
+        if (!reader.parse(probeDefinitionJson, result, false))
+            logger().error("[native-hud.probe] Could not parse in-memory scene definition: {}", reader.getFormattedErrorMessages());
+        return result;
+    }();
+    return definition;
+}
+
+LL_TYPE_INSTANCE_HOOK(HudProbeDefinition, ll::memory::HookPriority::Normal,
+    UIDefRepository, &UIDefRepository::$findDef, Json::Value const&,
+    std::string const& defNamespace, std::string const& defName) {
+    if (defNamespace == "lholo" && defName == "hud_editor_probe") {
+        logger().info("[native-hud.probe] SceneFactory requested in-memory lholo.hud_editor_probe definition");
+        return probeDefinition();
+    }
+    return origin(defNamespace, defName);
+}
 void processScene(ClientInstance& client) {
     bool const world = client.$getClientInstanceState() == ClientInstanceState::Playing && client.getLocalPlayer();
     ::Bedrock::NonOwnerPointer<ISceneStack> stack = client.$getCurrentSceneStack();
@@ -61,8 +109,10 @@ void processScene(ClientInstance& client) {
     auto controller = std::make_shared<ScreenController>(false);
     controller->registerButtonPressedHandler(controller->_getNameId("button.lholo_hud_cancel"),
         [](UIPropertyBag*) { cancelHudLayoutEditor(); return ::ui::ViewRequest::ConsumeEvent; });
-    auto scene = client.$getSceneFactory().createUIScene("lholo.lholo_hud_editor", std::move(controller));
-    if (!scene) { logger().error("[native-hud.editor] could not create lholo.lholo_hud_editor"); logger().flush(); return; }
+    auto scene = client.$getSceneFactory().createUIScene(probeScreenName, std::move(controller));
+    if (!scene) { logger().error("[native-hud.probe] Could not create {}", probeScreenName); logger().flush(); return; }
+    logger().info("[native-hud.probe] Created unregistered scene: {}", scene->getScreenName());
+    logger().flush();
     screenName = scene->getScreenName();
     processHudLayoutEditor(true, true, true);
     closing = accepted = false;
@@ -127,6 +177,8 @@ std::optional<bool> consumeHudEditorCompletion() {
     return result < 0 ? std::nullopt : std::optional<bool>{result == 1};
 }
 bool installHudEditorScene() {
+    probeInstalled = HudProbeDefinition::hook() == 0;
+    if (!probeInstalled) return false;
     updateInstalled = HudEditorUpdate::hook() == 0;
     renderInstalled = HudEditorRender::hook() == 0;
     pointerInstalled = HudEditorPointer::hook() == 0;
@@ -154,6 +206,8 @@ void uninstallHudEditorScene() {
     if (pointerInstalled) HudEditorPointer::unhook();
     if (renderInstalled) HudEditorRender::unhook();
     if (updateInstalled) HudEditorUpdate::unhook();
+    if (probeInstalled) HudProbeDefinition::unhook();
     updateInstalled = renderInstalled = pointerInstalled = buttonInstalled = focusInstalled = false;
+    probeInstalled = false;
 }
 }
