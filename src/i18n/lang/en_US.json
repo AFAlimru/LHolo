@@ -76,7 +76,7 @@
   "hud.tabMaterials": "Materials HUD",
   "hud.groupInfo": "Basic info",
   "hud.groupProgress": "Progress",
-  "hud.groupErrors": "Error counts",
+  "hud.groupErrors": "Correction hints",
   "checkbox.hudEnabled": "Enable HUD",
   "label.hudPosition": "HUD position",
   "corner.topLeft": "Top left",

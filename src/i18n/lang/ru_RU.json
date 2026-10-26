@@ -76,7 +76,7 @@
   "hud.tabMaterials": "HUD материалов",
   "hud.groupInfo": "Основная информация",
   "hud.groupProgress": "Прогресс",
-  "hud.groupErrors": "Ошибки",
+  "hud.groupErrors": "Подсказки об ошибках",
   "checkbox.hudEnabled": "Включить HUD",
   "label.hudPosition": "Положение HUD",
   "corner.topLeft": "Слева сверху",
