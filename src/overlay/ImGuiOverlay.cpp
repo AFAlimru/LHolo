@@ -16,6 +16,7 @@
 
 #include "overlay/ImGuiOverlay.h"
 #include "input/HotkeyCapture.h"
+#include "ui/hud/editor/HudEditor.h"
 
 #include <Windows.h>
 
@@ -505,7 +506,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         gCaptureKeyReleases[captureKey] = false; return 1;
     }
     if (captureDown && captureKey < gCaptureKeyReleases.size() && gCaptureKeyReleases[captureKey]) return 1;
-    if (oreui::isMenuOnTop()) {
+    if (oreui::isMenuOnTop() || ui::hud::hudLayoutEditorActive()) {
         if (captureDown && input::hotkeyCaptureActive()) {
             auto modifiers = ((GetAsyncKeyState(VK_CONTROL) & 0x8000) ? 1u : 0u)
                 | ((GetAsyncKeyState(VK_MENU) & 0x8000) ? 2u : 0u)
@@ -701,7 +702,7 @@ void render(IDXGISwapChain* swapChain) {
     if (!initializeImGui(swapChain)) return;
     // Keep input/backend initialization and control processing above, but do
     // not draw the legacy GUI or action hints over the native menu.
-    if (oreui::isMenuOnTop()) return;
+    if (oreui::isMenuOnTop() || ui::hud::hudLayoutEditorActive()) return;
     auto const showGui = structure::isGuiVisible();
     if (gGuiVisibleLastFrame != showGui) {
         if (!showGui) {

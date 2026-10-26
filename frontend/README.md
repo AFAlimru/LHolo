@@ -108,3 +108,5 @@ App 只装配 useSettings 与四个具体页面 hook。useSettings 串行提交�
 菜单使用标准 1.00 比例，不使用整体 transform 缩放，也不修改游戏根字号。容器宽度 93vw、最大 62rem，高度 72vh、最大高度 35.2rem。内容区随右侧视口填满，不再限制为 42rem；创建页坐标行弹性分配 XYZ 输入宽度。设置行共享标签列，选择框、数字输入和步进器从同一控制列起始；不拉伸数字输入。保持原有配色、控件和操作。
 
 创建页 XYZ 内层不换行，使用显式长度 flex-basis；只有外层位置按钮可换行，窄窗口时整体改为上下布局。避免 flex:1 隐含百分比基准与自动换行在 Gameface 中产生不同结果。依据：[Gameface 布局差异](https://docs.coherent-labs.com/unity-gameface/what_is_gfp/htmlfeaturesupport/)。浏览器预览仅检查界面，Gameface 排版仍须实机验收。
+
+HUD 布局编辑采用游戏原生 UIScene，浏览器只预览设置页入口，不模拟原生 HUD 编辑效果。

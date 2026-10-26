@@ -11,6 +11,7 @@ LHolo 是当前开发项目。同级 OreUIProbe 仅供参考，ore-ui 提供官�
 - 原版 React、Facet 和渲染器复用同一页面的运行时，不重复打包，不额外 createRoot。
 - 新界面以 LHolo 旧 ImGui 的自有深色样式为准，可视控件集中在 frontend/src/components/LHoloControls.tsx；原版只提供无外观的焦点/激活原语与运行环境，不套用原版表单、输入框或开关外观。
 - structure/projection/place/settings/i18n 不得依赖 OreUI 或其协议。
+- HUD 布局编辑使用独立原生 UIScene，入口仍在 OreUI HUD 设置页；状态和交互位于 src/ui/hud/editor/，内容复用原生 HUD Painter，不新增 ImGui 编辑器或独立光标接管。
 - 原生 HUD 绘制属于 UI 层，集中在 src/ui/hud/，使用 lholo::ui::hud 命名空间；业务计算保持在原有模块。
 - 不复制 Probe 演示数据、测试协议或游戏脚本生成件作为正式实现。
 - 每次架构或迁移状态变化同步更新文档。类型检查和隔离测试不等于游戏内验证。

@@ -7,6 +7,10 @@
 
 #include "i18n/LanguageStore.h"
 #include "ui/hud/NativeHudRenderer.h"
+#include "ui/hud/editor/HudEditorScene.h"
+#include "ll/api/service/Bedrock.h"
+#include "mc/client/game/ClientInstance.h"
+#include "mc/client/game/ClientInstanceState.h"
 #include "input/MenuInputGuard.h"
 #include "input/MenuOpenRequest.h"
 #include "oreui/OreUiBridge.h"
@@ -35,6 +39,16 @@ void AppKernel::processControlFrame() {
     structure::processPendingActions();
     if (processRenderSettingsEdits()) structure::saveSettings();
     if (processSettingsActions()) structure::saveSettings();
+    auto client = ll::service::getClientInstance();
+    bool const worldAvailable = client && client->$getClientInstanceState() == ClientInstanceState::Playing && client->getLocalPlayer();
+    if (consumeHudLayoutEditRequest() && worldAvailable) {
+        oreui::requestMenuClose();
+        ui::hud::requestHudEditorScene();
+    }
+    if (auto completed = ui::hud::consumeHudEditorCompletion(); completed) {
+        if (*completed) structure::saveSettings();
+        if (worldAvailable) oreui::requestMenuOpen(oreui::MenuEntryPage::Hud);
+    }
 }
 
 bool AppKernel::load() {
@@ -66,6 +80,8 @@ bool AppKernel::enable() {
 
     if (!ui::hud::installNativeHudRenderer()) logger.warn("Failed to install the native HUD renderer");
 
+    if (!ui::hud::installHudEditorScene()) logger.error("Failed to install the native HUD editor scene");
+
     if (!place::installHook()) {
         logger.warn("Failed to install easy-place hooks");
     }
@@ -95,6 +111,7 @@ bool AppKernel::disable() {
     overlay::setControlFrameCallback(nullptr);
     input::clearMenuOpenRequest();
 
+    ui::hud::uninstallHudEditorScene();
     ui::hud::uninstallNativeHudRenderer();
     oreui::uninstallMenuScreen();
     oreui::uninstallMenuBridge();

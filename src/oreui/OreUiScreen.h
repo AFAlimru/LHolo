@@ -8,7 +8,9 @@ bool installMenuScreen();
 void uninstallMenuScreen();
 // Called by the primary ClientInstance update; never retain a View or Scene.
 void processMenuScreen();
-void requestMenuOpen();
+enum class MenuEntryPage { Projection, Hud };
+void requestMenuOpen(MenuEntryPage page = MenuEntryPage::Projection);
+MenuEntryPage menuEntryPage();
 void requestMenuClose();
 bool isMenuOnTop();
 }

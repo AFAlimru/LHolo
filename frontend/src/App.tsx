@@ -16,6 +16,7 @@ import { FrameCompletion, GameShell } from './platform/native';
 import { LHoloButton } from './components/LHoloControls';
 
 function MenuPage() {
+  const [entryPage, setEntryPage] = useState<'projection' | 'hud'>('projection');
   const [labels, setLabels] = useState<MenuLabels | null>(null);
   const { file, browse } = useStructureFile(menuBridge);
   const projection = useProjection(menuBridge);
@@ -23,14 +24,15 @@ function MenuPage() {
   const transform = useTransform(menuBridge);
   const render = useRenderSettings(menuBridge);
   const settings = useSettings(menuBridge);
-  const hud = useHudSettings(settings);
+  const hud = useHudSettings(settings, menuBridge);
   const hotkeys = useHotkeySettings(settings);
   const interfaceSettings = useInterfaceSettings(settings);
   const experimental = useExperimentalSettings(settings);
   const materialsState = useMaterials(menuBridge);
+  useEffect(() => menuBridge.subscribeEntry(setEntryPage), []);
   useEffect(() => menuBridge.subscribe(setLabels), []);
   return <>
-    {labels ? <LHoloMenu labels={labels} file={file} projection={projection} capture={capture}
+    {labels ? <LHoloMenu entryPage={entryPage} labels={labels} file={file} projection={projection} capture={capture}
       transform={transform} render={render} hud={hud} hotkeys={hotkeys}
       interfaceSettings={interfaceSettings} experimental={experimental} materialsState={materialsState}
       onBrowse={browse} onClose={menuBridge.close} />

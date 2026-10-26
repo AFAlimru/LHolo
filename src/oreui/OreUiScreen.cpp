@@ -1,4 +1,5 @@
 #include "oreui/OreUiScreen.h"
+#include "ui/hud/editor/HudEditor.h"
 #include "oreui/OreUiMenuResources.h"
 #include "input/HotkeyCapture.h"
 #include "oreui/MenuContextPolicy.h"
@@ -41,9 +42,10 @@
 
 namespace lholo::oreui {
 namespace {
-std::atomic_bool active{}, openPending{}, closePending{}, menuOnTop{}, escapeHeld{};
+std::atomic_bool active{}, openPending{}, closePending{}, menuOnTop{}, escapeHeld{}, escapeForwarded{};
 bool sendInstalled{}, serverInstalled{}, downInstalled{}, upInstalled{}, updateInstalled{};
 std::optional<ClientInstanceState> openedState;
+std::atomic<MenuEntryPage> entryPage{MenuEntryPage::Projection};
 std::string openedScreenName;
 auto& logger() { return LHolo::getInstance().getSelf().getLogger(); }
 bool isMenuScene(std::string const& name) { return name.find("lholo-menu.html") != std::string::npos; }
@@ -140,10 +142,20 @@ LL_TYPE_INSTANCE_HOOK(MenuSend, ll::memory::HookPriority::Normal,
 LL_TYPE_INSTANCE_HOOK(MenuEscapeDown, ll::memory::HookPriority::Highest,
     HIDControllerGameCoreDesktop, &HIDControllerGameCoreDesktop::$onKeyDown, void,
     int key, Bedrock::Input::KeyboardEventProcessor::InputOrigin source) {
+    if (key == 27 && ui::hud::hudLayoutEditorActive()) {
+        // Let the native scene handle cancel. Claim repeats after it is popped,
+        // and forward the matching release so the game clears its key state.
+        escapeHeld = true;
+        escapeForwarded = true;
+        origin(key, source);
+        return;
+    }
     if (key == 27 && active.load() && menuOnTop.load()) {
         if (input::hotkeyCaptureActive()) { escapeHeld = true; input::captureHotkeyKey(27, 0); return; }
         // Claim the whole key pair, including auto-repeat after scheduling pop.
-        if (!escapeHeld.exchange(true)) requestMenuClose();
+        if (!escapeHeld.exchange(true)) {
+            requestMenuClose();
+        }
         return;
     }
     if (key == 27 && escapeHeld.load()) return;
@@ -151,13 +163,17 @@ LL_TYPE_INSTANCE_HOOK(MenuEscapeDown, ll::memory::HookPriority::Highest,
 }
 LL_TYPE_INSTANCE_HOOK(MenuEscapeUp, ll::memory::HookPriority::Highest,
     HIDControllerGameCoreDesktop, &HIDControllerGameCoreDesktop::$onKeyUp, void, int key) {
-    if (key == 27 && escapeHeld.exchange(false)) return;
+    if (key == 27 && escapeHeld.exchange(false)) {
+        if (escapeForwarded.exchange(false)) origin(key);
+        return;
+    }
     origin(key);
 }
 }
 
 bool isMenuOnTop() { return menuOnTop.load(); }
-void requestMenuOpen() { if (active.load()) openPending = true; }
+void requestMenuOpen(MenuEntryPage page) { if (active.load()) { entryPage = page; openPending = true; } }
+MenuEntryPage menuEntryPage() { return entryPage.load(); }
 void requestMenuClose() { closePending = true; }
 
 void processMenuScreen() {
@@ -266,6 +282,6 @@ void uninstallMenuScreen() {
     if (sendInstalled) MenuSend::unhook();
     if (serverInstalled) MenuSendToServer::unhook();
     sendInstalled = serverInstalled = downInstalled = upInstalled = false;
-    openPending = closePending = menuOnTop = escapeHeld = false;
+    openPending = closePending = menuOnTop = escapeHeld = escapeForwarded = false;
 }
 }

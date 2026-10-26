@@ -44,6 +44,10 @@ def main():
         if MARKER not in content.decode("utf-8"):
             raise ValueError(f"Missing UI protocol marker: {name}")
         files[f"LHolo/resource_packs/LHoloUI/hbui/{name}"] = content
+    for name in ("_ui_defs.json", "lholo_hud_editor.json"):
+        content = (PROJECT / "resources/ui" / name).read_bytes()
+        json.loads(content)
+        files[f"LHolo/resource_packs/LHoloUI/ui/{name}"] = content
     source = json.loads((assets / "build-info.json").read_text(encoding="utf-8"))
     # Write only the owned installation inventory. Never delete the mod
     # directory or copy config/debug/intermediate files into the package.

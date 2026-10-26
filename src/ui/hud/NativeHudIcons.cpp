@@ -131,6 +131,11 @@ LL_TYPE_INSTANCE_HOOK(HudIconTextFlush, ll::memory::HookPriority::Normal,
 }
 }
 
+void prepareNativeHudIconItems() {
+    if (!active.load() || failed.load()) return;
+    prepareItems();
+}
+
 void clearNativeHudIcons() {
     std::lock_guard lock(cacheMutex);
     cacheGeneration = 0;

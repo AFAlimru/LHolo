@@ -80,6 +80,8 @@ export interface RenderBridge {
   renderSettings(edit: RenderEdit): void;
 }
 export interface MenuBridge extends StructureFileBridge, ProjectionBridge, MaterialsBridge, CaptureBridge, TransformBridge, RenderBridge, SettingsBridge {
+  editHudLayout(): void;
+  subscribeEntry(listener: (page: 'projection' | 'hud') => void): () => void;
   subscribe(listener: (labels: MenuLabels) => void): () => void;
   close(): void;
 }
@@ -276,4 +278,13 @@ export const menuBridge: MenuBridge = {
     });
   },
   close: () => send('lholo.menu.close'),
+  editHudLayout: () => send('lholo.hud.edit-layout'),
+  subscribeEntry(listener) {
+    const receive = (payload: string) => {
+      const page: unknown = JSON.parse(payload);
+      if (page === 'projection' || page === 'hud') listener(page);
+    };
+    window.engine.on('lholo:menu-entry', receive);
+    return () => window.engine.off('lholo:menu-entry', receive);
+  },
 };

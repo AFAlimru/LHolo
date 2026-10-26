@@ -109,13 +109,12 @@
 
 /* Settings share a label/control column; small numbers keep compact inputs. */
 .lholo-setting-row { min-height:2.4rem; margin-top:0.55rem; }
-.lholo-setting-row > .lholo-transform-label, .lholo-setting-row > .lholo-hud-label, .lholo-setting-row > .lholo-interface-label, .lholo-setting-row > .lholo-experimental-label, .lholo-setting-row > .lholo-opacity-label { width:55%; flex:0 1 55%; min-width:10rem; max-width:22rem; margin-right:1rem; overflow-wrap:break-word; }
+.lholo-setting-row > .lholo-transform-label, .lholo-setting-row > .lholo-interface-label, .lholo-setting-row > .lholo-experimental-label, .lholo-setting-row > .lholo-opacity-label { width:55%; flex:0 1 55%; min-width:10rem; max-width:22rem; margin-right:1rem; overflow-wrap:break-word; }
 .lholo-setting-row > .lholo-select { width:11rem; min-width:11rem; max-width:100%; }
 .lholo-setting-row > .lholo-select-compact { width:6rem; min-width:6rem; }
 .lholo-setting-row > .lholo-stepper { min-width:11rem; justify-content:flex-start; }
 .lholo-vibrant-hint { margin-top:1.1rem; }
 
-.lholo-hud-label { width:10.5rem; flex-shrink:0; margin-right:0.6rem; font-size:1rem; line-height:1.5; }
 
 .lholo-hotkey-list { margin-top:0.4rem; }
 .lholo-hotkey-row { flex-direction:row; align-items:center; flex-wrap:wrap; margin-top:0.55rem; }
@@ -174,7 +173,7 @@
   .lholo-coordinate-row { flex-direction:column; align-items:stretch; }
   .lholo-coordinate-fields { min-width:0; flex:0 0 auto; }
   .lholo-coordinate-row > .lholo-button { align-self:flex-start; }
-  .lholo-setting-row > .lholo-transform-label, .lholo-setting-row > .lholo-hud-label, .lholo-setting-row > .lholo-interface-label, .lholo-setting-row > .lholo-experimental-label, .lholo-setting-row > .lholo-opacity-label { flex:none; width:100%; min-width:0; margin-right:0; margin-bottom:0.3rem; }
+  .lholo-setting-row > .lholo-transform-label, .lholo-setting-row > .lholo-interface-label, .lholo-setting-row > .lholo-experimental-label, .lholo-setting-row > .lholo-opacity-label { flex:none; width:100%; min-width:0; margin-right:0; margin-bottom:0.3rem; }
   .lholo-setting-row > .lholo-select { min-width:0; }
   .lholo-setting-row > .lholo-stepper { min-width:0; }
 }

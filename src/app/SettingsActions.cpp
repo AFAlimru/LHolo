@@ -13,7 +13,7 @@ std::mutex mutex;
 std::optional<SettingsIntent> pending;
 std::uint64_t ack{}, hotkeysRevision{};
 std::array<SettingsHotkey, input::kHotkeyCount> observedHotkeys{};
-bool accepted{}, cancelCapture{};
+bool accepted{}, cancelCapture{}, hudLayoutEditRequested{};
 auto& ui() { return structure::detail::StructureUiState::getInstance(); }
 int activeMode() { return place::isManualMode() ? 1 : place::isRangeEnabled() ? 3 : place::isEnabled() ? 2 : 0; }
 void setMode(int mode) {
@@ -126,10 +126,13 @@ bool processSettingsActions() {
     }
 }
 void requestHotkeyCaptureCancel() { std::lock_guard lock(mutex); cancelCapture = true; ui().stopHotkeyCapture(); }
+void requestHudLayoutEdit() { std::lock_guard lock(mutex); hudLayoutEditRequested = true; }
+bool consumeHudLayoutEditRequest() { std::lock_guard lock(mutex); return std::exchange(hudLayoutEditRequested, false); }
 void resetSettingsActions() {
     std::lock_guard lock(mutex);
     if (pending) ack = pending->id;
     pending.reset(); accepted = cancelCapture = false;
+    hudLayoutEditRequested = false;
     ui().stopHotkeyCapture();
 }
 }

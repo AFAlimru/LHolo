@@ -1,4 +1,5 @@
 #include "oreui/OreUiBridge.h"
+#include "app/SettingsActions.h"
 
 #include "oreui/MenuBindings.h"
 #include "oreui/CaptureBindings.h"
@@ -32,7 +33,7 @@ std::atomic_bool loadPending{}, closeProjectionPending{}, restorePending{}, proj
 std::atomic_bool materialsRequestPending{}, materialsStatePending{};
 bool registered{}, viewInstalled{}, intentInstalled{};
 auto& logger() { return LHolo::getInstance().getSelf().getLogger(); }
-enum class MenuQuery { Ready, Close, BrowseStructure, LoadProjection, CloseProjection, RestoreProjection, RequestMaterials, CancelHotkeyCapture };
+enum class MenuQuery { Ready, Close, BrowseStructure, LoadProjection, CloseProjection, RestoreProjection, RequestMaterials, CancelHotkeyCapture, EditHudLayout };
 std::optional<i18n::Language> publishedLanguage;
 
 // Typed facet activation is the supported scalar-payload entry point. No
@@ -66,7 +67,8 @@ LL_TYPE_INSTANCE_HOOK(MenuIntentActivation, ll::memory::HookPriority::Normal,
                 $registerFacet(name, [] { return std::make_unique<IntentFacet>(receiveTransformIntent, "lholo.transform.intent"); });
             else if (name == "lholo.render.intent")
                 $registerFacet(name, [] { return std::make_unique<IntentFacet>(receiveRenderSettingsIntent, "lholo.render.intent"); });
-            else $registerFacet(name, [] { return std::make_unique<IntentFacet>(receiveSettingsIntent, "lholo.settings.intent"); });
+            else if (name == "lholo.settings.intent")
+                $registerFacet(name, [] { return std::make_unique<IntentFacet>(receiveSettingsIntent, "lholo.settings.intent"); });
         }
     }
     return origin(binder, name, id, payload);
@@ -86,6 +88,7 @@ public:
         case MenuQuery::RestoreProjection: restorePending = true; break;
         case MenuQuery::RequestMaterials: materialsRequestPending = materialsStatePending = true; break;
         case MenuQuery::CancelHotkeyCapture: if (isMenuOnTop()) cancelSettingsHotkeyCapture(); break;
+        case MenuQuery::EditHudLayout: if (isMenuOnTop()) app::requestHudLayoutEdit(); break;
         }
     }
     void const* GetTarget() override { return nullptr; }
@@ -119,7 +122,9 @@ LL_TYPE_INSTANCE_HOOK(MenuViewUpdate, ll::memory::HookPriority::Normal,
             else if (load) loadSelectedProjection();
         }
         if (!menuView || !isMenuOnTop()) return;
-        if (labelsPending.exchange(false) || publishedLanguage != i18n::language()) {
+        auto const ready = labelsPending.exchange(false);
+        if (ready) $triggerEvent("lholo:menu-entry", menuEntryPage() == MenuEntryPage::Hud ? R"("hud")" : R"("projection")");
+        if (ready || publishedLanguage != i18n::language()) {
             publishedLanguage = i18n::language();
             $triggerEvent("lholo:menu-labels", buildMenuLabels());
         }
@@ -167,6 +172,7 @@ bool installMenuBridge() {
                     QueryDefinition{"lholo.projection.close", MenuQuery::CloseProjection},
                     QueryDefinition{"lholo.projection.restore", MenuQuery::RestoreProjection},
                     QueryDefinition{"lholo.materials.request", MenuQuery::RequestMaterials},
+                    QueryDefinition{"lholo.hud.edit-layout", MenuQuery::EditHudLayout},
                     QueryDefinition{"lholo.hotkeys.cancel", MenuQuery::CancelHotkeyCapture}
                 }) {
                     OreUI::Detail::QueryRegistry::QueryTemplate query;

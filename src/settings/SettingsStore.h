@@ -7,6 +7,7 @@
 #pragma once
 
 #include "input/HotkeyTypes.h"
+#include "settings/HudPlacement.h"
 
 #include <array>
 #include <filesystem>
@@ -40,6 +41,9 @@ struct Settings {
     bool hudShowExtraBlocks{true};
     bool hudShowProjectedBlockName{true};
     int hudPosition{1};
+    HudPlacements hudPlacements{};
+    std::array<int, 2> hudBackgroundOpacities{60, 60};
+    std::array<int, 2> hudScales{100, 100};
     int guiHotkey{'M'};
     int guiHotkeyModifiers{2};
     int layerIncreaseHotkey{0x26}; // VK_UP

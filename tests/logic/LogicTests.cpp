@@ -223,6 +223,9 @@ void testSettingsStore() {
     settings.correctionSeeThrough = true;
     settings.materialHudEnabled = true;
     settings.materialHudPosition = 3;
+    settings.hudScales = {75, 160};
+    settings.hudBackgroundOpacities = {35, 80};
+    settings.hudPlacements = {{{true, 0.2f, 0.3f}, {true, 0.7f, 0.6f}}};
     settings.altWheelOffsetEnabled = false;
     settings.moveHotkeys[4] = 0x57; // W
     settings.hasSavedProjection = true;
@@ -258,6 +261,9 @@ void testSettingsStore() {
     LHOLO_CHECK(loaded.correctionSeeThrough);
     LHOLO_CHECK(loaded.materialHudEnabled);
     LHOLO_CHECK(loaded.materialHudPosition == 3);
+    LHOLO_CHECK(loaded.hudPlacements == settings.hudPlacements);
+    LHOLO_CHECK(loaded.hudBackgroundOpacities == settings.hudBackgroundOpacities);
+    LHOLO_CHECK(loaded.hudScales == settings.hudScales);
     LHOLO_CHECK(!loaded.altWheelOffsetEnabled);
     LHOLO_CHECK(loaded.moveHotkeys[4] == 0x57);
     LHOLO_CHECK(loaded.hasSavedProjection);
@@ -273,6 +279,9 @@ void testSettingsStore() {
     lholo::settings::Settings migrated;
     LHOLO_CHECK(lholo::settings::loadSettingsFile(path, migrated));
     LHOLO_CHECK(!migrated.hudShowProjectedBlockName);
+    LHOLO_CHECK(migrated.hudPlacements == lholo::settings::HudPlacements{});
+    LHOLO_CHECK((migrated.hudScales == std::array<int, 2>{100, 100}));
+    LHOLO_CHECK((migrated.hudBackgroundOpacities == std::array<int, 2>{60, 60}));
     LHOLO_CHECK(migrated.hudShowExtraBlocks);
     LHOLO_CHECK(migrated.autoPlacementBreakCooldownSeconds == 10);
     LHOLO_CHECK(!migrated.correctionSeeThrough);

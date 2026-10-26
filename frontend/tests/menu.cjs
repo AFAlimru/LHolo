@@ -36,7 +36,7 @@ const context = {
       ItemIcon: ({ itemId }) => React.createElement('native-item-icon', { itemId }),
     },
     engine: {
-      on(name, fn) { assert(['lholo:menu-labels', 'lholo:structure-file', 'lholo:projection', 'lholo:materials', 'lholo:capture', 'lholo:transform', 'lholo:render', 'lholo:settings'].includes(name)); listeners.add({ name, fn }); },
+      on(name, fn) { assert(['lholo:menu-entry', 'lholo:menu-labels', 'lholo:structure-file', 'lholo:projection', 'lholo:materials', 'lholo:capture', 'lholo:transform', 'lholo:render', 'lholo:settings'].includes(name)); listeners.add({ name, fn }); },
       off(name, fn) { for (const item of listeners) if (item.name === name && item.fn === fn) listeners.delete(item); },
       trigger(...args) { events.push(args); },
     },
@@ -70,7 +70,7 @@ const click = label => renderer.act(() => {
   button.props.onClick();
 });
 mount();
-assert.equal(listeners.size, 8);
+assert.equal(listeners.size, 9);
 assert(events.some(args => args[0] === 'query:subscribe/lholo.menu.ready'));
 receive('{"menu.close":false}');
 assert(errors.length > 0);
@@ -558,22 +558,26 @@ const nativeCapture = (key,modifiers=0) => {
   ++settingsState.hotkeysRevision;emitSettings();
 };
 emitSettings();
-click(labels['page.hud']);
-
+receive(JSON.stringify('hud'), 'lholo:menu-entry');
+assert.equal(pageChecks().length, 10, 'native editor return selects the HUD settings page');
+projectionState({worldAvailable: false});
+assert.equal(buttonByLabel(labels['hud.layout.edit']).props.disabled, true, 'HUD layout editing requires a world');
+projectionState({worldAvailable: true});
+click(labels['hud.layout.edit']);
+assert(events.some(e=>e[0]==='query:subscribe/lholo.hud.edit-layout'), 'HUD editor entry uses the native command bridge');
 assert.equal(pageChecks().length,10);
 renderer.act(()=>pageChecks()[0].props.onClick());settleSettings();
 assert.equal(settingsState.values.hudEnabled,false);
-assert.equal(selectTrigger(0).props.disabled,true);
+assert.equal(tree.root.findAllByProps({className: 'lholo-select-trigger'}).length, 0, 'HUD positions use drag editing instead of corner dropdowns');
 for(let n=1;n<=8;++n)assert.equal(pageChecks()[n].props.disabled,true);
 renderer.act(()=>pageChecks()[9].props.onClick());settleSettings();
-renderer.act(()=>selectTrigger(1).props.onClick());click(labels['corner.topLeft']);settleSettings();
-assert.equal(settingsState.values.materialHudPosition,0);
+
 // Consecutive local HUD changes cannot be lost to the first ack.
 renderer.act(()=>pageChecks()[0].props.onClick());renderer.act(()=>pageChecks()[0].props.onClick());
 emitSettings();
 ackSettings(); assert(!pageChecks()[0].props.className.includes('is-checked'));settleSettings();
 settingsState.values={...settingsState.values,hudEnabled:true,hudPosition:2};emitSettings();
-assert.equal(nodeText(selectTrigger(0)),labels['corner.topRight']+'▼');
+assert.equal(tree.root.findAllByProps({className: 'lholo-select-trigger'}).length, 0);
 click(labels['page.hotkeys']);
 const hotkeyRows=()=>tree.root.findAllByProps({className:'lholo-hotkey-row'});
 const hkButton=(n,b=0)=>hotkeyRows()[n].findAllByType('button')[b];
@@ -643,7 +647,7 @@ renderer.act(() => tree.unmount());
 assert.equal(listeners.size, 0);
 assert([...inputMocks.values()].every(input => input.listeners.size === 0), 'DOM input subscriptions clean up');
 mount();
-assert.equal(listeners.size, 8);
+assert.equal(listeners.size, 9);
 receive(JSON.stringify(labels));
 assert(tree.root.findAllByType('button').some(node => nodeText(node) === labels['button.browse']));
 fileState(selectedPath);

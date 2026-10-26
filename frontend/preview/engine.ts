@@ -119,8 +119,11 @@ export function createPreviewEngine(labels: MenuLabels, notice: (message: string
       }
       const command = name.replace('query:subscribe/', '');
       switch (command) {
+      case 'lholo.hud.edit-layout':
+        notice('HUD 布局编辑使用游戏原生界面，请在游戏内验证。'); break;
       case 'lholo.hotkeys.cancel': settings.cancel(); break;
       case 'lholo.menu.ready':
+        emit('lholo:menu-entry', 'projection');
         // Match native asynchronous delivery after all effects subscribe.
         queueMicrotask(() => { emit('lholo:menu-labels', labels); publish(); }); break;
       case 'lholo.menu.close': notice('这是浏览器开发预览。关闭此标签页即可退出。'); break;

@@ -8,6 +8,7 @@
 
 #include "i18n/Message.h"
 #include "input/HotkeyTypes.h"
+#include "settings/HudPlacement.h"
 
 #include <array>
 #include <atomic>
@@ -106,6 +107,12 @@ public:
     void setBlockGameInputUntil(std::uint64_t deadline);
 
     [[nodiscard]] HudStateSnapshot hud() const;
+    [[nodiscard]] settings::HudPlacements hudPlacements() const;
+    void setHudPlacements(settings::HudPlacements const& placements);
+    [[nodiscard]] std::array<int, 2> hudScales() const;
+    void setHudScales(std::array<int, 2> const& values);
+    [[nodiscard]] std::array<int, 2> hudBackgroundOpacities() const;
+    void setHudBackgroundOpacities(std::array<int, 2> const& values);
     bool setUiScale(float scale);
     bool applyHud(HudStateSnapshot const& snapshot);
     bool setHudFlag(HudFlag field, bool enabled);
@@ -197,6 +204,10 @@ public:
     void resetWorldSession();
 
 private:
+    mutable std::mutex mHudLayoutMutex;
+    settings::HudPlacements mHudPlacements{};
+    std::array<int, 2> mHudBackgroundOpacities{60, 60};
+    std::array<int, 2> mHudScales{100, 100};
     StructureUiState();
 
     struct HotkeyStorage {

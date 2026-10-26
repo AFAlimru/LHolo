@@ -4,6 +4,7 @@
 #include "settings/SettingsStore.h"
 
 #include <fstream>
+#include <algorithm>
 #include <stdexcept>
 
 #include <nlohmann/json.hpp>
@@ -52,6 +53,15 @@ bool loadSettingsFile(std::filesystem::path const& path, Settings& out) {
         json.value("hudShowBlockEntity", out.hudShowProjectedBlockName)
     );
     out.hudPosition = json.value("hudPosition", out.hudPosition);
+    auto const layout = json.value("hudLayout", nlohmann::json::object());
+    std::array<char const*, 2> const names{"projection", "materials"};
+    for (std::size_t index = 0; index < names.size(); ++index) {
+        auto const item = layout.value(names[index], nlohmann::json::object());
+        out.hudScales[index] = std::clamp(item.value("scale", 100), 50, 200);
+        out.hudBackgroundOpacities[index] = std::clamp(item.value("backgroundOpacity", 60), 0, 100);
+        out.hudPlacements[index] = {item.value("custom", false),
+            std::clamp(item.value("x", 0.0f), 0.0f, 1.0f), std::clamp(item.value("y", 0.0f), 0.0f, 1.0f)};
+    }
     out.guiHotkey = json.value("guiHotkey", out.guiHotkey);
     out.guiHotkeyModifiers = json.value("guiHotkeyModifiers", out.guiHotkeyModifiers);
     out.layerIncreaseHotkey = json.value("layerIncreaseHotkey", out.layerIncreaseHotkey);
@@ -162,6 +172,9 @@ void saveSettingsFile(std::filesystem::path const& path, Settings const& setting
         {"hudShowExtraBlocks", settings.hudShowExtraBlocks},
         {"hudShowProjectedBlockName", settings.hudShowProjectedBlockName},
         {"hudPosition", settings.hudPosition},
+        {"hudLayout", {
+            {"projection", {{"custom", settings.hudPlacements[0].custom}, {"x", settings.hudPlacements[0].x}, {"y", settings.hudPlacements[0].y}, {"backgroundOpacity", settings.hudBackgroundOpacities[0]}, {"scale", settings.hudScales[0]}}},
+            {"materials", {{"custom", settings.hudPlacements[1].custom}, {"x", settings.hudPlacements[1].x}, {"y", settings.hudPlacements[1].y}, {"backgroundOpacity", settings.hudBackgroundOpacities[1]}, {"scale", settings.hudScales[1]}}}}},
         {"guiHotkey", settings.guiHotkey},
         {"guiHotkeyModifiers", settings.guiHotkeyModifiers},
         {"layerIncreaseHotkey", settings.layerIncreaseHotkey},

@@ -109,6 +109,15 @@
                                                                                                          \
     /* HUD page */                                                                                       \
     LHOLO_TEXT_KEY("section.hud", SectionHud, "")                                                        \
+    LHOLO_TEXT_KEY("hud.layout.edit", HudLayoutEdit, "") \
+    LHOLO_TEXT_KEY("hud.layout.sample.stone", HudLayoutStone, "") \
+    LHOLO_TEXT_KEY("hud.layout.sample.planks", HudLayoutPlanks, "") \
+    LHOLO_TEXT_KEY("hud.layout.sample.glass", HudLayoutGlass, "") \
+    LHOLO_TEXT_KEY("hud.layout.done", HudLayoutDone, "") \
+    LHOLO_TEXT_KEY("hud.layout.scale", HudLayoutScale, "") \
+    LHOLO_TEXT_KEY("hud.layout.backgroundOpacity", HudLayoutBackgroundOpacity, "") \
+    LHOLO_TEXT_KEY("hud.layout.reset", HudLayoutReset, "") \
+    LHOLO_TEXT_KEY("hud.layout.resetAll", HudLayoutResetAll, "") \
     LHOLO_TEXT_KEY("checkbox.hudEnabled", CheckboxHudEnabled, "")                                        \
     LHOLO_TEXT_KEY("label.hudPosition", LabelHudPosition, "")                                            \
     LHOLO_TEXT_KEY("corner.topLeft", CornerTopLeft, "")                                                  \

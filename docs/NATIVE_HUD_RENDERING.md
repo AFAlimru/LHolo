@@ -23,10 +23,11 @@
 | HudContent.h / .cpp | 纯展示模型与本地化文本整理、材料缺口排序；不调用游戏绘制接口 |
 | HudLayout.h | 纯布局规则：四角、同角堆叠和可见行数限制 |
 | HudText.h | 在 UTF-8 字符边界二分截断，降低长文字的原生测宽次数 |
-| NativeHudRenderer.h / .cpp | Hook 启停、原生测宽、UTF-8 安全省略、矩形与文字绘制、收集本次可见图标位置 |
+| NativeHudRenderer.h / .cpp | 普通 HUD 渲染 Hook 启停、上下文与可见性检查，调用共用 Painter |
+| NativeHudPainter.h / .cpp | 原生测宽、UTF-8 安全省略、背景与文字绘制、独立透明度/缩放，收集本帧图标和面板几何 |
 | NativeHudIcons.h / .cpp | tick 线程准备图标物品、按结构代际缓存、原生物品绘制与状态恢复 |
 
-AppKernel 只编排启停。业务统计仍在 projection / MaterialTracker；渲染线程不查世界、不遍历结构、不扫描背包、不写配置。材料需求和可用数量继续由 `StructureUiState::materialHudSnapshot()` 在同一把锁内复制，避免向量错配。
+AppKernel 编排启停、编辑入口/返回设置页和完成后的保存。业务统计仍在 projection / MaterialTracker；渲染线程不查世界、不遍历结构、不扫描背包、不写配置。材料需求和可用数量继续由 `StructureUiState::materialHudSnapshot()` 在同一把锁内复制，避免向量错配。
 
 `ui/MaterialFormat` 为菜单和 HUD 共用的材料名称/组数格式及图标身份规则，独立于 ImGui 和原生渲染 SDK。普通/材料 HUD 的旧 ImGui 绘制函数及叠放缓存已移除；隐藏的旧菜单和动作提示条继续沿用现有实现。正式实现不包含验证文字、计时或屏幕候选日志。
 
@@ -42,7 +43,7 @@ AppKernel 只编排启停。业务统计仍在 projection / MaterialTracker；�
 
 ## 旧 ImGui 布局风格与原生绘制边界
 
-外观按用户提供的旧 ImGui HUD 图恢复：整块深灰半透明背景、轻微圆角、较宽的内边距和行间距。布局比例直接来自 `ui/FluentTheme.cpp` 与旧 HUD 的 WindowPadding/ItemSpacing：逻辑字体 18、水平内边距 12、垂直内边距 8、行间距 8、圆角 4×0.7；这些比例按当前游戏字体行高转换为原生 GUI 单位，不引入 ImGui 主题或缩放状态。背景 RGB 为 0.075，alpha 继续保留用户选择的 **0.6**。普通文字与缺失材料行均使用默认白色；错误计数及统计中/齐全提示保留状态颜色。
+外观按用户提供的旧 ImGui HUD 图恢复：整块深灰半透明背景、轻微圆角、较宽的内边距和行间距。布局比例直接来自 `ui/FluentTheme.cpp` 与旧 HUD 的 WindowPadding/ItemSpacing：逻辑字体 18、水平内边距 12、垂直内边距 8、行间距 8、圆角 4×0.7；这些比例按当前游戏字体行高转换为原生 GUI 单位，不引入 ImGui 主题或缩放状态。背景 RGB 为 0.075，alpha 默认保留用户选择的 **0.6**，两个 HUD 可在原生编辑器中分别调整。普通文字与缺失材料行均使用默认白色；错误计数及统计中/齐全提示保留状态颜色。
 
 UIRenderContext 没有圆角矩形接口，圆角通过不重叠的水平矩形带近似，避免半透明叠加加深，也不新增纹理、页面或渲染后端。字体继续使用游戏字体（含阴影），不会与截图中的旧 ImGui 字形完全相同。字体缩放为 1，跟随游戏 GUI 坐标空间，不读取旧 ImGui uiScale。
 
@@ -63,6 +64,30 @@ Hook 先执行原版 `ScreenView::render`，只在 `hud_screen` 的渲染调用�
 
 日志前缀 `[native-hud.icons]`：只保留 Hook 不可用、图标准备/绘制异常及上下文回调缺失的有界诊断；首次提交和未知身份等验证期日志已清理。用户已确认当前图标显示通过，特殊材质及后续游戏版本仍需实机回归。
 
+## 原生布局编辑（位置、透明度与缩放）
+
+入口保留在 OreUI HUD 设置页，仅世界内可用。app/SettingsActions 传递打开意图，AppKernel 请求原生编辑场景；场景创建、推入/弹出及失去世界后的取消在主 ClientInstance::update 上执行，保存结果交回 AppKernel 的既有保存通路。进入编辑先关闭 OreUI 菜单，等待场景栈完成退出后，在游戏场景上打开独立原生编辑页。编辑完成/取消后等待原生场景真正弹出，再重新打开 OreUI HUD 设置页。排队中的 push/pop 仍属于切换过程，不能把“尚未入栈”当作“场景已被移除”。编辑期间不依赖 OreUI 页面或后方 hud_screen 的渲染回调。
+
+| 文件 | 职责 |
+| --- | --- |
+| NativeHudPainter.* | 唯一的 HUD 测量、背景、文字与物品图标绘制；游玩和编辑共同调用 |
+| NativeHudRenderer.* | 仅接正常游玩 hud_screen 的绘制入口；编辑期间跳过，避免两份 HUD |
+| editor/HudEditor.* | 草稿、选择、拖动、点击命中、按钮操作与本地化示例；不依赖 SDK 场景或 OreUI |
+| editor/HudEditorScene.* | 创建原生 UIScene，连接 ScreenView 的指针位置和按钮事件，通过原生取消按钮映射处理 Esc，并管理焦点及场景生命周期 |
+| editor/HudEditorView.* | 调用共用 Painter，基于本帧实际面板几何绘制选框、名称和按钮，并发布命中区域 |
+
+使用本地 SDK 的 SceneFactory::createUIScene、ScreenController、ScreenView::_handlePointerLocation/handleButtonEvent 和 UIScene::onFocusLost；Esc 经原生全局 button.menu_cancel 映射交给 ScreenController 的按下回调。ScreenView 提供 GUI 坐标，按当前 clientUIScreenSize 归一化后传入纯编辑模型；直接使用该 ScreenView 初始化的左键按钮 ID。重复 Down 不重新开始拖动，失去焦点释放拖动；无需 ShowCursor、WndProc 拖动或独立鼠标接管。既有 OreUI Escape 钩子在编辑期间将按下传给原生场景，并保留按键对归属到松开，避免长按 Esc 在编辑退出后继续关闭下面的菜单。
+
+resources/ui/_ui_defs.json 注册透明场景 ui/lholo_hud_editor.json，JSON 只设置场景可见性、输入属性与游戏自己的 cursor_renderer。HUD、选框和所有按钮都通过 C++ 原生绘制，HUD 在场景游标之前提交。JSON UI 文件加载规则依据 [Microsoft ui_defs 文档](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/jsonuireference/examples/jsonuicomponents/ui_defs?view=minecraft-bedrock-stable)，场景属性与游标用法参考 [Mojang HUD crosshair 示例](https://github.com/Mojang/bedrock-samples/blob/main/resource_pack/ui/hud_crosshair_overlay.json)。两份自有 JSON 随现有资源包安装，并纳入打包/部署/发行文件校验。
+
+有真实结构时显示实际 HUD 内容；进入编辑会暂时展示两个面板，即使其普通显示开关关闭。没有结构或当前维度暂停时使用 demo.mcstructure 和三种材料示例，材料统计尚未就绪时也用材料示例保持可定位；普通 HUD 全部字段关闭时用示例保证可定位。示例只在 UI 层生成，不写入会话、材料统计或配置。字体、颜色、图标、独立背景 alpha、内边距和行距始终通过同一个 Painter。编辑期间也在客户端更新线程处理已有图标准备队列，避免依赖暂停世界的 LocalPlayer tick。
+
+初始不选中；点击面板选择并拖动，仅选中项显示红色边框，未选中时不画边框，面板名称始终为白色，选中后才在屏幕底部居中显示单项重置，右侧为“透明度”按钮，点击后在按钮上方展开滑条和白色百分比，再次点击收起，点击空白或切换选中项关闭。滑条浮层与所有操作按钮共用深灰圆角背景和默认 alpha 0.5，悬停 0.6，按下 0.7。点击空白取消选中。顶部居中固定为“全部重置、取消、完成”。重置只改草稿；完成写入偏好并保存，取消/Esc/失去世界或场景被移除丢弃草稿。单项重置会固定另一个面板，全部重置恢复四角预设及自动堆叠。“重置”恢复选中 HUD 的位置、默认不透明度 60% 与缩放 100%；全部重置对两个 HUD 生效。不透明度范围为 0～100%，滑动精度 1%，仅修改选中 HUD，草稿即时预览；完成保存，取消丢弃。配置在 hudLayout.projection/materials 中分别保存可选 backgroundOpacity 整数；旧配置缺少时使用 60，读取时约束到 0～100。缩放范围 50～200%，精度 1%，默认 100%；文字、图标、背景和内边距/行距同步缩放，边缘位置按实际几何约束。缩放与透明度复用同一个浮层，通过按钮切换。可选 scale 整数分别写入 hudLayout.projection/materials，旧配置缺省 100。保持配置版本号。
+
+已移除 OreUI 编辑组件、布局 Facet/状态订阅、浏览器模拟编辑画面及借用后方 UIScene 的临时绘制。浏览器预览仅保留设置页入口，并提示原生编辑需要在游戏内验证。
+
+自动检查覆盖真实指针操作、选择/单项重置、全部重置及取消、拖动边界、松手位置、焦点丢失、原配置兼容和完整资源清单。2026-10-26 用户已确认原生编辑器的位置、透明度、缩放和重置实机测试通过；后续样式变更、游戏 GUI 缩放、世界切换和输入回归仍需按实际改动检查。
+
 ## 收尾审计
 
 - 原 ImGui 普通/材料 HUD 函数、声明和跨帧叠放缓存已移除；隐藏旧菜单及动作提示按项目要求保留。
@@ -73,7 +98,7 @@ Hook 先执行原版 `ScreenView::render`，只在 `hud_screen` 的渲染调用�
 
 ## 验证
 
-`xmake` 构建完整 `bin/LHolo`，不增加 HUD 资源包文件。`LHoloLogicTests` 中的 `NativeHudTests` 覆盖字段文本、X/Y/材料范围、进度区别、错误颜色、开关独立性、材料缺口与堆叠格式、14 项限制、图标/文本排序对应、显示身份回退、命名空间与无图标状态行、四角及同角堆叠、窗口不足和无效尺寸。
+`xmake` 构建完整 `bin/LHolo`，包含原生编辑场景的两份 UI JSON。`LHoloLogicTests` 中的 `NativeHudTests` 覆盖字段文本、X/Y/材料范围、进度区别、错误颜色、开关独立性、材料缺口与堆叠格式、14 项限制、图标/文本排序对应、显示身份回退、命名空间与无图标状态行、四角及同角堆叠、窗口不足和无效尺寸。
 
 部署后由用户自行启动游戏，加载结构并检查：
 
@@ -82,3 +107,7 @@ Hook 先执行原版 `ScreenView::render`，只在 `hud_screen` 的渲染调用�
 - 两 HUD 选择同角时无重叠；小窗口、F11、游戏 GUI 缩放和长名称显示。
 - 快捷栏滚轮/数字键、移动、左右键，以及聊天、背包、暂停和 LHolo 菜单。
 - 维度往返、关闭/重载结构、退回主界面后重进世界；暂停维度隐藏，返回后自动恢复。
+
+原生场景通过 SceneFactory::createUIScene 后交由 _createScreen 完成工厂初始化；在自有 UIScene::render 内配对 setup/cleanup 并构造本帧 MinecraftUIRenderContext，调用共用 Painter。该路径已获用户实测成功确认。试验期的请求、入栈、首次渲染和出栈日志已移除，保留实际创建失败的错误信息。
+
+顶部操作按钮与 HUD 共用 paintHudBackground 的颜色和圆角，不单独维护矩形底色。全部按钮默认背景不透明度为 0.5，悬停 0.6，按下 0.7，文字统一使用白色阴影。

@@ -1,4 +1,5 @@
 #include "ui/hud/HudContent.h"
+#include "ui/hud/editor/HudEditor.h"
 #include "structure/StructureLoader.h"
 #include "structure/StructureSession.h"
 #include "structure/StructureUiState.h"
@@ -11,13 +12,16 @@
 namespace lholo::ui::hud {
 HudContent readHudContent() {
     HudContent result;
-    if (structure::isGuiVisible() || oreui::isMenuOnTop() || projection::isDimensionSuspended()) return result;
+    bool const editing = hudLayoutEditorActive();
+    if (!editing && (structure::isGuiVisible() || oreui::isMenuOnTop() || projection::isDimensionSuspended())) return result;
     auto& state = structure::detail::StructureUiState::getInstance();
-    auto const settings = state.hud();
-    auto const materialEnabled = state.materialHudEnabled();
+    auto settings = state.hud();
+    if (editing) settings.enabled = true;
+    auto const materialEnabled = editing || state.materialHudEnabled();
     if (!settings.enabled && !materialEnabled) return result;
     auto const session = structure::detail::StructureSession::getInstance().snapshot();
-    if (!session.loaded) return result;
+    if (!session.loaded || projection::isDimensionSuspended())
+        return editing ? makeHudEditorContent(settings.position, state.materialHudPosition()) : result;
     result.context = session.loaded->generation;
     if (settings.enabled) {
         ProjectionHudData data;
@@ -37,7 +41,14 @@ HudContent readHudContent() {
         else if (place::isRangeEnabled()) data.placementMode = i18n::tr(TextKey::ModeRange);
         result.projection = makeProjectionHud(settings, data);
     }
-    if (materialEnabled) result.materials = makeMaterialHud(state.materialHudSnapshot(), state.materialHudPosition());
+    if (materialEnabled) {
+        auto const materials = state.materialHudSnapshot();
+        result.materials = editing && !materials.ready
+            ? makeHudEditorContent(settings.position, state.materialHudPosition()).materials
+            : makeMaterialHud(materials, state.materialHudPosition());
+    }
+    if (editing && result.projection.lines.empty())
+        result.projection = makeHudEditorContent(settings.position, state.materialHudPosition()).projection;
     return result;
 }
 }

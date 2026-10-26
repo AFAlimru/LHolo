@@ -15,6 +15,8 @@ struct HudIconDraw {
 bool installNativeHudIcons();
 void uninstallNativeHudIcons();
 void clearNativeHudIcons();
+// Called on the client update thread while the native editor may pause world ticks.
+void prepareNativeHudIconItems();
 // Flushes the HUD's text once. Icons use the concrete game's matching text
 // flush callback, avoiding an unchecked downcast from UIRenderContext.
 void flushHudTextAndIcons(UIRenderContext& context, ClientInstance& client,

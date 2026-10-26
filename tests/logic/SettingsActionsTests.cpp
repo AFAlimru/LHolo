@@ -101,5 +101,9 @@ int runSettingsActionsTests() {
     submitSettingsIntent(i); (void)session.beginFileLoad({});
     check(!processSettingsActions() && !getSettingsSnapshot().accepted, "context change rejects stale settings");
     resetSettingsActions(); ui.resetHotkeys(); ui.resetHotkeyState();
+    requestHudLayoutEdit();
+    check(consumeHudLayoutEditRequest() && !consumeHudLayoutEditRequest(), "HUD layout command is consumed once by the application frame");
+    requestHudLayoutEdit(); resetSettingsActions();
+    check(!consumeHudLayoutEditRequest(), "closing settings clears unconsumed HUD layout command");
     std::printf("SettingsActionsTests: %d failures\n", failures); return failures;
 }

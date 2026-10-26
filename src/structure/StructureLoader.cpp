@@ -448,6 +448,9 @@ void loadSettings() {
         hud.showProjectedBlockName = settings.hudShowProjectedBlockName;
         hud.position = std::clamp(settings.hudPosition, 0, 3);
         uiState().applyHud(hud);
+        uiState().setHudPlacements(settings.hudPlacements);
+        uiState().setHudBackgroundOpacities(settings.hudBackgroundOpacities);
+        uiState().setHudScales(settings.hudScales);
         // Assisted-placement modes are intentionally session-only. Ignore
         // legacy persisted values and always begin a new game session disabled.
         place::setEnabled(false);
@@ -549,6 +552,9 @@ void saveSettings() {
         settings.hudShowExtraBlocks = hud.showExtraBlocks;
         settings.hudShowProjectedBlockName = hud.showProjectedBlockName;
         settings.hudPosition = hud.position;
+        settings.hudPlacements = uiState().hudPlacements();
+        settings.hudBackgroundOpacities = uiState().hudBackgroundOpacities();
+        settings.hudScales = uiState().hudScales();
         auto const guiHotkey = uiState().hotkey(kGuiHotkeyIndex);
         auto const layerIncreaseHotkey = uiState().hotkey(kLayerIncreaseHotkeyIndex);
         auto const layerDecreaseHotkey = uiState().hotkey(kLayerDecreaseHotkeyIndex);

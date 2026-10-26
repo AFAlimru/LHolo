@@ -33,6 +33,10 @@ class PackageTests(unittest.TestCase):
         for name in ("lholo-menu.html", "lholo-menu.js"):
             (self.assets / name).write_text(package.MARKER)
         (self.assets / "build-info.json").write_text('{}')
+        native_ui = self.root / "resources/ui"
+        native_ui.mkdir(parents=True)
+        for source in (SCRIPT.parents[2] / "resources/ui").glob("*.json"):
+            (native_ui / source.name).write_bytes(source.read_bytes())
 
     def run_package(self):
         with patch.object(package, "PROJECT", self.root), contextlib.redirect_stdout(io.StringIO()):
@@ -42,7 +46,7 @@ class PackageTests(unittest.TestCase):
         import hashlib
         self.run_package()
         report = json.loads((self.assets / "package-validation.json").read_text())
-        self.assertEqual(len(report["files"]), 6)
+        self.assertEqual(len(report["files"]), 8)
         for name, expected_hash in report["files"].items():
             content = (self.root / "bin" / name).read_bytes()
             self.assertEqual(hashlib.sha256(content).hexdigest(), expected_hash)

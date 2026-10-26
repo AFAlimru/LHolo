@@ -112,6 +112,31 @@ HudStateSnapshot StructureUiState::hud() const {
     };
 }
 
+std::array<int, 2> StructureUiState::hudScales() const {
+    std::lock_guard lock(mHudLayoutMutex);
+    return mHudScales;
+}
+void StructureUiState::setHudScales(std::array<int, 2> const& values) {
+    std::lock_guard lock(mHudLayoutMutex);
+    mHudScales = values;
+}
+std::array<int, 2> StructureUiState::hudBackgroundOpacities() const {
+    std::lock_guard lock(mHudLayoutMutex);
+    return mHudBackgroundOpacities;
+}
+void StructureUiState::setHudBackgroundOpacities(std::array<int, 2> const& values) {
+    std::lock_guard lock(mHudLayoutMutex);
+    mHudBackgroundOpacities = values;
+}
+settings::HudPlacements StructureUiState::hudPlacements() const {
+    std::lock_guard lock(mHudLayoutMutex);
+    return mHudPlacements;
+}
+void StructureUiState::setHudPlacements(settings::HudPlacements const& placements) {
+    std::lock_guard lock(mHudLayoutMutex);
+    mHudPlacements = placements;
+}
+
 bool StructureUiState::setUiScale(float scale) {
     return updateRelaxed(mUiScale, scale);
 }
@@ -130,7 +155,13 @@ bool StructureUiState::setHudFlag(HudFlag field, bool enabled) {
     }
     return false;
 }
-bool StructureUiState::setHudPosition(int position) { return updateRelaxed(mHudPosition, std::clamp(position, 0, 3)); }
+bool StructureUiState::setHudPosition(int position) {
+    bool const changed = updateRelaxed(mHudPosition, std::clamp(position, 0, 3));
+    std::lock_guard lock(mHudLayoutMutex);
+    bool const custom = mHudPlacements[0].custom;
+    mHudPlacements[0] = {};
+    return changed || custom;
+}
 
 bool StructureUiState::applyHud(HudStateSnapshot const& snapshot) {
     bool changed = false;
@@ -370,6 +401,8 @@ int StructureUiState::materialHudPosition() const {
 
 void StructureUiState::setMaterialHudPosition(int position) {
     mMaterialHudPosition.store(std::clamp(position, 0, 3), std::memory_order_release);
+    std::lock_guard lock(mHudLayoutMutex);
+    mHudPlacements[1] = {};
 }
 
 void StructureUiState::setActionHint(i18n::Message message, std::uint64_t expiry) {

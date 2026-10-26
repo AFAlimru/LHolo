@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { MenuNavigation, type MenuPage } from './components/MenuNavigation';
 import { TransformPage } from './pages/TransformPage';
 import type { TransformControls } from './application/useTransform';
@@ -23,6 +23,7 @@ import { NativeScrollView } from './platform/native';
 import { LHoloButton } from './components/LHoloControls';
 
 export function LHoloMenu({
+  entryPage,
   labels,
   file,
   projection,
@@ -37,6 +38,7 @@ export function LHoloMenu({
   onBrowse,
   onClose,
 }: {
+  entryPage: 'projection' | 'hud';
   labels: MenuLabels;
   file: StructureFileState;
   projection: ProjectionControls;
@@ -51,7 +53,8 @@ export function LHoloMenu({
   onBrowse(): void;
   onClose(): void;
 }) {
-  const [page, setPage] = useState<MenuPage>('projection');
+  const [page, setPage] = useState<MenuPage>(entryPage);
+  useEffect(() => setPage(entryPage), [entryPage]);
   const selectPage = (next: MenuPage) => {
     materialsState.closeModal();
     experimental.closeModal();
@@ -75,7 +78,7 @@ export function LHoloMenu({
               : page === 'createStructure' ? <CreateStructurePage labels={labels} capture={capture} fileBrowsing={file.browsing} />
               : page === 'transform' ? <TransformPage labels={labels} transform={transform} />
               : page === 'render' ? <RenderPage labels={labels} render={render} />
-              : page === 'hud' ? <HudPage labels={labels} hud={hud} />
+              : page === 'hud' ? <HudPage labels={labels} hud={hud} worldAvailable={projection.projection.worldAvailable} />
               : page === 'hotkeys' ? <HotkeysPage labels={labels} hotkeys={hotkeys} />
               : page === 'interface' ? <InterfacePage labels={labels} interfaceSettings={interfaceSettings} />
               : <ExperimentalPage labels={labels} experimental={experimental} worldAvailable={projection.projection.worldAvailable} />}

@@ -38,5 +38,7 @@ bool submitSettingsIntent(SettingsIntent const& intent);
 SettingsSnapshot getSettingsSnapshot();
 bool processSettingsActions(); // true only for persistent preferences, not live placement modes
 void requestHotkeyCaptureCancel();
+void requestHudLayoutEdit();
+bool consumeHudLayoutEditRequest();
 void resetSettingsActions();
 }

@@ -40,6 +40,9 @@ LHolo/
 └─ resource_packs/
    └─ LHoloUI/
       ├─ manifest.json           # Mojang 资源包清单
+      ├─ ui/
+      │  ├─ _ui_defs.json
+      │  └─ lholo_hud_editor.json
       └─ hbui/
          ├─ lholo-menu.html
          └─ lholo-menu.js
@@ -66,7 +69,7 @@ LHolo/
 - xmake 与发布 CI：先完成受控的前端/运行时资源构建，再统一收集 DLL、清单及资源包。保持一个正式发布目录，不另建一套不同结构的发行物。
 - lip/启动器：安装和更新完整模组包。运行中的 DLL 不自更新，也不在启动时修改游戏安装目录来补资源。
 
-普通 CI 与本地都通过 `xmake` 生成完整安装目录；正式发布将经过校验的完整目录归档，只上传 ZIP 到草稿后发布。发行 CI 下载已发布附件，复查六项文件清单、整包哈希、原生/资源包版本、固定 UUID 与 UI 协议；不会用缺少资源的包覆盖完整发行附件，也不重写已确认的更新日志。
+普通 CI 与本地都通过 `xmake` 生成完整安装目录；正式发布将经过校验的完整目录归档，只上传 ZIP 到草稿后发布。发行 CI 下载已发布附件，复查八项文件清单、整包哈希、原生/资源包版本、固定 UUID 与 UI 协议；不会用缺少资源的包覆盖完整发行附件，也不重写已确认的更新日志。
 
 ## 升级、保留与回滚
 
@@ -98,7 +101,7 @@ xmake
 python tools/oreui/release_package.py --output build/release/LHolo-client-windows-x64.zip --tag v26.51.6
 ```
 
-该工具只收集组装报告中的六项必需文件，再校验包内版本、UUID 与协议；同名 `.zip.sha256` 仅用于构建机本地校验，不作为发行附件上传。ZIP 顶层为 `LHolo/`，与 tooth 的安装规则一致；不包含配置、PDB、构建报告、游戏安装路径或其他本机文件。
+该工具只收集组装报告中的八项必需文件，再校验包内版本、UUID 与协议；同名 `.zip.sha256` 仅用于构建机本地校验，不作为发行附件上传。ZIP 顶层为 `LHolo/`，与 tooth 的安装规则一致；不包含配置、PDB、构建报告、游戏安装路径或其他本机文件。
 
 提交并推送发布源码后，将草稿的 target 更新到该提交；只上传上述 ZIP，最后发布草稿。CI 从 GitHub 附件元数据读取 SHA256，在临时目录生成本地校验输入，不依赖或发布额外校验附件。`.github/workflows/release.yml` 负责下载和校验发行附件，支持 workflow_dispatch 重新验证已有版本。构建和安装资源版本必须匹配，不允许将旧页面与新 DLL 混装。
 

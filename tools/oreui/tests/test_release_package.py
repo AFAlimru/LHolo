@@ -27,7 +27,7 @@ class ReleasePackageTests(unittest.TestCase):
         self.files = dict(zip(release.FILES, (
             b"native fixture", json.dumps({"name": "LHolo", "entry": "LHolo.dll",
                 "version": self.version, "type": "native", "platform": "client"}).encode(),
-            b"license", json.dumps(pack).encode(), release.MARKER, release.MARKER)))
+            b"license", json.dumps(pack).encode(), b'{"ui_defs":["ui/lholo_hud_editor.json"]}', b'{"namespace":"lholo"}', release.MARKER, release.MARKER)))
         for name, content in self.files.items():
             target = self.root / "bin" / name
             target.parent.mkdir(parents=True, exist_ok=True)
