@@ -25,7 +25,6 @@ void drawHudEditorView(UIRenderContext& context, ClientInstance& client) {
     auto& font = fontHandle.getFont();
     auto const view = hudEditorSnapshot();
     using i18n::TextKey;
-    std::array<char const*, 2> const names{i18n::tr(TextKey::SectionHud), i18n::tr(TextKey::MaterialHudTitle)};
     auto text = [&](std::string value, float x, float y, float textWidth, mce::Color color) {
         TextMeasureData const data{1.0f, 0.0f, true, false, false, ::ui::TextAlignment::Left};
         CaretMeasureData const caret{-1, false};
@@ -45,8 +44,6 @@ void drawHudEditorView(UIRenderContext& context, ClientInstance& client) {
             fill(panel.x, panel.y, border, panel.height, selectedBorder);
             fill(panel.x + panel.width - border, panel.y, border, panel.height, selectedBorder);
         }
-        if (panel.y >= lineHeight + 2)
-            text(names[index], panel.x + 2, panel.y - lineHeight - 2, panel.width, {1.0f, 1.0f, 1.0f, 1.0f});
     }
     std::array<char const*, 6> const labels{i18n::tr(TextKey::HudLayoutResetAll), i18n::tr(TextKey::ButtonCancel),
         i18n::tr(TextKey::HudLayoutDone), i18n::tr(TextKey::HudLayoutReset), i18n::tr(TextKey::HudLayoutBackgroundOpacity), i18n::tr(TextKey::HudLayoutScale)};

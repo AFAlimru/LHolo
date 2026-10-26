@@ -16,10 +16,10 @@ export function HudPage({ labels, hud, worldAvailable }: { labels: MenuLabels; h
   ] as const;
 
   return <>
-    <div className="lholo-setting-row">
+    <div className="lholo-section-title">{labels['section.hud']}</div>
+    <div className="lholo-hud-layout-action">
       <LHoloButton label={labels['hud.layout.edit']} onClick={hud.editLayout} disabled={!hud.ready || !worldAvailable} />
     </div>
-    <div className="lholo-section-title">{labels['section.hud']}</div>
     <div className="lholo-render-check">
       <LHoloCheckbox disabled={!hud.ready} label={labels['checkbox.hudEnabled']}
         value={hud.hudEnabled} onChange={hud.setHudEnabled} />

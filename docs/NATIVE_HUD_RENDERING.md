@@ -74,7 +74,7 @@ Hook 先执行原版 `ScreenView::render`，只在 `hud_screen` 的渲染调用�
 | NativeHudRenderer.* | 仅接正常游玩 hud_screen 的绘制入口；编辑期间跳过，避免两份 HUD |
 | editor/HudEditor.* | 草稿、选择、拖动、点击命中、按钮操作与本地化示例；不依赖 SDK 场景或 OreUI |
 | editor/HudEditorScene.* | 创建原生 UIScene，连接 ScreenView 的指针位置和按钮事件，通过原生取消按钮映射处理 Esc，并管理焦点及场景生命周期 |
-| editor/HudEditorView.* | 调用共用 Painter，基于本帧实际面板几何绘制选框、名称和按钮，并发布命中区域 |
+| editor/HudEditorView.* | 调用共用 Painter，基于本帧实际面板几何绘制选框和按钮，并发布命中区域 |
 
 使用本地 SDK 的 SceneFactory::createUIScene、ScreenController、ScreenView::_handlePointerLocation/handleButtonEvent 和 UIScene::onFocusLost；Esc 经原生全局 button.menu_cancel 映射交给 ScreenController 的按下回调。ScreenView 提供 GUI 坐标，按当前 clientUIScreenSize 归一化后传入纯编辑模型；直接使用该 ScreenView 初始化的左键按钮 ID。重复 Down 不重新开始拖动，失去焦点释放拖动；无需 ShowCursor、WndProc 拖动或独立鼠标接管。既有 OreUI Escape 钩子在编辑期间将按下传给原生场景，并保留按键对归属到松开，避免长按 Esc 在编辑退出后继续关闭下面的菜单。
 
@@ -82,7 +82,7 @@ resources/ui/_ui_defs.json 注册透明场景 ui/lholo_hud_editor.json，JSON �
 
 有真实结构时显示实际 HUD 内容；进入编辑会暂时展示两个面板，即使其普通显示开关关闭。没有结构或当前维度暂停时使用 demo.mcstructure 和三种材料示例，材料统计尚未就绪时也用材料示例保持可定位；普通 HUD 全部字段关闭时用示例保证可定位。示例只在 UI 层生成，不写入会话、材料统计或配置。字体、颜色、图标、独立背景 alpha、内边距和行距始终通过同一个 Painter。编辑期间也在客户端更新线程处理已有图标准备队列，避免依赖暂停世界的 LocalPlayer tick。
 
-初始不选中；点击面板选择并拖动，仅选中项显示红色边框，未选中时不画边框，面板名称始终为白色，选中后才在屏幕底部居中显示单项重置，右侧为“透明度”按钮，点击后在按钮上方展开滑条和白色百分比，再次点击收起，点击空白或切换选中项关闭。滑条浮层与所有操作按钮共用深灰圆角背景和默认 alpha 0.5，悬停 0.6，按下 0.7。点击空白取消选中。顶部居中固定为“全部重置、取消、完成”。重置只改草稿；完成写入偏好并保存，取消/Esc/失去世界或场景被移除丢弃草稿。单项重置会固定另一个面板，全部重置恢复四角预设及自动堆叠。“重置”恢复选中 HUD 的位置、默认不透明度 60% 与缩放 100%；全部重置对两个 HUD 生效。不透明度范围为 0～100%，滑动精度 1%，仅修改选中 HUD，草稿即时预览；完成保存，取消丢弃。配置在 hudLayout.projection/materials 中分别保存可选 backgroundOpacity 整数；旧配置缺少时使用 60，读取时约束到 0～100。缩放范围 50～200%，精度 1%，默认 100%；文字、图标、背景和内边距/行距同步缩放，边缘位置按实际几何约束。缩放与透明度复用同一个浮层，通过按钮切换。可选 scale 整数分别写入 hudLayout.projection/materials，旧配置缺省 100。保持配置版本号。
+初始不选中；点击面板选择并拖动，仅选中项显示红色边框，未选中时不画边框，不额外绘制面板名称，选中后才在屏幕底部居中显示单项重置，右侧为“透明度”按钮，点击后在按钮上方展开滑条和白色百分比，再次点击收起，点击空白或切换选中项关闭。滑条浮层与所有操作按钮共用深灰圆角背景和默认 alpha 0.5，悬停 0.6，按下 0.7。点击空白取消选中。顶部居中固定为“全部重置、取消、完成”。重置只改草稿；完成写入偏好并保存，取消/Esc/失去世界或场景被移除丢弃草稿。单项重置会固定另一个面板，全部重置恢复四角预设及自动堆叠。“重置”恢复选中 HUD 的位置、默认不透明度 60% 与缩放 100%；全部重置对两个 HUD 生效。不透明度范围为 0～100%，滑动精度 1%，仅修改选中 HUD，草稿即时预览；完成保存，取消丢弃。配置在 hudLayout.projection/materials 中分别保存可选 backgroundOpacity 整数；旧配置缺少时使用 60，读取时约束到 0～100。缩放范围 50～200%，精度 1%，默认 100%；文字、图标、背景和内边距/行距同步缩放，边缘位置按实际几何约束。缩放与透明度复用同一个浮层，通过按钮切换。可选 scale 整数分别写入 hudLayout.projection/materials，旧配置缺省 100。保持配置版本号。
 
 已移除 OreUI 编辑组件、布局 Facet/状态订阅、浏览器模拟编辑画面及借用后方 UIScene 的临时绘制。浏览器预览仅保留设置页入口，并提示原生编辑需要在游戏内验证。
 
