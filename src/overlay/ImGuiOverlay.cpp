@@ -700,10 +700,9 @@ void render(IDXGISwapChain* swapChain) {
     if (auto callback = gControlFrameCallback.load(std::memory_order_acquire)) callback();
     if (!initializeImGui(swapChain)) return;
     // Keep input/backend initialization and control processing above, but do
-    // not draw the projection HUD or action hints over the native menu.
+    // not draw the legacy GUI or action hints over the native menu.
     if (oreui::isMenuOnTop()) return;
     auto const showGui = structure::isGuiVisible();
-    auto const showHud = !showGui && structure::hasHudInfo();
     if (gGuiVisibleLastFrame != showGui) {
         if (!showGui) {
             prepareMouseHandoff(gWindow);
@@ -717,7 +716,7 @@ void render(IDXGISwapChain* swapChain) {
     // See the cursor-ownership note at the top of this file.
     ImGui::GetIO().MouseDrawCursor = false;
     auto const showHint = structure::actionHintActive();
-    if (!showGui && !showHud && !showHint) return;
+    if (!showGui && !showHint) return;
 
     if (showGui) {
         // Re-asserted every frame: a Minecraft screen transition, an alt-tab or
@@ -741,9 +740,6 @@ void render(IDXGISwapChain* swapChain) {
                 PostMessageW(gWindow, kMsgRestoreNativeCursor, 0, 0);
                 gGuiVisibleLastFrame = false;
             }
-        } else {
-            structure::renderHud();
-            structure::renderMaterialHud();
         }
         structure::renderActionHint();
         ImGui::Render();

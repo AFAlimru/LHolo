@@ -90,10 +90,6 @@ void resetDimensionSession();
 // Clears transient projection, UI and input state owned by the current world
 // while preserving user configuration such as HUD layout and hotkeys.
 void resetWorldSession();
-bool hasHudInfo();
-void renderHud();
-// Current-visible-range material HUD: missing projected cells vs. inventory.
-void renderMaterialHud();
 // JE-style transient hint shown centered above the hotbar for a moment (e.g.
 // when manual mode blocks an action, or a placement hotkey is toggled). The
 // hint is stored as a message so it follows a language switch while pending.

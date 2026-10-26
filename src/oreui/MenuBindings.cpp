@@ -8,6 +8,7 @@
 #include "structure/StructureFileLoader.h"
 #include "structure/StructureSession.h"
 #include "ui/StructureFilePicker.h"
+#include "ui/MaterialFormat.h"
 #include "nlohmann/json.hpp"
 #include "ll/api/service/Bedrock.h"
 #include "mc/client/game/ClientInstance.h"
@@ -114,12 +115,12 @@ std::optional<std::string> takeMaterialsUpdate(bool force) {
             : std::string{};
         // Display identity may be a block (liquids), independently of the
         // inventory item used by material availability / placement rules.
-        auto const& iconId = req.itemId.empty() ? req.typeName : req.itemId;
+        auto const iconId = ui::materialIconId(req.itemId, req.typeName);
         items.push_back({
             {"displayName", req.displayName},
             {"nameKey", nameKey},
             {"typeName", req.typeName},
-            {"iconId", iconId},
+            {"iconId", std::string{iconId}},
             {"count", req.count},
         });
     }

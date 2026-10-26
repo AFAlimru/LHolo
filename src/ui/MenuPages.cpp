@@ -4,6 +4,7 @@
 
 #include "structure/LayerDisplayTypes.h"
 #include "ui/MenuWidgets.h"
+#include "ui/MaterialFormat.h"
 
 #include <algorithm>
 #include <array>

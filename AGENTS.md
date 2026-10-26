@@ -4,13 +4,14 @@ LHolo 是当前开发项目。同级 OreUIProbe 仅供参考，ore-ui 提供官�
 修改前阅读 DEVELOPMENT.md 的相关章节；OreUI 工作另读 docs/OREUI_MIGRATION.md。
 
 - 保持高内聚、低耦合、职责清楚；按实际功能增加模块，不预建通用框架或空实现。
-- OreUI 按功能逐步迁移。未迁移的 ImGui 菜单、HUD、快捷键与输入行为继续有效。
+- 菜单与 HUD 设置使用 OreUI，普通/材料 HUD 画面使用原生绘制；旧 ImGui 保留隐藏菜单与动作提示。快捷键与输入行为继续有效。
 - 前端在 frontend/；原生页面生命周期、通信和业务绑定集中在 src/oreui/；
   游戏版本私有符号及生成工具集中在 tools/oreui/。
 - 页面不访问 engine 或原版私有符号。业务状态使用现有 C++ 模块，前端只保留界面状态。
 - 原版 React、Facet 和渲染器复用同一页面的运行时，不重复打包，不额外 createRoot。
 - 新界面以 LHolo 旧 ImGui 的自有深色样式为准，可视控件集中在 frontend/src/components/LHoloControls.tsx；原版只提供无外观的焦点/激活原语与运行环境，不套用原版表单、输入框或开关外观。
 - structure/projection/place/settings/i18n 不得依赖 OreUI 或其协议。
+- 原生 HUD 绘制属于 UI 层，集中在 src/ui/hud/，使用 lholo::ui::hud 命名空间；业务计算保持在原有模块。
 - 不复制 Probe 演示数据、测试协议或游戏脚本生成件作为正式实现。
 - 每次架构或迁移状态变化同步更新文档。类型检查和隔离测试不等于游戏内验证。
 - 不为此次 UI 迁移顺带修改投影算法、配置格式或模组版本号。

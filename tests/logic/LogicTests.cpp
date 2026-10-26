@@ -34,6 +34,7 @@ int runTransformActionsTests();
 int runRenderSettingsTests();
 int runSettingsActionsTests();
 int runCaptureFacetLifetimeTests();
+int runNativeHudTests();
 void benchmarkProjectionDrawCache();
 
 namespace {
@@ -1115,6 +1116,7 @@ int main(int argc, char** argv) {
     testJavaTextComponents();
     testI18n();
     LHOLO_CHECK(runSettingsActionsTests() == 0);
+    LHOLO_CHECK(runNativeHudTests() == 0);
     std::printf("LHoloLogicTests: %d checks, %d failures\n", gChecks, gFailures);
     return gFailures == 0 ? 0 : 1;
 }

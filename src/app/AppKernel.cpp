@@ -6,6 +6,7 @@
 #include "app/SettingsActions.h"
 
 #include "i18n/LanguageStore.h"
+#include "ui/hud/NativeHudRenderer.h"
 #include "input/MenuInputGuard.h"
 #include "input/MenuOpenRequest.h"
 #include "oreui/OreUiBridge.h"
@@ -63,6 +64,8 @@ bool AppKernel::enable() {
         return false;
     }
 
+    if (!ui::hud::installNativeHudRenderer()) logger.warn("Failed to install the native HUD renderer");
+
     if (!place::installHook()) {
         logger.warn("Failed to install easy-place hooks");
     }
@@ -92,6 +95,7 @@ bool AppKernel::disable() {
     overlay::setControlFrameCallback(nullptr);
     input::clearMenuOpenRequest();
 
+    ui::hud::uninstallNativeHudRenderer();
     oreui::uninstallMenuScreen();
     oreui::uninstallMenuBridge();
 

@@ -11,6 +11,8 @@
 - 模组名称、DLL、目录和内部命名空间：`LHolo` / `LHolo.dll` / `mods/LHolo` / `lholo`
 - 支持格式：Bedrock `.mcstructure`、Java Litematica `.litematic`
 
+2026-10-26 普通 HUD 与材料显示 HUD 已接入原版 `ScreenView::render`，复用 `UIRenderContext` 和游戏字体；保留现有业务快照、显示开关和四角定位，采用旧 ImGui HUD 的宽松内边距、行间距和圆角比例，字体仍为原生游戏字体，背景 alpha 为用户选择的 0.6。普通/材料 HUD、原生物品图标、间距与多语言冒号留白已获用户实测通过确认。后续版本仍按回归清单验收。分层与接口依据见 [原生 HUD](docs/NATIVE_HUD_RENDERING.md)。
+
 OreUI 渐进迁移状态（2026-10-25）：聊天命令和菜单快捷键均打开当前自有样式的 OreUI 主菜单，旧 ImGui 菜单保留代码但不开放入口。
 主界面入口试验：菜单快捷键允许在 Idle + start_screen 打开同一页面；路由调度在主 ClientInstance::update 上执行，不依赖已有 OreUI View。进入/退出世界或加载状态变化关闭旧上下文页面。无世界时允许浏览文件和编辑偏好，禁用加载/恢复投影、选区/导出与辅助放置启用；前后端均校验 worldAvailable。主界面实机结果待验收。
 浏览、加载、关闭投影、恢复、材料清单弹窗、创建结构选区/导出、结构变换、渲染设置、HUD、快捷键、语言和实验性功能已接入；OreUI 不提供缩放控件，不写旧 ImGui 缩放。前端 → 通信桥 → MenuBindings，
@@ -92,7 +94,7 @@ LHolo/
 │  ├─ settings/
 │  │  └─ SettingsStore.*        config.json 读写与字段映射
 │  ├─ overlay/
-│  │  ├─ ImGuiOverlay.cpp       DXGI/D3D11On12、WndProc、GUI/HUD 帧提交
+│  │  ├─ ImGuiOverlay.cpp       DXGI/D3D11On12、WndProc、旧 GUI/动作提示提交
 │  │  ├─ ImGuiOverlay.h
 │  │  └─ BoundsWireframe.*      创建结构选区的红色整体线框
 │  ├─ render/
@@ -110,9 +112,11 @@ LHolo/
 │  │  ├─ MaterialTracker.*      材料需求聚合、物品标识缓存与游戏线程背包快照
 │  │  ├─ StructureSession.*    结构会话状态（已加载结构、变换/分层、恢复快照、状态文案）
 │  │  ├─ StructureUiState.*     UI 会话状态（GUI、热键、HUD、待处理动作、材料清单）
-│  │  ├─ StructureLoader.cpp    HUD、快捷键事件、加载入口与公开 getter（菜单/GUI 由 MenuController 负责）
+│  │  ├─ StructureLoader.cpp    动作提示、快捷键事件、加载入口与公开 getter（菜单/GUI 由 MenuController 负责）
 │  │  └─ StructureLoader.h      LoadedStructure 统一数据模型
 │  ├─ ui/
+│  │  ├─ hud/                  普通/材料 HUD：快照读取、内容整理、布局与原生绘制
+│  │  ├─ MaterialFormat.*      菜单与原生 HUD 共用的材料名称/组数/图标身份规则
 │  │  ├─ FileDialog.*           通用结构打开与 `.mcstructure` 保存对话框
 │  │  ├─ HotkeyFormat.*         纯按键名/修饰键格式化（不读会话状态）
 │  │  ├─ MenuController.*       菜单模型构建/应用、路径缓冲、页面状态、动作回调与 GUI 渲染
@@ -250,7 +254,7 @@ LHolo/
 - `MenuPage` 以尾部 `Count` 收尾并由此推导 `kMenuPageCount`（同 `HotkeyId`/`TextKey`）；导航标签表
   按 `kMenuPageCount` 定长，新增页面若不登记标签会因 `TextKey::None` 残留而编译失败。
 - `ui/MenuController` 负责菜单模型构建/应用、动作回调与 GUI 渲染，只通过 `StructureSession`/
-  `StructureUiState` 访问状态；`StructureLoader` 保留 HUD、快捷键事件与加载入口。
+  `StructureUiState` 访问状态；`StructureLoader` 保留动作提示、快捷键事件与加载入口；普通和材料 HUD 绘制位于 `ui/hud/`。
 - `ui/MenuWidgets` 提供通用菜单控件（分节、值行、复选框、步进器、居中数值绘制），不读取会话状态。
 - `ui/MenuPages` 承载各页面渲染、导航指示与材料清单弹窗；`LHoloMenu.cpp` 只保留 `renderMenu` 分发。
 - `structure/StructurePaths` 提供 UTF-8 路径转换，结构模块与 UI 共用。
@@ -714,7 +718,7 @@ Worker 初始化失败，或构建/上传连续失败三次后，本次游戏会
 - 稀疏 `progressExtraCount`，不改变建造进度分母，也不进入材料需求。
 - 原子发布的 `placed/total/wrongType/wrongState/extra`。
 
-HUD 每帧只读取原子计数，不查询世界、不遍历结构。
+HUD 每帧只读取原子计数，不查询世界、不遍历结构。`ui/hud/HudContentSource` 读取既有会话/进度/材料快照，`HudContent` 整理本地化行，`HudLayout` 计算四角与同角堆叠，`NativeHudRenderer` 只测量/绘制这些展示数据；业务模块不依赖原生绘制 SDK。材料图标身份与 OreUI 清单共用 `ui/MaterialFormat`，`NativeHudIcons` 在 tick 线程准备显示物品、在本次匹配的原生 UI flush 中绘制，不在渲染线程解析注册表。
 
 材料显示 HUD 也不单独查询世界：`ProjectionState::progressCorrect` 每次变化时递增
 `progressRevision`，`MaterialTracker` 只在结构、纠错版本或显示层设置变化后复制一次纠错字节快照。
@@ -751,7 +755,7 @@ HUD 每帧只读取原子计数，不查询世界、不遍历结构。
 GUI 覆盖当前 `ImGuiIO::DisplaySize`，侧栏导航包含：投影、创建结构、结构变换、渲染设置、HUD、快捷键、界面设置和实验性功能。界面缩放范围 1～5。
 
 此处记录仍在使用的 ImGui 实现。OreUI 在 `frontend/` 独立开发，按功能接入后逐步删除对应旧页面；
-菜单迁移不等于 HUD 已迁移。新增原生接入集中于 `src/oreui/`，不要把 JS 协议加入结构或投影内部模块。
+菜单与 HUD 设置接入位于 `src/oreui/`；普通/材料 HUD 的画面由 `src/ui/hud/` 在原版 HUD 回调绘制。不要把 JS 协议加入结构或投影内部模块。原生 HUD 使用游戏 GUI 缩放，不读取旧 ImGui 的 uiScale。
 
 GUI 是全屏 ImGui 窗口，不是切换 Minecraft 窗口模式。
 
@@ -821,7 +825,7 @@ WndProc/Raw Input 只覆盖 Windows 消息边界，不能作为阻止 Minecraft 
 
 ### 10.2 每帧资源规则
 
-需要绘制 GUI/HUD 时：
+需要绘制旧 ImGui GUI 或动作提示时（普通/材料 HUD 不经过此路径）：
 
 1. 从当前 swap chain 取得当前 back buffer。
 2. 为该帧创建 wrapped resource 和 RTV。
@@ -831,7 +835,7 @@ WndProc/Raw Input 只覆盖 Windows 消息边界，不能作为阻止 Minecraft 
 6. `ReleaseWrappedResources` 并 `Flush`。
 7. 释放该帧 wrapped resource 和 RTV。
 
-不跨帧持有 back buffer wrapper。GUI/HUD 都不显示时跳过这条提交路径。
+不跨帧持有 back buffer wrapper。旧 GUI 和动作提示都不显示时跳过这条提交路径。
 
 ### 10.3 历史崩溃根因
 
