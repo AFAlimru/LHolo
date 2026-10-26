@@ -33,14 +33,13 @@ std::atomic_int completion{-1};
 bool opened{}, closing{}, accepted{};
 std::string screenName;
 bool updateInstalled{}, renderInstalled{}, pointerInstalled{}, buttonInstalled{}, focusInstalled{};
-bool probeInstalled{};
+bool definitionInstalled{};
 auto& logger() { return LHolo::getInstance().getSelf().getLogger(); }
 bool isEditor(std::string const& name) { return name == screenName; }
 
-// Probe only: no resource pack registers this name. If SceneFactory can create
-// it, the UI definition supplied by findDef is sufficient for this scene.
-constexpr char probeScreenName[] = "lholo.hud_editor_probe";
-constexpr char probeDefinitionJson[] = R"json({
+// The editor owns this definition; no JSON UI resource is registered for it.
+constexpr char editorScreenName[] = "lholo.hud_editor";
+constexpr char editorDefinitionJson[] = R"json({
   "type": "screen",
   "render_game_behind": true,
   "render_only_when_topmost": false,
@@ -60,23 +59,22 @@ constexpr char probeDefinitionJson[] = R"json({
   }]
 })json";
 
-Json::Value const& probeDefinition() {
+Json::Value const& editorDefinition() {
     static Json::Value const definition = [] {
         Json::Value result;
         Json::Reader reader;
-        if (!reader.parse(probeDefinitionJson, result, false))
-            logger().error("[native-hud.probe] Could not parse in-memory scene definition: {}", reader.getFormattedErrorMessages());
+        if (!reader.parse(editorDefinitionJson, result, false))
+            logger().error("[native-hud.editor] Could not parse in-memory scene definition: {}", reader.getFormattedErrorMessages());
         return result;
     }();
     return definition;
 }
 
-LL_TYPE_INSTANCE_HOOK(HudProbeDefinition, ll::memory::HookPriority::Normal,
+LL_TYPE_INSTANCE_HOOK(HudEditorDefinition, ll::memory::HookPriority::Normal,
     UIDefRepository, &UIDefRepository::$findDef, Json::Value const&,
     std::string const& defNamespace, std::string const& defName) {
-    if (defNamespace == "lholo" && defName == "hud_editor_probe") {
-        logger().info("[native-hud.probe] SceneFactory requested in-memory lholo.hud_editor_probe definition");
-        return probeDefinition();
+    if (defNamespace == "lholo" && defName == "hud_editor") {
+        return editorDefinition();
     }
     return origin(defNamespace, defName);
 }
@@ -109,10 +107,8 @@ void processScene(ClientInstance& client) {
     auto controller = std::make_shared<ScreenController>(false);
     controller->registerButtonPressedHandler(controller->_getNameId("button.lholo_hud_cancel"),
         [](UIPropertyBag*) { cancelHudLayoutEditor(); return ::ui::ViewRequest::ConsumeEvent; });
-    auto scene = client.$getSceneFactory().createUIScene(probeScreenName, std::move(controller));
-    if (!scene) { logger().error("[native-hud.probe] Could not create {}", probeScreenName); logger().flush(); return; }
-    logger().info("[native-hud.probe] Created unregistered scene: {}", scene->getScreenName());
-    logger().flush();
+    auto scene = client.$getSceneFactory().createUIScene(editorScreenName, std::move(controller));
+    if (!scene) { logger().error("[native-hud.editor] Could not create {}", editorScreenName); logger().flush(); return; }
     screenName = scene->getScreenName();
     processHudLayoutEditor(true, true, true);
     closing = accepted = false;
@@ -177,8 +173,8 @@ std::optional<bool> consumeHudEditorCompletion() {
     return result < 0 ? std::nullopt : std::optional<bool>{result == 1};
 }
 bool installHudEditorScene() {
-    probeInstalled = HudProbeDefinition::hook() == 0;
-    if (!probeInstalled) return false;
+    definitionInstalled = HudEditorDefinition::hook() == 0;
+    if (!definitionInstalled) return false;
     updateInstalled = HudEditorUpdate::hook() == 0;
     renderInstalled = HudEditorRender::hook() == 0;
     pointerInstalled = HudEditorPointer::hook() == 0;
@@ -206,8 +202,8 @@ void uninstallHudEditorScene() {
     if (pointerInstalled) HudEditorPointer::unhook();
     if (renderInstalled) HudEditorRender::unhook();
     if (updateInstalled) HudEditorUpdate::unhook();
-    if (probeInstalled) HudProbeDefinition::unhook();
+    if (definitionInstalled) HudEditorDefinition::unhook();
     updateInstalled = renderInstalled = pointerInstalled = buttonInstalled = focusInstalled = false;
-    probeInstalled = false;
+    definitionInstalled = false;
 }
 }

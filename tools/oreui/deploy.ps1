@@ -16,7 +16,7 @@ if (Get-Process -Name 'Minecraft.Windows' -ErrorAction SilentlyContinue | Where-
 $projectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $packPrefix = 'mods/LHolo/resource_packs/LHoloUI/'
 $files = @('mods/LHolo/LHolo.dll', 'mods/LHolo/manifest.json', 'mods/LHolo/LICENSE',
-    ($packPrefix + 'manifest.json'), ($packPrefix + 'ui/_ui_defs.json'), ($packPrefix + 'ui/lholo_hud_editor.json'), ($packPrefix + 'hbui/lholo-menu.html'), ($packPrefix + 'hbui/lholo-menu.js'))
+    ($packPrefix + 'manifest.json'), ($packPrefix + 'hbui/lholo-menu.html'), ($packPrefix + 'hbui/lholo-menu.js'))
 $legacy = @('data/gui/dist/hbui/lholo-menu.html', 'data/gui/dist/hbui/lholo-menu.js')
 $packageRoot = Join-Path $projectRoot 'bin'
 $reportPath = Join-Path $projectRoot 'build/oreui/package-validation.json'

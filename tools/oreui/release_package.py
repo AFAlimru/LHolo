@@ -1,7 +1,7 @@
 """Archive or verify the complete installation directory for a GitHub release.
 
 Daily xmake builds still produce bin/LHolo only. Release archives include the
-same eight installation files, never config, debug symbols or build intermediates.
+same six installation files, never config, debug symbols or build intermediates.
 """
 import argparse
 import hashlib
@@ -13,8 +13,6 @@ PROJECT = Path(__file__).resolve().parents[2]
 FILES = (
     "LHolo/LHolo.dll", "LHolo/manifest.json", "LHolo/LICENSE",
     "LHolo/resource_packs/LHoloUI/manifest.json",
-    "LHolo/resource_packs/LHoloUI/ui/_ui_defs.json",
-    "LHolo/resource_packs/LHoloUI/ui/lholo_hud_editor.json",
     "LHolo/resource_packs/LHoloUI/hbui/lholo-menu.html",
     "LHolo/resource_packs/LHoloUI/hbui/lholo-menu.js",
 )
@@ -23,7 +21,7 @@ MARKER = b"lholo-menu-v7-settings"
 
 def validate_files(files, version):
     if set(files) != set(FILES):
-        raise ValueError("Release must contain exactly the eight LHolo installation files")
+        raise ValueError("Release must contain exactly the six LHolo installation files")
     if any(not content for content in files.values()):
         raise ValueError("Empty installation file")
     manifest = json.loads(files["LHolo/manifest.json"].decode("utf-8-sig"))
