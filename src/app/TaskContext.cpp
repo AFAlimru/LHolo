@@ -6,7 +6,7 @@
 #include "mc/client/game/ClientInstance.h"
 #include "mc/client/game/ClientInstanceState.h"
 #include "mc/client/player/LocalPlayer.h"
-#include <cmath>
+#include "mc/world/level/BlockPos.h"
 
 namespace lholo::app::detail {
 std::uint64_t taskWorldRevision() { return structure::detail::structureFileWorldRevision(); }
@@ -18,9 +18,8 @@ std::optional<structure::detail::StructureLoadOrigin> taskPlayerOrigin() {
     auto* player = client && client->$getClientInstanceState() == ClientInstanceState::Playing
         ? client->getLocalPlayer() : nullptr;
     if (!player) return {};
-    auto pos = player->getPosition();
-    return structure::detail::StructureLoadOrigin{static_cast<int>(std::floor(pos.x)),
-        static_cast<int>(std::floor(pos.y)) - 1, static_cast<int>(std::floor(pos.z)),
+    auto pos = player->getFeetBlockPos();
+    return structure::detail::StructureLoadOrigin{pos.x,pos.y,pos.z,
         static_cast<int>(player->getDimensionId())};
 }
 }

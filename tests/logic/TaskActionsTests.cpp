@@ -13,6 +13,7 @@
 namespace {
 std::filesystem::path taskPath;
 bool world{}, inFlight{};
+bool rejectNextStart{};
 std::uint64_t worldRevision{1};
 lholo::structure::detail::StructureLoadOrigin playerOrigin{10, 20, 30, 0};
 std::shared_ptr<lholo::structure::detail::CompositionLoadResult> requested, completed;
@@ -42,6 +43,7 @@ std::shared_ptr<LoadedStructure const> cachedTaskFile(std::string const& path) {
 bool startTaskComposition(std::string id, std::uint64_t revision, StructureLoadOrigin origin,
     std::vector<CompositionFile> files, std::vector<std::string> paths, bool) {
     if (inFlight) return false;
+    if (std::exchange(rejectNextStart,false)) return false;
     requested = std::make_shared<CompositionLoadResult>();
     requested->request = StructureSession::getInstance().beginCompositionLoad(origin);
     requested->revision = revision;
@@ -112,24 +114,24 @@ int runTaskActionsTests() {
     processTaskActions();
     check(inFlight && requestedPaths == std::vector<std::string>{"body.mcstructure"},
           "hotkey after failure recomposes the actual active files, not the invalid catalog");
-    check(requested && requested->files[0].x == 3, "live offset carried to composition");
+    check(requested && requested->files[0].x == 13, "live world coordinate carried to composition");
     finish(true);
-    check(session.transform().offsetX == 3 && session.lastPath() == "body.mcstructure",
+    check(session.transform().offsetX == 13 && session.lastPath() == "body.mcstructure",
           "successful live edit keeps original source binding");
-    check(getTaskSnapshot().catalog.tasks[0].files[0].x == 3 &&
+    check(getTaskSnapshot().catalog.tasks[0].files[0].x == 13 &&
           getTaskSnapshot().catalog.tasks[0].files[0].path == "missing.mcstructure",
           "persist transform by stable ID without replacing the user's missing path");
     command(TaskAction::Path, "repaired.mcstructure", fileId); finish(true);
     check(session.lastPath() == "repaired.mcstructure" && getTaskStatus().error.empty(),
           "repair publishes catalog and clears loading error");
     session.adjustOffsets(100, 0, 0); processTaskActions(); finish(false);
-    check(session.transform().offsetX == 3,
+    check(session.transform().offsetX == 13,
           "failed live transform restores the last successful transform, not the failed request");
     command(TaskAction::AddFile, "missing-two.mcstructure"); finish(false);
     check(session.selectedSource() < 0, "failed new file does not edit the previously selected file");
     command(TaskAction::SelectFile, {}, fileId);
     session.adjustOffsets(0, 2, 0); processTaskActions();
-    check(inFlight && requested->files.size() == 1 && requested->files[0].y == 2,
+    check(inFlight && requested->files.size() == 1 && requested->files[0].y == 22,
           "existing file remains editable after another file fails to attach");
     finish(true);
     // Compare actual file/world positions, not just the normalized composite
@@ -157,8 +159,8 @@ int runTaskActionsTests() {
     command(TaskAction::Close);
     playerOrigin = {100, 70, -200, 0};
     command(TaskAction::Activate);
-    check(requested->request.origin == structure::detail::StructureLoadOrigin{10, 20, 30, 0},
-          "reopen after walking uses the task's original anchor");
+    check(requested->request.origin == structure::detail::StructureLoadOrigin{0,0,0,0},
+          "absolute files use zero base in the current dimension");
     finish(true);
     check(originalPosition && fileWorldPosition(fileId) == originalPosition,
           "reopen preserves file world position even when normalization changes");
@@ -166,29 +168,50 @@ int runTaskActionsTests() {
     ++worldRevision;
     playerOrigin = {200, 80, 300, 0};
     command(TaskAction::Activate);
-    check(requested->request.origin == playerOrigin, "new world clears anchors even while tasks are closed");
+    check(requested->request.origin == structure::detail::StructureLoadOrigin{0,0,0,0},
+        "world exit clears native resources without replacing saved file coordinates");
     finish(true);
     auto const newWorldPosition = fileWorldPosition(fileId);
-    command(TaskAction::Close);
+    check(newWorldPosition==originalPosition,"another world uses the same coordinates by user preference");
+    // A live dimension switch filters old files, rather than moving them into
+    // the new dimension or requiring a new task.
     playerOrigin = {500, 90, 600, 1};
-    command(TaskAction::Activate);
-    check(requested->request.origin == playerOrigin, "different dimension gets its own anchor");
+    processTaskActions();
+    check(inFlight && requested->request.origin==structure::detail::StructureLoadOrigin{0,0,0,1},
+        "dimension switch schedules a view in the new dimension");
+    check(std::none_of(requested->files.begin(),requested->files.end(),[](auto const& f){return f.visible;}),
+        "overworld files are excluded before composition in the Nether");
     finish(true);
-    command(TaskAction::Close);
+    check(!fileWorldPosition(fileId) && session.selectedSource()<0,"other-dimension file cannot render or be edited");
+    command(TaskAction::AddFile,"nether.mcstructure"); finish(true);
+    auto netherId=getTaskSnapshot().catalog.tasks[0].selectedFileId;
+    check(fileWorldPosition(netherId)==std::optional<std::array<long long,3>>{{500,90,600}},
+        "new file binds directly to current player dimension and world coordinate");
+    check(getTaskSnapshot().catalog.tasks[0].files.back().dimension==1,"file dimension persisted independently");
+    auto netherPosition=fileWorldPosition(netherId);
+    playerOrigin={13,22,30,2};
+    processTaskActions(); finish(true);
+    command(TaskAction::AddFile,"end.mcstructure"); finish(true);
+    auto endId=getTaskSnapshot().catalog.tasks[0].selectedFileId;
+    check(fileWorldPosition(endId)==originalPosition && !fileWorldPosition(fileId)
+        && !fileWorldPosition(netherId),"same XYZ in the End is isolated from other dimensions");
+    check(session.loaded()->independentFiles!=nullptr,
+        "cross-dimension AABBs do not cause task merging");
     playerOrigin = {700, 100, 800, 0};
-    command(TaskAction::Activate);
-    check(requested->request.origin == structure::detail::StructureLoadOrigin{200, 80, 300, 0},
-          "returning dimension reuses that dimension's anchor");
+    processTaskActions();
     finish(true);
-    check(fileWorldPosition(fileId) == newWorldPosition, "dimension-scoped reopen preserves file world position");
+    check(fileWorldPosition(fileId)==originalPosition && !fileWorldPosition(netherId),
+        "returning to Overworld restores only its files without coordinate conversion");
+    command(TaskAction::SelectFile,{},fileId);
     command(TaskAction::Create, "第二个任务"); finish(true);
     auto const otherTask = getTaskSnapshot().catalog.selectedTaskId;
     command(TaskAction::Select, {}, {}, originalTask);
-    check(requested->request.origin == structure::detail::StructureLoadOrigin{200, 80, 300, 0},
-          "task switching does not re-anchor the original task");
+    check(requested->request.origin == structure::detail::StructureLoadOrigin{0,0,0,0},
+          "task switching retains absolute placements");
     finish(true);
     command(TaskAction::Select, {}, {}, otherTask);
-    check(requested->request.origin == playerOrigin, "second task keeps its independent anchor");
+    check(requested->request.origin == structure::detail::StructureLoadOrigin{0,0,0,0},
+        "every task uses the same world coordinate system");
     finish(true);
     command(TaskAction::Select, {}, {}, originalTask); finish(true);
     command(TaskAction::Activate);
@@ -202,9 +225,45 @@ int runTaskActionsTests() {
     finish(true);
     check(!session.loaded() && getTaskStatus().activeTaskId.empty(),
           "world exit rejects pending first activation");
+    shutdownTasks();
+    loadTasks();
+    world=true;
+    playerOrigin={-900,60,-1000,0};
+    command(TaskAction::Activate); finish(true);
+    check(fileWorldPosition(fileId)==originalPosition,"restart restores absolute file coordinates from tasks.json");
+    playerOrigin={-400,55,200,1};
+    processTaskActions(); finish(true);
+    check(fileWorldPosition(netherId)==netherPosition && !fileWorldPosition(fileId),
+        "restart preserves independent Nether coordinates without 8:1 conversion");
     auto expected = getTaskSnapshot().catalog;
     shutdownTasks();
     check(tasks::readCatalog(taskPath) == expected, "mod shutdown flushes accepted task edits");
+    tasks::Catalog fresh;
+    tasks::Task freshTask{tasks::newId(),"新文件首次放置",{}, {}};
+    tasks::File freshFile{tasks::newId(),"fresh.mcstructure"};
+    freshTask.selectedFileId=freshFile.id;
+    freshTask.files.push_back(freshFile);
+    fresh.selectedTaskId=freshTask.id;
+    fresh.tasks.push_back(freshTask);
+    tasks::writeCatalog(taskPath,fresh);
+    loadTasks();
+    playerOrigin={100,50,200,0};
+    command(TaskAction::Activate); finish(false);
+    check(!getTaskSnapshot().catalog.tasks[0].files[0].dimension
+        && getTaskSnapshot().catalog.tasks[0].files[0].x==0,
+        "failed first placement leaves the new file unbound");
+    playerOrigin={200,60,300,0};
+    rejectNextStart=true;
+    command(TaskAction::Activate);
+    check(!inFlight,"busy loader leaves first placement waiting without binding coordinates");
+    playerOrigin={-300,70,400,1};
+    processTaskActions(); finish(true);
+    check(fileWorldPosition(freshFile.id)==std::optional<std::array<long long,3>>{{-300,70,400}},
+        "retried first placement captures the position when the loader accepts the request");
+    auto placed=getTaskSnapshot().catalog.tasks[0].files[0];
+    check(placed.dimension==1 && placed.x==-300 && placed.y==70 && placed.z==400,
+        "loader retry captures a dimension change and commits it with absolute XYZ");
+    shutdownTasks();
     std::filesystem::remove(taskPath);
     std::filesystem::remove(directory);
     requested.reset(); completed.reset(); cache.clear(); inFlight = false;

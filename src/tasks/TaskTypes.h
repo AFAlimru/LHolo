@@ -2,6 +2,7 @@
 #include "structure/LayerSettings.h"
 #include <string>
 #include <vector>
+#include <optional>
 
 namespace lholo::tasks {
 struct File {
@@ -10,6 +11,9 @@ struct File {
     int x{}, y{}, z{}, rotation{};
     std::string mirror{"none"};
     structure::LayerSettings slice{};
+    // Bound files use absolute world coordinates. Missing dimension marks a
+    // new file awaiting its first successful placement at the player's feet.
+    std::optional<int> dimension;
     bool operator==(File const&) const = default;
 };
 struct Task {

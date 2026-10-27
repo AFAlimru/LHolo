@@ -7,20 +7,16 @@
 #include "structure/MaterialTracker.h"
 #include <algorithm>
 #include <deque>
-#include <map>
 #include <mutex>
+#include <exception>
 
 namespace lholo::app {
 namespace {
 std::mutex mutex;
 TaskSnapshot state;
 std::deque<TaskIntent> pending;
-std::optional<structure::detail::StructureLoadOrigin> anchor;
-std::optional<structure::detail::StructureLoadOrigin> activeAnchor;
-// Retain original task anchors through Close, separately from normalized
-// composition origins. World destruction invalidates even closed tasks.
-std::map<std::pair<std::string, std::optional<int>>, structure::detail::StructureLoadOrigin> taskAnchors;
-std::uint64_t anchorWorldRevision{};
+std::optional<int> viewDimension;
+std::uint64_t observedWorldRevision{};
 std::uint64_t activeGeneration{};
 bool dirty{}, loading{};
 std::optional<tasks::Task> activeDefinition, pendingDefinition;
@@ -48,7 +44,8 @@ void selectEditor(tasks::Task& task) {
     structure::detail::invalidateMaterialList();
     activeDefinition->selectedFileId = task.selectedFileId;
     auto* file = tasks::findFile(*activeDefinition, task.selectedFileId);
-    if (!file) {
+    auto player=detail::taskPlayerOrigin();
+    if (!file || !player || file->dimension!=player->dimensionId) {
         session().selectCompositionFile({}, {}, -2, {});
         return;
     }
@@ -64,8 +61,7 @@ void selectEditor(tasks::Task& task) {
 }
 void clearRuntime() {
     state.activeTaskId.clear();
-    anchor.reset();
-    activeAnchor.reset();
+    viewDimension.reset();
     activeGeneration = 0;
     dirty = false;
     activeDefinition.reset();
@@ -74,12 +70,9 @@ void clearRuntime() {
 }
 bool activate(tasks::Task const* task) {
     auto origin = detail::taskPlayerOrigin();
-    if (!task || !origin)
+    if (!task || !origin || !origin->dimensionId)
         return false;
-    if (task->id != state.activeTaskId || !anchor) {
-        auto const previous = taskAnchors.find({task->id, origin->dimensionId});
-        anchor = previous == taskAnchors.end() ? *origin : previous->second;
-    }
+    viewDimension=origin->dimensionId;
     pendingDefinition = *task;
     dirty = true;
     reloadFiles = true;
@@ -97,8 +90,6 @@ bool mutate(TaskIntent const& i) {
     }
     if (!tasks::applyCatalogEdit(state.catalog, i))
         return false;
-    if (i.action == TaskAction::Delete)
-        std::erase_if(taskAnchors, [&](auto const& entry) { return entry.first.first == i.taskId; });
     if (i.action == TaskAction::Create || i.action == TaskAction::Select) {
         auto* selected = tasks::findTask(state.catalog, state.catalog.selectedTaskId);
         if (detail::taskPlayerOrigin())
@@ -124,8 +115,7 @@ bool mutate(TaskIntent const& i) {
 } // namespace
 void loadTasks() {
     std::lock_guard lock(mutex);
-    taskAnchors.clear();
-    anchorWorldRevision = detail::taskWorldRevision();
+    observedWorldRevision = detail::taskWorldRevision();
     state.writable = false;
     try {
         auto path = detail::taskStorePath();
@@ -178,14 +168,12 @@ void shutdownTasks() {
     loading = false;
     state.writable = false;
     clearRuntime();
-    taskAnchors.clear();
 }
 void processTaskActions() {
     std::lock_guard lock(mutex);
-    if (auto const world = detail::taskWorldRevision(); world != anchorWorldRevision) {
-        taskAnchors.clear();
+    if (auto const world = detail::taskWorldRevision(); world != observedWorldRevision) {
         clearRuntime();
-        anchorWorldRevision = world;
+        observedWorldRevision = world;
     }
     auto current = session().loaded();
     if (writer)
@@ -203,23 +191,30 @@ void processTaskActions() {
                 state.errorFileId = result->errorFileId;
                 session().failFileLoad(result->request,
                                        i18n::Message{i18n::TextKey::StatusLoadFailed, {result->error}});
-                anchor = activeAnchor;
+                // Keep the last requested view dimension after a failed
+                // dimension switch; do not retry the same failed load each frame.
                 if (auto* task = tasks::findTask(state.catalog, state.activeTaskId))
                     selectEditor(*task);
-            } else if (anchor) {
-                auto origin = *anchor;
-                origin.x += result->composition.origin[0];
-                origin.y += result->composition.origin[1];
-                origin.z += result->composition.origin[2];
+            } else if (viewDimension) {
+                auto const& position=result->composition.origin;
+                auto origin=structure::detail::StructureLoadOrigin{position[0],position[1],position[2],viewDimension};
                 auto generation = result->composition.loaded->generation;
                 if (session().completeCompositionLoad(result->request, std::move(result->composition.loaded),
                                                       origin)) {
                     state.activeTaskId = result->taskId;
                     activeGeneration = generation;
-                    activeAnchor = anchor;
-                    taskAnchors[{result->taskId, anchor->dimensionId}] = *anchor;
                     activeDefinition = std::move(pendingDefinition);
                     auto* task = tasks::findTask(state.catalog, state.activeTaskId);
+                    bool bound{};
+                    if (task) for (auto const& placed:activeDefinition->files) {
+                        auto* saved=tasks::findFile(*task,placed.id);
+                        if (saved && !saved->dimension && placed.dimension) {
+                            saved->dimension=placed.dimension;
+                            saved->x=placed.x; saved->y=placed.y; saved->z=placed.z;
+                            bound=true;
+                        }
+                    }
+                    if (bound) save();
                     if (task && task->files == activeDefinition->files) {
                         state.error.clear();
                         state.errorFileId.clear();
@@ -233,11 +228,24 @@ void processTaskActions() {
         pendingDefinition.reset();
     } else if (loading && !structure::detail::isStructureFileLoading())
         loading = false;
-    // Existing editors/hotkeys own their live tuple. Persist it into the selected file, then recompose.
+    // Refresh the task view on a dimension change, without changing any file's
+    // persisted placement. Files in other dimensions are filtered below.
+    auto player=detail::taskPlayerOrigin();
+    if (!loading && !dirty && activeDefinition && player && viewDimension
+        && player->dimensionId!=viewDimension) {
+        if (auto* task=tasks::findTask(state.catalog,state.activeTaskId)) {
+            pendingDefinition=*task;
+            viewDimension=player->dimensionId;
+            dirty=true;
+            reloadFiles=false;
+            ++state.revision;
+        }
+    }
+    // Existing editors/hotkeys own their live tuple. Persist absolute XYZ.
     if (!loading && !dirty && activeDefinition) {
         auto* task = tasks::findTask(state.catalog, state.activeTaskId);
         auto* file = tasks::findFile(*activeDefinition, activeDefinition->selectedFileId);
-        if (file && session().selectedSource() >= 0) {
+        if (file && player && file->dimension==player->dimensionId && session().selectedSource() >= 0) {
             auto t = session().transform();
             bool changed = file->x != t.offsetX || file->y != t.offsetY || file->z != t.offsetZ ||
                 file->rotation != t.rotation * 90 ||
@@ -285,15 +293,31 @@ void processTaskActions() {
             }
         }
     }
-    if (!dirty || loading || !anchor || !detail::taskPlayerOrigin())
+    if (!dirty || loading || !viewDimension)
         return;
-    auto const& task = *pendingDefinition;
+    auto placement=detail::taskPlayerOrigin();
+    if (!placement || !placement->dimensionId) return;
+    if (placement->dimensionId!=viewDimension) {
+        // A queued request may wait for the loader while the player travels.
+        // Refresh its view as well as its position before submitting it.
+        viewDimension=placement->dimensionId;
+        ++state.revision;
+    }
+    auto task = *pendingDefinition;
+    // Only an accepted request fixes a new file's initial position. A busy
+    // loader must leave the pending definition unbound for the next attempt.
+    for (auto& file:task.files) if (!file.dimension) {
+        file.x=placement->x;
+        file.y=placement->y;
+        file.z=placement->z;
+        file.dimension=placement->dimensionId;
+    }
     std::vector<structure::CompositionFile> files;
     std::vector<std::string> paths;
     for (auto const& file : task.files) {
         files.push_back({file.id,
                          {},
-                         file.visible,
+                         file.visible && file.dimension==viewDimension,
                          file.x,
                          file.y,
                          file.z,
@@ -304,8 +328,9 @@ void processTaskActions() {
                          file.slice});
         paths.push_back(file.path);
     }
-    if (structure::detail::startTaskComposition(task.id, state.revision, *anchor, std::move(files),
+    if (structure::detail::startTaskComposition(task.id, state.revision, {0,0,0,viewDimension}, std::move(files),
                                                 std::move(paths), reloadFiles)) {
+        pendingDefinition=std::move(task);
         loading = true;
         dirty = false;
         reloadFiles = false;

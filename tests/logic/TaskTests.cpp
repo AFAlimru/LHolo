@@ -159,10 +159,35 @@ int runTaskTests() {
     file.mirror = "z";
     file.x = -5;
     file.slice = {structure::LayerAxis::X, structure::LayerDisplayMode::FromCurrent, 2};
+    file.dimension=1;
     auto directory = std::filesystem::temp_directory_path() / tasks::newId();
     auto path = directory / "tasks.json";
     tasks::writeCatalog(path, catalog);
     check(tasks::readCatalog(path) == catalog, "UTF-8 and per-file settings round trip");
+    {
+        nlohmann::json unsupported;
+        { std::ifstream in(path); in>>unsupported; }
+        unsupported["version"]=1;
+        { std::ofstream out(path); out<<unsupported.dump(); }
+        bool unsupportedRejected{};
+        try { tasks::readCatalog(path); } catch (...) { unsupportedRejected=true; }
+        check(unsupportedRejected,"unsupported task format is rejected without coordinate migration");
+        tasks::writeCatalog(path,catalog);
+        nlohmann::json invalid;
+        { std::ifstream in(path); in>>invalid; }
+        invalid["tasks"][0]["files"][0]["position"]["x"]=4294967295ULL;
+        { std::ofstream out(path); out<<invalid.dump(); }
+        bool overflowRejected{};
+        try { tasks::readCatalog(path); } catch (...) { overflowRejected=true; }
+        check(overflowRejected,"v2 world coordinate overflow rejected rather than wrapped");
+        invalid["tasks"][0]["files"][0]["position"]["x"]=file.x;
+        invalid["tasks"][0]["files"][0]["dimension"]=1.5;
+        { std::ofstream out(path); out<<invalid.dump(); }
+        bool dimensionRejected{};
+        try { tasks::readCatalog(path); } catch (...) { dimensionRejected=true; }
+        check(dimensionRejected,"dimension ID must be an integer");
+        tasks::writeCatalog(path,catalog);
+    }
     {
         tasks::TaskStoreWriter writer(path);
         writer.queue(catalog);

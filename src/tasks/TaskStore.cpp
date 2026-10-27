@@ -4,12 +4,19 @@
 #include <fstream>
 #include <set>
 #include <stdexcept>
+#include <limits>
 
 namespace lholo::tasks {
 namespace {
 using nlohmann::json;
 constexpr char const* axes[]{"y", "x", "material"};
 constexpr char const* modes[]{"all", "single", "upToCurrent", "fromCurrent"};
+int integer(json const& value) {
+    if (!value.is_number_integer() || value<(std::numeric_limits<int>::min)()
+        || value>(std::numeric_limits<int>::max)())
+        throw std::runtime_error("Invalid task coordinate or dimension");
+    return value.get<int>();
+}
 template <std::size_t N> int decode(std::string const& value, char const* const (&names)[N]) {
     for (std::size_t i = 0; i < N; ++i)
         if (value == names[i])
@@ -22,7 +29,7 @@ Catalog readCatalog(std::filesystem::path const& path) {
         return {};
     std::ifstream stream(path);
     auto data = json::parse(stream);
-    if (data.at("version").get<int>() != 1)
+    if (integer(data.at("version")) != 2)
         throw std::runtime_error("Unsupported tasks version");
     Catalog catalog{data.at("selectedTaskId").get<std::string>(), {}};
     std::set<std::string> ids;
@@ -34,15 +41,17 @@ Catalog readCatalog(std::filesystem::path const& path) {
         Task task{item.at("id"), item.at("name"), item.at("selectedFileId"), {}};
         acceptId(task.id);
         for (auto const& entry : item.at("files")) {
-            auto const& offset = entry.at("offset");
+            auto const& position = entry.at("position");
             auto const& slice = entry.at("slice");
             File file;
             file.id = entry.at("id");
             file.path = entry.at("path");
             file.visible = entry.at("visible");
-            file.x = offset.at("x");
-            file.y = offset.at("y");
-            file.z = offset.at("z");
+            file.x = integer(position.at("x"));
+            file.y = integer(position.at("y"));
+            file.z = integer(position.at("z"));
+            if (!entry.at("dimension").is_null())
+                file.dimension=integer(entry.at("dimension"));
             file.rotation = entry.at("rotation");
             file.mirror = entry.at("mirror");
             if (file.rotation != 0 && file.rotation != 90 && file.rotation != 180 && file.rotation != 270)
@@ -66,7 +75,7 @@ Catalog readCatalog(std::filesystem::path const& path) {
     return catalog;
 }
 void writeCatalog(std::filesystem::path const& path, Catalog const& catalog) {
-    json data{{"version", 1}, {"selectedTaskId", catalog.selectedTaskId}, {"tasks", json::array()}};
+    json data{{"version", 2}, {"selectedTaskId", catalog.selectedTaskId}, {"tasks", json::array()}};
     for (auto const& task : catalog.tasks) {
         json item{{"id", task.id},
                   {"name", task.name},
@@ -76,7 +85,8 @@ void writeCatalog(std::filesystem::path const& path, Catalog const& catalog) {
             item["files"].push_back({{"id", file.id},
                                      {"path", file.path},
                                      {"visible", file.visible},
-                                     {"offset", {{"x", file.x}, {"y", file.y}, {"z", file.z}}},
+                                     {"position", {{"x", file.x}, {"y", file.y}, {"z", file.z}}},
+                                     {"dimension", file.dimension ? json(*file.dimension) : json(nullptr)},
                                      {"rotation", file.rotation},
                                      {"mirror", file.mirror},
                                      {"slice",
