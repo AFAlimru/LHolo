@@ -164,6 +164,11 @@ CorrectionProgressChanges updateCorrectionTracker(
         auto const nowCorrect = nextState == CorrectionState::Correct;
         auto const wasCorrect = state.progressCorrect[index] != 0;
         if (nowCorrect != wasCorrect) {
+            if (entry.sourceIndex>=0) {
+                auto& progress=state.sourceProgress[entry.sourceIndex];
+                if (nowCorrect) { ++progress.placed; ++progress.visiblePlaced; }
+                else { --progress.placed; --progress.visiblePlaced; }
+            }
             state.progressCorrect[index] = nowCorrect ? 1 : 0;
             ++state.progressRevision;
             if (nowCorrect) ++state.progressCorrectCount;
@@ -180,6 +185,13 @@ CorrectionProgressChanges updateCorrectionTracker(
             : uchar{0};
         auto const previousErrorKind = state.progressErrorKind[index];
         if (nextErrorKind != previousErrorKind) {
+            if (entry.sourceIndex>=0) {
+                auto& progress=state.sourceProgress[entry.sourceIndex];
+                if (previousErrorKind==1) --progress.wrongType;
+                if (previousErrorKind==2) --progress.wrongState;
+                if (nextErrorKind==1) ++progress.wrongType;
+                if (nextErrorKind==2) ++progress.wrongState;
+            }
             if (previousErrorKind == 1) --state.progressWrongTypeCount;
             else if (previousErrorKind == 2) --state.progressWrongStateCount;
             if (nextErrorKind == 1) ++state.progressWrongTypeCount;
@@ -240,6 +252,11 @@ CorrectionProgressChanges updateCorrectionTracker(
         bool const isExtra = !region.getBlock(worldPosition).isAir();
         auto const detected = state.detectedExtraBlockPositions.find(key);
         if (isExtra != (detected != state.detectedExtraBlockPositions.end())) {
+            auto source=structure::coveringSource(*state.structure,localPosition.x,localPosition.y,localPosition.z);
+            if (source>=0) {
+                auto& progress=state.sourceProgress[source];
+                if (isExtra) ++progress.extra; else --progress.extra;
+            }
             if (isExtra) {
                 state.detectedExtraBlockPositions.insert(key);
                 ++state.progressExtraCount;

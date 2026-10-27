@@ -25,12 +25,15 @@ HudContent readHudContent() {
     result.context = session.loaded->generation;
     if (settings.enabled) {
         ProjectionHudData data;
-        data.fileName = structure::detail::pathToUtf8(session.loaded->sourcePath.filename());
+        auto editor=structure::detail::StructureSession::getInstance().editorStructure();
+        data.fileName = structure::detail::pathToUtf8((session.loaded->composed
+            ? structure::detail::pathFromUtf8(session.lastPath) : session.loaded->sourcePath).filename());
+        if (session.loaded->composed && session.loaded->renderBlocks.empty()) data.fileName=i18n::tr(i18n::TextKey::TasksNoVisible);
         data.axis = session.transform.layerAxis;
         data.mode = session.transform.layerDisplayMode;
         data.layer = session.transform.displayLayer;
         data.maxLayer = data.axis == structure::LayerAxis::Material
-            ? std::max(0, static_cast<int>(session.loaded->materialCount) - 1)
+            ? std::max(0, editor ? static_cast<int>(editor->materialCount) - 1 : 0)
             : data.axis == structure::LayerAxis::X ? session.maxLayerX : session.maxLayerY;
         if (settings.showOverallProgress || settings.showProgress || settings.showWrongState || settings.showWrongType || settings.showExtraBlocks)
             data.progress = projection::getBuildProgress();

@@ -74,10 +74,12 @@ bool processRenderSettingsEdits() {
     auto const before = snapshot();
     if (edit.context != before.context) return false;
     auto layers = before.values.layers;
-    bool touchesLayers{}, changed{};
+    bool touchesLayers{}, changed{}, globalChanged{};
     for (auto const& c : edit.changes) {
         if (renderValue(before.values, c.field) != c.expected) return false;
         changed = changed || c.value != c.expected;
+        if (c.field != RenderField::Axis && c.field != RenderField::Mode && c.field != RenderField::Layer)
+            globalChanged = globalChanged || c.value != c.expected;
         switch (c.field) {
         case RenderField::Axis: layers.axis = structure::layerAxisFromInt(std::get<int>(c.value)); touchesLayers = true; break;
         case RenderField::Mode: layers.mode = structure::layerDisplayModeFromInt(std::get<int>(c.value)); touchesLayers = true; break;
@@ -100,7 +102,8 @@ bool processRenderSettingsEdits() {
         }
     }
     accepted = true;
-    return changed;
+    auto loaded = structure::detail::StructureSession::getInstance().loaded();
+    return changed && (globalChanged || !loaded || !loaded->composed);
 }
 void resetRenderSettingsEdits() {
     std::lock_guard lock(mutex);

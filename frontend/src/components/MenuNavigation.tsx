@@ -2,12 +2,12 @@ import React from 'react';
 import type { MenuLabels } from '../platform/bridge';
 import { LHoloButton } from './LHoloControls';
 
-export const menuPages = ['projection', 'createStructure', 'transform', 'render',
+export const menuPages = ['tasks', 'createStructure', 'transform', 'render',
   'hud', 'hotkeys', 'interface', 'experimental'] as const;
 export type MenuPage = typeof menuPages[number];
 
 const icons: Record<MenuPage, string> = {
-  projection: 'M12 3 3 7.5v9L12 21l9-4.5v-9L12 3Zm0 9L3 7.5m9 4.5 9-4.5M12 12v9',
+  tasks: 'M3 5h18v16H3V5Zm0 4h18M7 2v6m10-6v6M7 13h4m-4 4h9',
   createStructure: 'M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M8 8h8v8H8Z',
   transform: 'M4 8h15m-4-4 4 4-4 4M20 16H5m4-4-4 4 4 4',
   render: 'm12 3 9 5-9 5-9-5 9-5ZM3 12l9 5 9-5M3 16l9 5 9-5',
@@ -24,7 +24,7 @@ export function MenuNavigation({ page, labels, onSelect }: {
     <div className="lholo-navigation-selection"
       style={{ transform: 'translateY(' + menuPages.indexOf(page) * 3.1 + 'rem)' }} />
     {menuPages.map(item => <LHoloButton key={item}
-    label={labels['page.' + item] ?? item}
+    label={item === 'tasks' ? labels['tasks.nav'] : labels['page.' + item] ?? item}
     icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"
       strokeLinecap="round" strokeLinejoin="round"><path d={icons[item]} /></svg>}
     className={'lholo-navigation-item' + (item === page ? ' is-selected' : '')}

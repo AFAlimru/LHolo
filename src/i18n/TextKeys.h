@@ -28,6 +28,42 @@
                                                                                                          \
     /* Shell */                                                                                          \
     LHOLO_TEXT_KEY("menu.close", MenuClose, "")                                                          \
+    LHOLO_TEXT_KEY("tasks.nav", TasksNav, "")                                                \
+    LHOLO_TEXT_KEY("tasks.activate", TasksActivate, "")                                                \
+    LHOLO_TEXT_KEY("tasks.close", TasksClose, "")                                                \
+    LHOLO_TEXT_KEY("tasks.loading", TasksLoading, "")                                                \
+    LHOLO_TEXT_KEY("tasks.active", TasksActive, "")                                                \
+    LHOLO_TEXT_KEY("tasks.error", TasksError, "")                                                \
+    LHOLO_TEXT_KEY("tasks.requestTooLarge", TasksRequestTooLarge, "")                            \
+    LHOLO_TEXT_KEY("tasks.noVisible", TasksNoVisible, "")                                                \
+    LHOLO_TEXT_KEY("tasks.emptyTasks", TasksEmptyTasks, "")                                              \
+    LHOLO_TEXT_KEY("tasks.name", TasksName, "")                                              \
+    LHOLO_TEXT_KEY("tasks.create", TasksCreate, "")                                          \
+    LHOLO_TEXT_KEY("tasks.addFile", TasksAddFile, "")                                        \
+    LHOLO_TEXT_KEY("tasks.show", TasksShow, "")                                              \
+    LHOLO_TEXT_KEY("tasks.hide", TasksHide, "")                                              \
+    LHOLO_TEXT_KEY("tasks.selectedFile", TasksSelectedFile, "")                              \
+    LHOLO_TEXT_KEY("tasks.currentSelection", TasksCurrentSelection, "")                      \
+    LHOLO_TEXT_KEY("tasks.path", TasksPath, "")                                              \
+    LHOLO_TEXT_KEY("tasks.emptyFiles", TasksEmptyFiles, "")                                  \
+    LHOLO_TEXT_KEY("tasks.rename", TasksRename, "")                                          \
+    LHOLO_TEXT_KEY("tasks.delete", TasksDelete, "")                                          \
+    LHOLO_TEXT_KEY("tasks.removeFile", TasksRemoveFile, "")                                  \
+    LHOLO_TEXT_KEY("tasks.layers", TasksLayers, "")                                          \
+    LHOLO_TEXT_KEY("tasks.selected", TasksSelected, "")                                      \
+    LHOLO_TEXT_KEY("tasks.hidden", TasksHidden, "")                                          \
+    LHOLO_TEXT_KEY("tasks.moveUp", TasksMoveUp, "")                                          \
+    LHOLO_TEXT_KEY("tasks.moveDown", TasksMoveDown, "")                                      \
+    LHOLO_TEXT_KEY("tasks.pathPlaceholder", TasksPathPlaceholder, "")                        \
+    LHOLO_TEXT_KEY("tasks.noSelection", TasksNoSelection, "")                                \
+    LHOLO_TEXT_KEY("tasks.createTitle", TasksCreateTitle, "")                                \
+    LHOLO_TEXT_KEY("tasks.renameTitle", TasksRenameTitle, "")                                \
+    LHOLO_TEXT_KEY("tasks.namePlaceholder", TasksNamePlaceholder, "")                        \
+    LHOLO_TEXT_KEY("tasks.nameHint", TasksNameHint, "")                                      \
+    LHOLO_TEXT_KEY("tasks.confirm", TasksConfirm, "")                                        \
+    LHOLO_TEXT_KEY("tasks.deleteTaskPrompt", TasksDeleteTaskPrompt, "")                      \
+    LHOLO_TEXT_KEY("tasks.removeFilePrompt", TasksRemoveFilePrompt, "")                      \
+    LHOLO_TEXT_KEY("tasks.cancel", TasksCancel, "")                                          \
                                                                                                          \
     /* Navigation pages */                                                                               \
     LHOLO_TEXT_KEY("page.projection", PageProjection, "")                                                \
@@ -161,8 +197,6 @@
     LHOLO_TEXT_KEY("hotkey.moveDown", HotkeyMoveDown, "")                                                \
     LHOLO_TEXT_KEY("hotkey.layerIncrease", HotkeyLayerIncrease, "")                                      \
     LHOLO_TEXT_KEY("hotkey.layerDecrease", HotkeyLayerDecrease, "")                                      \
-    LHOLO_TEXT_KEY("hotkey.loadProjection", HotkeyLoadProjection, "")                                    \
-    LHOLO_TEXT_KEY("hotkey.closeProjection", HotkeyCloseProjection, "")                                  \
     LHOLO_TEXT_KEY("key.notSet", KeyNotSet, "")                                                          \
     LHOLO_TEXT_KEY("key.mouseMiddle", KeyMouseMiddle, "")                                                \
     LHOLO_TEXT_KEY("key.mouseSide1", KeyMouseSide1, "")                                                  \
@@ -265,8 +299,6 @@
     LHOLO_TEXT_KEY("actionHint.projectionSuspended", ActionHintProjectionSuspended, "")                  \
     LHOLO_TEXT_KEY("actionHint.projectionRestored", ActionHintProjectionRestored, "")                    \
     LHOLO_TEXT_KEY("actionHint.worldExited", ActionHintWorldExited, "")                                  \
-    LHOLO_TEXT_KEY("actionHint.loadProjection", ActionHintLoadProjection, "")                            \
-    LHOLO_TEXT_KEY("actionHint.closeProjection", ActionHintCloseProjection, "")                          \
     LHOLO_TEXT_KEY("actionHint.noMatchingItem", ActionHintNoMatchingItem, "")                            \
     LHOLO_TEXT_KEY("actionHint.manualModeBlocked", ActionHintManualModeBlocked, "")                      \
     LHOLO_TEXT_KEY("oreui.previewActionNotice", OreUiPreviewActionNotice, "")                              \

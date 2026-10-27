@@ -23,8 +23,6 @@ enum class HotkeyId : std::uint8_t {
     MoveDown,
     LayerIncrease,
     LayerDecrease,
-    LoadProjection,
-    CloseProjection,
     Count
 };
 

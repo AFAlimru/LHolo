@@ -203,6 +203,7 @@ MaterialHudResult countMaterialHud(MaterialHudInput input) {
     for (std::size_t index = 0; index < blocks.size(); ++index) {
         if (input.progressCorrect[index] != 0) continue;
         auto const& entry = blocks[index];
+        if (input.structure->composed && entry.sourceIndex!=input.key.selectedSource) continue;
         auto const layer = input.key.layerAxis == LayerAxis::X ? entry.x : entry.y;
         if (!projection::isLayerVisible(
             layer, input.key.layerDisplayMode, input.key.displayLayer,
@@ -285,18 +286,23 @@ void processPendingMaterialList(LocalPlayer& player) {
     if (!ui.consumeMaterialListRequest()) return;
 
     auto const loaded = StructureSession::getInstance().loaded();
+    auto const source=StructureSession::getInstance().selectedSource();
     std::vector<MaterialRequirement> materials;
-    if (loaded) materials = collectMaterials(loaded->renderBlocks, player.getLocaleCode());
+    if (loaded && loaded->composed) {
+        std::vector<LoadedStructure::RenderBlock> selected;
+        for (auto const& block:loaded->renderBlocks) if (block.sourceIndex==source) selected.push_back(block);
+        materials=collectMaterials(selected,player.getLocaleCode());
+    } else if (loaded) materials = collectMaterials(loaded->renderBlocks, player.getLocaleCode());
     // Loading another structure can overlap this game-thread calculation. Never
     // publish a completed list for a structure that is no longer active.
-    if (StructureSession::getInstance().loaded() != loaded) {
+    if (StructureSession::getInstance().loaded() != loaded || StructureSession::getInstance().selectedSource()!=source) {
         ui.requestMaterialList();
         return;
     }
     ui.replaceMaterialRequirements(std::move(materials));
     // Cover the narrow hand-off where the active structure changes between the
     // identity check above and publishing the snapshot.
-    if (StructureSession::getInstance().loaded() != loaded) {
+    if (StructureSession::getInstance().loaded() != loaded || StructureSession::getInstance().selectedSource()!=source) {
         ui.clearMaterials();
         ui.requestMaterialList();
     }

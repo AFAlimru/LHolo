@@ -158,8 +158,10 @@ void renderProjection(
 
     if (!state.blockTessellator) return;
     if (!renderAlphaLayer) {
-        auto const mirrorMode = structure::getMirrorMode();
-        auto const rotationTurns = structure::getRotationQuarterTurns();
+        auto const transform = state.structure->composed ? structure::detail::StructureTransformSnapshot{}
+            : structure::detail::StructureSession::getInstance().transform();
+        auto const mirrorMode = transform.mirror;
+        auto const rotationTurns = transform.rotation;
         auto const mirror = getProjectionMirror(mirrorMode);
         auto const rotation = getProjectionRotation(rotationTurns);
         LegacyStructureSettings transformSettings{
@@ -169,11 +171,11 @@ void renderProjection(
             BoundingBox{}
         };
         bool const identityTransform = mirrorMode == 0 && rotationTurns == 0;
-        auto const offsetX = structure::getOffsetX();
-        auto const offsetY = structure::getOffsetY();
-        auto const offsetZ = structure::getOffsetZ();
-        auto const layerDisplayMode = structure::getLayerDisplayMode();
-        auto const layerAxis = structure::getLayerAxis();
+        auto const offsetX = transform.offsetX;
+        auto const offsetY = transform.offsetY;
+        auto const offsetZ = transform.offsetZ;
+        auto const layerDisplayMode = transform.layerDisplayMode;
+        auto const layerAxis = transform.layerAxis;
         auto const maxLayer = layerAxis == structure::LayerAxis::Material
             ? std::max(0, static_cast<int>(state.structure->materialCount) - 1)
             : std::max(
@@ -182,7 +184,7 @@ void renderProjection(
                     ? state.structure->sizeX : state.structure->sizeY) - 1
             );
         auto const displayLayer = std::clamp(
-            structure::getDisplayLayer(), 0, maxLayer
+            transform.displayLayer, 0, maxLayer
         );
         auto& session = ProjectionSession::getInstance();
         auto const correctionFillOpacity = session.correctionFillOpacity();
@@ -251,9 +253,9 @@ void renderProjection(
     // absolute coordinates to the GPU. Render vertices relative to the projection
     // origin, matching the strategy used by chunk meshes.
     BlockPos const renderOrigin{
-        state.anchor.x + structure::getOffsetX(),
-        state.anchor.y + structure::getOffsetY(),
-        state.anchor.z + structure::getOffsetZ()
+        state.anchor.x + (state.structure->composed ? 0 : structure::getOffsetX()),
+        state.anchor.y + (state.structure->composed ? 0 : structure::getOffsetY()),
+        state.anchor.z + (state.structure->composed ? 0 : structure::getOffsetZ())
     };
 
     submitProjectedBlockActorPass(
@@ -288,7 +290,7 @@ void renderProjection(
             renderOrigin,
             camera,
             renderAlphaLayer,
-            ProjectionSession::getInstance().structureBoundsEnabled(),
+            ProjectionSession::getInstance().structureBoundsEnabled() && !state.structure->renderBlocks.empty(),
             ProjectionSession::getInstance().correctionSeeThrough(),
             ProjectionSession::getInstance().missingSeeThrough()
         );

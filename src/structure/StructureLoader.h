@@ -41,6 +41,7 @@ struct LoadedStructure {
         int sizeX{};
         int sizeY{};
         int sizeZ{};
+        int sourceIndex{-1};
     };
 
     std::filesystem::path                 sourcePath;
@@ -53,6 +54,8 @@ struct LoadedStructure {
     std::uint64_t                        paletteEntries{};
     std::uint64_t                        generation{};
     std::size_t                          materialCount{};
+    bool                                 composed{};
+    std::vector<std::string>              sourceFiles;
     // Cells covered by the source format. mcstructure contributes one box;
     // litematic contributes one per region so gaps between regions are not
     // mistaken for schematic air by projection correction.
@@ -66,9 +69,12 @@ struct LoadedStructure {
         std::shared_ptr<CompoundTag const> blockEntityNbt;
         int          materialIndex{-1};
         int          liquidMaterialIndex{-1};
+        int          sourceIndex{-1};
     };
     std::vector<RenderBlock>              renderBlocks;
 };
+// The first covering region owns schematic air; solid/liquid winners keep their own sourceIndex.
+int coveringSource(LoadedStructure const&, int x, int y, int z);
 
 // Legacy ImGui is retained for compatibility but has no opening entry point.
 void closeLegacyGui();
@@ -130,7 +136,6 @@ bool scrollLockActive();
 void clear();
 // Asynchronously reload the last saved projection at its saved anchor/transform. Standalone so
 // both the menu action and the load hotkey can trigger it.
-void restoreSavedProjection();
 // Status line for a freshly loaded structure. File names and dimensions are
 // language-neutral fragments; the table entry supplies the wording.
 i18n::Message makeLoadedStatusMessage(LoadedStructure const& loaded);

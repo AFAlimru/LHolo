@@ -16,16 +16,16 @@ import { MaterialListModal } from './pages/MaterialListModal';
 import type { MaterialsControls } from './application/useMaterials';
 import { CreateStructurePage } from './pages/CreateStructurePage';
 import type { CaptureControls } from './application/useCapture';
-import { ProjectionPage } from './pages/ProjectionPage';
-import type { ProjectionControls } from './application/useProjection';
-import type { MenuLabels, StructureFileState } from './platform/bridge';
+import { TasksPage } from './pages/TasksPage';
+import type {TaskControls} from './application/useTasks';
+import type { MenuLabels, ProjectionState } from './platform/bridge';
 import { NativeScrollView } from './platform/native';
 import { LHoloButton } from './components/LHoloControls';
+import { SelectedFileContext } from './components/SelectedFileContext';
 
 export function LHoloMenu({
   entryPage,
   labels,
-  file,
   projection,
   capture,
   transform,
@@ -35,13 +35,12 @@ export function LHoloMenu({
   interfaceSettings,
   experimental,
   materialsState,
-  onBrowse,
+  tasks,
   onClose,
 }: {
-  entryPage: 'projection' | 'hud';
+  entryPage: 'tasks' | 'hud';
   labels: MenuLabels;
-  file: StructureFileState;
-  projection: ProjectionControls;
+  projection: ProjectionState;
   capture: CaptureControls;
   transform: TransformControls;
   render: RenderSettingsControls;
@@ -50,10 +49,13 @@ export function LHoloMenu({
   interfaceSettings: InterfaceSettingsControls;
   experimental: ExperimentalSettingsControls;
   materialsState: MaterialsControls;
-  onBrowse(): void;
+  tasks: TaskControls;
   onClose(): void;
 }) {
   const [page, setPage] = useState<MenuPage>(entryPage);
+  const activeTask = tasks.tasks.find(t => t.id === tasks.state?.activeTaskId);
+  const activeFile = activeTask?.layers.find(f => f.id === activeTask.selectedFileId);
+  const taskBusy = !!tasks.state?.loading;
   useEffect(() => setPage(entryPage), [entryPage]);
   const selectPage = (next: MenuPage) => {
     materialsState.closeModal();
@@ -73,22 +75,26 @@ export function LHoloMenu({
         </NativeScrollView></div>
         <div className="lholo-content-viewport"><NativeScrollView>
           <div className="lholo-content" key={page}>
-            {page === 'projection'
-              ? <ProjectionPage labels={labels} file={file} projection={projection} onBrowse={onBrowse} onMaterials={materialsState.openModal} />
-              : page === 'createStructure' ? <CreateStructurePage labels={labels} capture={capture} fileBrowsing={file.browsing} />
-              : page === 'transform' ? <TransformPage labels={labels} transform={transform} />
-              : page === 'render' ? <RenderPage labels={labels} render={render} />
-              : page === 'hud' ? <HudPage labels={labels} hud={hud} worldAvailable={projection.projection.worldAvailable} />
+            {(page === 'transform' || page === 'render') && activeTask ? (
+              <SelectedFileContext label={labels['tasks.currentSelection']}
+                name={activeFile?.name ?? labels['tasks.noSelection']} />
+            ) : null}
+            {page === 'tasks' ? <TasksPage labels={labels} tasksCtrl={tasks} hasProjection={projection.hasProjection} onMaterials={materialsState.openModal} />
+              : page === 'createStructure' ? <CreateStructurePage labels={labels} capture={capture} />
+              : page === 'transform' ? <TransformPage labels={labels} transform={{...transform, ready: transform.ready && !taskBusy && (!activeTask || !!activeFile)}} />
+              : page === 'render' ? <RenderPage labels={labels} render={{...render, ready: render.ready && !taskBusy}} />
+              : page === 'hud' ? <HudPage labels={labels} hud={hud} worldAvailable={projection.worldAvailable} />
               : page === 'hotkeys' ? <HotkeysPage labels={labels} hotkeys={hotkeys} />
               : page === 'interface' ? <InterfacePage labels={labels} interfaceSettings={interfaceSettings} />
-              : <ExperimentalPage labels={labels} experimental={experimental} worldAvailable={projection.projection.worldAvailable} />}
+              : <ExperimentalPage labels={labels} experimental={experimental} worldAvailable={projection.worldAvailable} />}
           </div>
         </NativeScrollView></div>
       </div>
     </div>
     <MaterialListModal
       labels={labels}
-      hasLoadedStructure={projection.projection.hasProjection}
+      hasLoadedStructure={projection.hasProjection}
+      sourceName={activeFile?.name ?? ''}
       materialsState={materialsState}
     />
     <ExperimentalInfoModal labels={labels} experimental={experimental} />

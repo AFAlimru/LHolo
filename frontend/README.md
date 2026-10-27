@@ -1,7 +1,9 @@
 # LHolo OreUI 前端
 
+建造任务页通过 `application/useTasks → platform/taskBridge → oreui/TaskBindings/TaskProtocol → app/TaskActions` 接入原生目录。任务 CRUD、外部路径、顺序、显隐和选择保存在模组 `data/tasks.json`；世界中选择任务后加载多文件合成投影，选中文件决定变换、切片、HUD/材料与放置目标。页面只保留输入草稿与弹窗，示例数据集中在 `preview/tasks.ts`。实际渲染和生命周期仍需游戏内验证，真实文件三维预览后续接入。
+
 使用当前自有菜单样式。聊天命令与菜单快捷键均打开 OreUI 主菜单；旧 ImGui 菜单不再开放入口。
-浏览、加载、关闭投影与恢复上次投影、材料清单弹窗、创建结构选区与导出、结构变换、渲染设置、HUD、快捷键、语言与实验性功能已接入。OreUI 界面设置仅提供语言选择，不提供缩放控件，也不修改旧 ImGui 缩放。
+默认打开建造任务；旧“投影”页面及其浏览、加载、恢复通路已移除。材料清单入口位于任务页，显示当前选中文件的材料并标明文件名称。创建结构选区与导出、结构变换、渲染设置、HUD、快捷键、语言与实验性功能已接入。OreUI 界面设置仅提供语言选择，不提供缩放控件，也不修改旧 ImGui 缩放。
 
 ## 浏览器实时预览
 
@@ -14,7 +16,7 @@ npm.cmd --prefix frontend run preview
 
 打开 http://127.0.0.1:4173/。修改 src/ 内的页面、控件或 CSS 后自动构建并刷新，无需启动游戏或编译 DLL。开发服务器只监听本机 127.0.0.1，终端 Ctrl+C 停止；端口占用时可先设置 `$env:LHOLO_PREVIEW_PORT = '4174'`。
 
-顶部工具栏可切换“两点选区 / 恢复记录 / 未进入世界 / 重置”，并调整字号。调整浏览器窗口或使用开发者工具的设备尺寸功能可检查不同宽度。浏览选择只显示浏览器提供的文件名；模拟加载、恢复和导出不会读取世界、解析结构或生成结构文件。
+顶部工具栏可切换“已加载任务 / 两点选区 / 未进入世界 / 重置”，并调整字号。任务样例和请求模拟位于 preview/，不会读取世界、解析结构或生成结构文件。
 
 preview/ 仅提供开发环境适配和模拟 engine，正式页面、应用 hooks、控件与菜单 CSS 均复用 src/。浏览器预览使用 Mojang @react-facet/dom-fiber 渲染器创建自己的开发 root，不依赖游戏字体或原版游戏脚本。正式游戏构建仍复用游戏运行时，构建检查禁止 preview/ 和额外 React/Facet 运行时混入。
 
@@ -32,17 +34,14 @@ npm.cmd --prefix frontend ci
 npm.cmd --prefix frontend test
 ```
 
-src/App.tsx 只装配页面、useStructureFile、useProjection、useMaterials、useCapture、useTransform、useRenderSettings、useSettings、useHudSettings、useHotkeySettings、useInterfaceSettings 和 useExperimentalSettings。
-application/useStructureFile 管理文件草稿快照与请求状态，由装配入口注入桥接接口。
-LHoloMenu 负责布局与导航，ProjectionPage 仅接收文件/投影状态及动作。
-application/useProjection 管理原生投影快照和待应答状态，不推测业务结果。
+src/App.tsx 装配 useTasks、useProjectionState、useMaterials、useCapture 和设置 hooks。
+TasksPage 显示原生任务目录；LHoloMenu 负责布局和导航。
+application/useProjectionState 只订阅世界可用性、加载状态和投影是否存在，不再提供单文件加载/恢复动作。
 application/useCapture 管理坐标文本草稿、整数校验、revision 同步与请求 id 应答；不读写世界。创建页使用 LHolo 自绘输入框/勾选框，有效坐标与实体开关自动同步选区，不增加应用按钮；导出使用现代另存为对话框。
 platform/bridge 封装 engine、验证 JSON，并返回订阅清理函数。
 components/LHoloControls 与 components/LHoloSelect 集中绘制自有按钮、输入、勾选框和下拉框，样式以旧 ImGui 为基准；platform/native 仅封装无外观交互原语和滚动，版本私有符号只存在于 tools/oreui 的适配器。
 
-文件状态订阅覆盖整个菜单生命周期，切换页签不丢失路径回传。
-取消、错误时保留原路径；等待选择时禁用按钮。选择文件不会自动加载投影。
-不通过前端路径参数启动对话框，C++ 用自身草稿作为再次浏览的初始路径。
+任务文件路径由原生目录持久化；页面只保留输入草稿。添加文件和浏览路径通过 TaskBindings 中的独立选择器完成，取消不会修改路径或加载任务。
 正式游戏入口不重复打包 React/Facet，不额外 createRoot；独立浏览器预览的开发 root 仅在 preview/ 中创建。
 
 构建只验证类型、打包和隔离行为；用户自行在游戏内验收。

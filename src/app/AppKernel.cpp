@@ -4,6 +4,7 @@
 #include "app/AppKernel.h"
 #include "app/RenderSettingsActions.h"
 #include "app/SettingsActions.h"
+#include "app/TaskActions.h"
 
 #include "i18n/LanguageStore.h"
 #include "ui/hud/NativeHudRenderer.h"
@@ -39,6 +40,7 @@ void AppKernel::processControlFrame() {
     structure::processPendingActions();
     if (processRenderSettingsEdits()) structure::saveSettings();
     if (processSettingsActions()) structure::saveSettings();
+    processTaskActions();
     auto client = ll::service::getClientInstance();
     bool const worldAvailable = client && client->$getClientInstanceState() == ClientInstanceState::Playing && client->getLocalPlayer();
     if (consumeHudLayoutEditRequest() && worldAvailable) {
@@ -54,6 +56,7 @@ void AppKernel::processControlFrame() {
 bool AppKernel::load() {
     i18n::initLanguageStore();
     structure::loadSettings();
+    loadTasks();
     return true;
 }
 
@@ -118,6 +121,7 @@ bool AppKernel::disable() {
 
     structure::detail::shutdownStructureFileLoader();
     structure::saveSettings();
+    shutdownTasks();
     structure::detail::shutdownMaterialTracker();
     // Drop all world-owned state before removing hooks. In particular, this
     // resets held placement/input state and joins the projection mesh worker

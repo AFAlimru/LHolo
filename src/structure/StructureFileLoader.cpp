@@ -11,6 +11,13 @@
 #include "structure/StructureSession.h"
 #include "structure/StructureUiState.h"
 #include "structure/formats/StructureFormatLoaders.h"
+#include "mc/world/level/block/states/VanillaBlockStateTransformUtils.h"
+#include "mc/util/Mirror.h"
+#include "mc/util/Rotation.h"
+#include <unordered_map>
+#include <limits>
+#include <algorithm>
+#include <stdexcept>
 
 #include <chrono>
 #include <exception>
@@ -33,6 +40,8 @@ struct FileLoader final : LevelListener {
     std::future<void> task;
     Level* level{};
     bool stopped{true};
+    std::shared_ptr<CompositionLoadResult> compositionResult;
+    std::unordered_map<std::string, std::shared_ptr<LoadedStructure const>> cache;
 
     void onLevelDestruction(std::string const&) override {
         std::lock_guard lock(mutex);
@@ -43,6 +52,7 @@ struct FileLoader final : LevelListener {
         resetProjectionActions();
         StructureSession::getInstance().clearLoaded(i18n::Message{i18n::TextKey::StatusWorldExited});
         if (task.valid()) task.wait();
+        compositionResult.reset(); cache.clear();
         // The dying Level removes its listeners; never remove through it later.
     }
 };
@@ -62,6 +72,9 @@ bool startLoad(std::string path, StructureLoadOrigin origin, std::optional<Saved
         if (loader.task.wait_for(std::chrono::seconds{0}) != std::future_status::ready) return false;
         loader.task.get();
     }
+
+    loader.compositionResult.reset();
+    loader.cache.clear();
 
     auto currentLevel = ll::service::getMultiPlayerLevel();
     if (!currentLevel) return false;
@@ -134,6 +147,7 @@ void shutdownStructureFileLoader() {
     // callback must not mistake a moved-out future for a finished parser.
     // The parser never acquires loader.mutex.
     if (loader.task.valid()) loader.task.get();
+    loader.compositionResult.reset(); loader.cache.clear();
     if (loader.level) {
         loader.level->removeListener(loader);
         loader.level = nullptr;
@@ -156,6 +170,108 @@ bool startSavedProjectionLoad() {
     auto const origin = StructureLoadOrigin{saved.anchorX, saved.anchorY, saved.anchorZ, std::nullopt};
     auto path = saved.structurePath;
     return startLoad(std::move(path), origin, std::move(saved));
+}
+
+bool startTaskComposition(std::string taskId, std::uint64_t revision, StructureLoadOrigin origin,
+                          std::vector<CompositionFile> files, std::vector<std::string> paths,
+                          bool reloadFiles) {
+    auto& loader = fileLoader();
+    std::lock_guard lock(loader.mutex);
+    if (loader.stopped)
+        return false;
+    if (loader.task.valid()) {
+        if (loader.task.wait_for(std::chrono::seconds{0}) != std::future_status::ready)
+            return false;
+        loader.task.get();
+    }
+    auto level = ll::service::getMultiPlayerLevel();
+    if (!level)
+        return false;
+    if (loader.level != &*level) {
+        if (loader.level)
+            loader.level->removeListener(loader);
+        level->addListener(loader);
+        loader.level = &*level;
+        loader.cache.clear();
+    }
+    if (!reloadFiles)
+        for (std::size_t i = 0; i < files.size(); ++i)
+            if (auto it = loader.cache.find(paths[i]); it != loader.cache.end())
+                files[i].loaded = it->second;
+    auto result = std::make_shared<CompositionLoadResult>();
+    result->request = StructureSession::getInstance().beginCompositionLoad(origin);
+    result->revision = revision;
+    result->taskId = std::move(taskId);
+    result->files = std::move(files);
+    loader.compositionResult = result;
+    loader.task = std::async(std::launch::async, [result, paths = std::move(paths)] {
+        try {
+            std::unordered_map<std::string, std::shared_ptr<LoadedStructure const>> parsed;
+            for (std::size_t i = 0; i < result->files.size(); ++i)
+                if (result->files[i].loaded)
+                    parsed[paths[i]] = result->files[i].loaded;
+            for (std::size_t i = 0; i < result->files.size(); ++i) {
+                auto& file = result->files[i];
+                if (!file.visible || file.loaded)
+                    continue;
+                if (auto found = parsed.find(paths[i]); found != parsed.end()) {
+                    file.loaded = found->second;
+                    continue;
+                }
+                result->errorFileId = file.id;
+                file.loaded = loadStructureFile(pathFromUtf8(paths[i]), result->error);
+                if (!file.loaded)
+                    return;
+                parsed[paths[i]] = file.loaded;
+            }
+            result->errorFileId.clear();
+            result->composition =
+                composeTask(result->files, [](Block const* block, int mirror, int rotation) -> Block const* {
+                    if (!block || (mirror == 0 && rotation == 0))
+                        return block;
+                    constexpr Rotation rotations[]{Rotation::None, Rotation::Clockwise90,
+                                                   Rotation::Clockwise180, Rotation::CounterClockwise90};
+                    constexpr Mirror mirrors[]{Mirror::None, Mirror::Z, Mirror::X};
+                    return VanillaBlockStateTransformUtils::transformBlock(*block, rotations[rotation],
+                                                                           mirrors[mirror]);
+                });
+            std::array<int, 3> base{result->request.origin.x, result->request.origin.y,
+                                    result->request.origin.z};
+            auto const& composed = *result->composition.loaded;
+            std::array<int, 3> size{composed.sizeX, composed.sizeY, composed.sizeZ};
+            for (int axis = 0; axis < 3; ++axis) {
+                auto minimum = static_cast<long long>(base[axis]) + result->composition.origin[axis];
+                auto maximum = minimum + std::max(0, size[axis] - 1);
+                if (minimum < std::numeric_limits<int>::min() || maximum > std::numeric_limits<int>::max())
+                    throw std::runtime_error("Task world coordinates exceed supported range");
+            }
+        } catch (std::exception const& error) {
+            result->error = error.what();
+        }
+    });
+    return true;
+}
+std::shared_ptr<CompositionLoadResult> takeTaskCompositionResult() {
+    auto& loader = fileLoader();
+    std::lock_guard lock(loader.mutex);
+    if (!loader.compositionResult || !loader.task.valid() ||
+        loader.task.wait_for(std::chrono::seconds{0}) != std::future_status::ready)
+        return {};
+    loader.task.get();
+    auto result = std::exchange(loader.compositionResult, {});
+    if (result->error.empty()) {
+        loader.cache.clear();
+        for (auto const& file : result->files)
+            if (file.loaded)
+                loader.cache[pathToUtf8(file.loaded->sourcePath)] = file.loaded;
+    }
+    return result;
+}
+std::shared_ptr<LoadedStructure const> cachedTaskFile(std::string const& path) {
+    auto& loader = fileLoader();
+    std::lock_guard lock(loader.mutex);
+    auto it = loader.cache.find(path);
+    return it == loader.cache.end() ? nullptr : it->second;
 }
 
 } // namespace lholo::structure::detail

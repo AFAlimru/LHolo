@@ -1,10 +1,13 @@
 # LHolo OreUI 架构与渐进迁移
 
-## 当前状态（2026-10-26）
+## 当前状态（2026-10-27）
 
 保留当前自有深色菜单，原版设置页风格试验已回滚。
+左侧“建造任务”已接入原生任务目录：新建、重命名、删除、附加外部文件、路径修复、顺序、显隐和选中项均通过 tasks 协议保存到 `data/tasks.json`。世界中选择/新建任务后自动加载，先按文件各自的变换/切片和优先级合成，再交给现有投影管线；结构变换、切片、移动快捷键、HUD/材料及放置查询作用于激活任务的选中文件。“加载任务”用于重新读取当前选择的任务，标题界面只管理任务数据。示例数据只存在于 `frontend/preview/tasks.ts`；正式前端不保存任务副本。文件三维预览仍待后续实现。代码和隔离测试完成，游戏内验收待进行；打开菜单默认显示“建造任务”页，旧“投影”页和它专用的路径浏览、加载、关闭、恢复 query 已移除。材料清单入口移至任务页，统计选中文件并显示文件名。
 聊天输入 LHolo 或使用已配置的菜单快捷键（默认 Alt+M）打开 OreUI 主菜单。旧 ImGui 菜单保留代码但隐藏，不再提供打开入口。
-已接通系统文件浏览、加载、关闭投影与恢复上次投影、创建结构的选区与导出，以及结构变换、渲染设置、HUD、快捷键、语言和实验性功能。
+任务删除和文件移除按用户要求增加二次确认，复用新建/重命名任务的同一个弹窗。弹窗显示操作对象名称，只有点击“确定”才提交原生意图；取消、点击遮罩或切换页面都不删除数据。确认目标按打开弹窗时的任务/文件 ID 保存。
+现行界面通过建造任务管理文件与投影，并提供创建结构、结构变换、渲染设置、HUD、快捷键、语言和实验性功能。
+快捷键页不再提供“加载投影”和“关闭投影”绑定；加载与关闭由建造任务页控制。
 材料清单弹窗已接入原生 `MaterialTracker` / `StructureUiState` 统计快照并复用原版物品缩略图渲染通路；OreUI 界面不提供缩放控件。
 普通 HUD 和材料显示 HUD 的画面由 `src/ui/hud/` 原生绘制，OreUI 只负责原有 HUD 设置；实现边界及验收见 [原生 HUD](NATIVE_HUD_RENDERING.md)。
 选择路径仍是菜单草稿，不自动加载或写配置；明确点击加载后复用现有加载器与投影会话，不改变配置格式。
@@ -17,28 +20,20 @@
 
 导航使用主 `ClientInstance::$update` 回调，不依赖主界面是否已有 OreUI View；只处理主客户端，配对使用 getCurrentSceneStack / getCurrentUIRouter，不保存 ClientInstance/Scene 指针。页面记录打开时的客户端状态和场景名称；通过原生 isOnSceneStack / hasScheduledScreens 判断页面归属，覆盖时暂停通信，实际出栈后清理订阅。状态改变时清理桥接；关闭使用原生 schedulePopScreenWithExpectedNames 和 getScheduledPopCount，不重复维护超时兜底或自定义关闭状态机。ESC 和关闭按钮回到原有主界面。
 
-`lholo:projection` 新增 `worldAvailable:boolean`，来源为原生 Playing 状态和当前玩家。无世界时禁用加载/恢复投影（应用 hook 和原生绑定双重保护），创建页沿用原有世界可用性校验；辅助放置模式禁止启用，普通偏好和文件浏览继续可用。主界面打开/关闭、进入世界、退出世界及资源包在主界面可用性仍需实机验收。
+`lholo:projection` 只提供 worldAvailable / loading / hasProjection，供 HUD、实验性功能和材料弹窗读取运行上下文。任务动作使用 tasks 协议；标题界面允许管理文件引用，禁止加载世界投影和启用辅助放置。
 
 ## 分层与依赖
 
 ```text
-ProjectionPage                 显示文件与投影状态，发出用户动作
-    ↓
-application/useStructureFile   文件草稿订阅
-application/useProjection      投影快照订阅、等待应答与重复提交保护
-application/useCapture         坐标编辑、合法性提示、创建快照与应答
-    ↓
-platform/bridge                query 发送、JSON 校验、事件订阅清理
-    ↓
-OreUiBridge                    原生通信，不弹对话框、不持有路径草稿
-    ↓
-MenuBindings / CaptureBindings 用例绑定、路径草稿、增量快照
-    ├→ structure/ProjectionActions → 原有加载器与会话
-    ├→ structure/capture/CaptureActions → 原有选区与导出
-    ↓
-ui/StructureFilePicker        异步打开/另存为、扩展名校验与取消
-    ↓
-ui/FileDialog                  Win32 系统对话框与过滤器
+TasksPage → application/useTasks → platform/taskBridge
+    → OreUiBridge → TaskBindings / TaskProtocol → app/TaskActions
+    → tasks/TaskCatalog + TaskStore
+    → structure/StructureFileLoader + TaskComposer → StructureSession → projection
+
+CreateStructurePage → useCapture → CaptureBindings / CaptureProtocol → CaptureActions
+
+useProjectionState → platform/bridge → MenuBindings（只读世界/投影上下文）
+useMaterials → platform/bridge → MenuBindings → MaterialTracker（当前选中文件）
 ```
 
 菜单快捷键沿用原有绑定、去重和释放处理，只向 input/MenuOpenRequest 提交无参数意图；AppKernel 控制帧消费并调用 OreUiScreen::requestMenuOpen，路由统一在主 ClientInstance::update 回调中执行。structure/input 不直接依赖 OreUI，菜单内关闭使用 ESC 或关闭按钮。
@@ -47,6 +42,7 @@ OreUiScreen 单独负责路由、命令入口、开关屏和 ESC；主客户端�
 OreUiMenuResources 负责内置资源包的限定 URL 读取适配，只处理 LHolo 自有 HTML/JS，不改变全局包信任判断，不依赖业务模块。
 资源加载诊断与页面诊断浮层已在实测成功后移除；只保留正常错误处理、资源版本校验和菜单 ready 初始化协议。
 页面不访问 engine 或原版私有符号，业务层不依赖 OreUI。
+Gameface 的普通 div 默认按纵向 flex 排列直接子节点。连续文案须先组成一个字符串再交给单个文本节点；需要不同样式时，使用显式横向容器与独立 span。当前选中文件提示由 SelectedFileContext 统一提供。任务错误显式分为两行：第一行“任务错误: 文件名”，第二行错误原因；每行各自保持单个文本节点，避免标点单独成行。
 打开与另存为的全局互斥由 StructureFilePicker 服务负责，两个功能绑定不互相引用。
 FilePicker 不依赖 Gameface、ImGui、结构会话、投影或模组日志。
 MenuBindings 将投影意图提交给 structure/ProjectionActions，不复制 LoadedStructure 或 MenuModel。
@@ -54,26 +50,16 @@ ProjectionActions 在现有应用控制帧统一执行加载、关闭和恢复�
 应用控制帧在 ImGui 初始化之前处理请求，操作执行不依赖旧菜单成功初始化。
 不为首个功能预建通用服务框架；后续按选定业务扩展绑定。
 
-## 文件浏览行为
+## 任务文件与投影操作
 
-- 点击浏览发送无参动作；C++ 使用 IFileOpenDialog 打开现代资源管理器式选择器，默认过滤 `.mcstructure` / `.litematic`。
-- 保留共享对话框的“所有文件”过滤器，但新菜单只接受两种结构扩展名，大小写不敏感。
-- 成功选择后仅回显 UTF-8 完整路径，中文、空格、长路径不截入固定长度前端缓冲区。
-- 取消回传原路径且无错误；失败或扩展名不支持时保留原路径并显示翻译后的提示。
-- 选择器在独立线程执行并初始化自身的 Shell COM apartment，不阻塞 View update；忙碌期间按钮禁用，原生端也拒绝并发选择。
-- 菜单换页不丢失应答。关闭/离开世界/重新开屏会取消未完成请求并丢弃过期结果。
-- 已确认的路径在当前模组进程内保留，重新打开菜单时重新下发；不持久化到 config.json。
-- 禁用时请求 stop 并 join worker。worker 自有消息窗口的定时回调在同一 STA 内调用 IFileDialog::Close；不使用 OFN_ENABLEHOOK 或定制模板，避免退回兼容样式。等待退出时只处理同步发送的窗口通知，避免 modal owner 关闭通知与 join 相互等待，不消费排队的用户输入。
-- 旧 ImGui 菜单的同步 openStructureFile 保持原先无钩子的 GetOpenFileNameW 调用；异步 selectStructureFile 使用现代 COM 选择器。
-
-## 投影操作行为
-
-- 加载使用原生保存的选中路径，读取执行时玩家所在维度与脚下坐标；解析在现有后台任务中执行。
-- 关闭会保留最后投影恢复记录、清空当前投影并使尚未完成的解析结果失效；允许加载期间关闭。后台解析安全结束前不接受下一次加载。
-- 恢复使用已保存的结构路径、锚点和变换；不以当前位置替代历史锚点。无记录时禁用恢复。
-- 前端只显示待应答状态，不推测加载成功。失败保留现有投影，错误及恢复可用性以原生快照为准。
-- 菜单关闭不取消已接受的投影操作；离开世界清理排队请求，现有加载器负责世界销毁与过期结果保护。
-- 加载、恢复与浏览互斥，前后端均限制重复操作。材料清单不发送投影业务请求。
+- TaskBindings 持有独立异步 StructureFilePicker，使用原生任务/文件 ID 解析当前路径。只接受 .mcstructure / .litematic，取消只完成请求应答，不修改任务或文件。
+- 选定路径提交任务动作，原生接受后写入 data/tasks.json；文件保持外部引用，不复制到模组目录。
+- 世界中选择或新建任务会加载并合成，显式“加载任务”可重新读取外部文件；关闭任务投影使迟到结果失效。已接受的动作不因菜单关闭而取消。
+- 每文件变换、切片、显隐和顺序先进入合成，再一次性发布结果；加载失败保留原运行投影并显示具体文件错误。
+- 任务字段最多 32768 UTF-8 字节；tasks Facet 和任务协议统一接受最多 262144 字节的 JSON 信封（包含转义开销），其他 Facet 保持 4096 字节。前端发送前校验，超长请求显示本地化错误并释放等待状态，不用超时恢复。任务名称输入在 IME 组合期间不响应提交或取消。
+- 成功的运行定义与待合成定义分开，失败后旧投影仍可编辑；任务保存由 `TaskStoreWriter` 合并并异步写入，停用时完成最后一份保存。详见 [建造任务](TASKS_DESIGN.md)。
+- 材料入口位于任务页，只有当前查看的是激活任务且已选择文件时可用；复用现有材料弹窗和统计模块。
+- 所有异步选择器仍由独立 STA 和共用 FileDialog 服务管理；停用时取消并等待线程退出。
 
 ## 创建结构行为
 
@@ -130,14 +116,12 @@ lholo.transform.intent 接收 {id, context, field, expected, value}；lholo:tran
 
 | 方向 | 名称 | 内容 |
 | --- | --- | --- |
-| JS → C++ | lholo.menu.ready | 请求文案、文件、投影、选区、变换及渲染设置快照 |
+| JS → C++ | lholo.menu.ready | 请求文案、任务、只读投影上下文、选区、变换及设置快照 |
 | JS → C++ | lholo.menu.close | 请求关闭菜单 |
-| JS → C++ | lholo.structure.browse | 请求选择结构文件，无参数 |
-| JS → C++ | lholo.projection.load | 加载原生持有的选中路径，无参数 |
-| JS → C++ | lholo.projection.close | 关闭当前投影或取消待发布加载 |
-| JS → C++ | lholo.projection.restore | 恢复已保存的投影记录 |
-| JS → C++ | lholo.materials.request | 请求计算并发布当前加载结构的材料清单 |
-| C++ → JS | lholo:projection | worldAvailable / status / loading / hasProjection / canRestore / savedOrigin |
+| JS → C++ | lholo.materials.request | 请求当前选中文件在有效合成结果中的材料清单 |
+| JS → C++ | lholo.tasks.intent（facet） | id / revision / action / taskId / fileId / value / delta |
+| C++ → JS | lholo:tasks | 原生任务目录、选择/激活 ID、revision/ack、加载/选择器状态与错误 |
+| C++ → JS | lholo:projection | worldAvailable / loading / hasProjection |
 | C++ → JS | lholo:materials | ready:boolean / items:[{displayName, nameKey, typeName, iconId, count}] |
 | JS → C++ | facet:discard / facet:request | lholo.capture.intent，同名固定 id；payload.request 为 JSON 字符串：id / revision / action / draft |
 | C++ → JS | lholo:capture | draft / revision / ack / worldAvailable / busy / status / error |
@@ -149,9 +133,8 @@ lholo.transform.intent 接收 {id, context, field, expected, value}；lholo:tran
 | JS → C++ | lholo.hotkeys.cancel | 无参，取消当前/排队的按键捕获 |
 | C++ → JS | lholo:settings | values / hotkeys / languages / consent / hotkeysRevision / context / ack / accepted |
 | C++ → JS | lholo:menu-labels | 现有 i18n 翻译字典 JSON |
-| C++ → JS | lholo:structure-file | path:string / browsing:boolean / error:非负整数 |
 
-带参动作复用原版 facet 激活的类型化 payload（IFacet::init 的标量 map），不读取空壳 ArgumentsBinder。桥接为 capture/transform/render/settings 的固定意图名注册 IntentFacet，只在当前菜单打开时接收，经各自协议校验进入对应业务队列。每次发送先 discard 同名实例再 request，避免累积实例。带参通道和输入控件仍需实机验收，隔离测试不代表游戏内闭环已验证。
+带参动作复用原版 facet 激活的类型化 payload（IFacet::init 的标量 map），不读取空壳 ArgumentsBinder。桥接为 tasks/capture/transform/render/settings 的固定意图名注册 IntentFacet，只在当前菜单打开时接收，经各自协议校验进入对应业务队列。每次发送先 discard 同名实例再 request，避免累积实例。带参通道和输入控件仍需实机验收，隔离测试不代表游戏内闭环已验证。
 
 桥接回调只登记请求；View update 的当前 LHolo 页面执行绑定和读取快照。
 快照仅首次 ready、忙碌状态变化或结果变化时发送。
@@ -189,7 +172,7 @@ components/LHoloControls 自行定义控件子树和样式；runtime_adapter 的
 
 ## 不启动游戏的前端预览
 
-运行 `npm.cmd --prefix frontend run preview`，访问 http://127.0.0.1:4173/。开发入口 frontend/preview/ 使用 Mojang dom-fiber 渲染器和本地模拟 engine，复用正式 App、hooks、可视控件与 CSS，源码变化自动刷新。工具栏提供选区、恢复记录和无世界等模拟状态。浏览器使用系统字体，不需要游戏安装或复制原版资产；浏览只取文件名，导出只显示模拟结果。
+运行 `npm.cmd --prefix frontend run preview`，访问 http://127.0.0.1:4173/。开发入口 frontend/preview/ 使用 Mojang dom-fiber 渲染器和本地模拟 engine，复用正式 App、hooks、可视控件与 CSS，源码变化自动刷新。工具栏提供已加载任务、选区和无世界等模拟状态。浏览器使用系统字体，不需要游戏安装或复制原版资产；浏览只取文件名，导出只显示模拟结果。
 
 正式入口不会引入 preview/；build.mjs 同时检查预览代码和额外 React/Facet 运行时泄漏。开发 preview 独立创建 root，游戏页仍只复用原版 root。浏览器结果仅用于外观与交互开发，不证明原生桥、结构捕获或 Gameface 生命周期安全。详细命令见 frontend/README.md。
 

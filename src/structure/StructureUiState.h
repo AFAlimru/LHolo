@@ -85,8 +85,6 @@ struct PendingHotkeyActions {
     int  offsetZ{};
     int  layerDelta{};
     bool settingsSave{};
-    bool loadProjection{};
-    bool closeProjection{};
 };
 
 class StructureUiState {
@@ -156,8 +154,6 @@ public:
     // and only the resulting delta reaches this state.
     void queueOffsetDelta(int deltaX, int deltaY, int deltaZ);
     void queueLayerDelta(int delta);
-    void queueLoadProjection();
-    void queueCloseProjection();
     void requestSettingsSave();
     [[nodiscard]] PendingHotkeyActions consumePendingHotkeyActions();
 
@@ -247,8 +243,6 @@ private:
     std::atomic_int      mPendingOffsetY{0};
     std::atomic_int      mPendingOffsetZ{0};
     std::atomic_int      mPendingLayerDelta{0};
-    std::atomic_bool     mPendingLoadProjection{false};
-    std::atomic_bool     mPendingCloseProjection{false};
     std::atomic_bool     mPendingSettingsSave{false};
     std::atomic_uint64_t mIgnoreHotkeyUntil{0};
 

@@ -15,29 +15,92 @@ export function LHoloButton({ label, onClick, disabled, className = '', icon }: 
   </NativeInteractive>;
 }
 
-export function LHoloTextField({ label, value, onChange, disabled, maxLength, onBlur }: {
-  label: string; value: string; onChange(value: string): void; disabled?: boolean; maxLength?: number;
+export function LHoloTextField({
+  label,
+  value,
+  onChange,
+  disabled,
+  maxLength,
+  onBlur,
+  className = '',
+  placeholder,
+  autoFocus,
+  onEnter,
+  onEscape,
+}: {
+  label: string;
+  value: string;
+  onChange(value: string): void;
+  disabled?: boolean;
+  maxLength?: number;
   onBlur?(): void;
+  className?: string;
+  placeholder?: string;
+  autoFocus?: boolean;
+  onEnter?(): void;
+  onEscape?(): void;
 }) {
   const input = useRef<HTMLInputElement>(null);
+  const composing = useRef(false);
   const [editing, setEditing] = useState(false);
+
+  useEffect(() => {
+    if (autoFocus && input.current) {
+      input.current.focus();
+    }
+  }, [autoFocus]);
+
   // dom-fiber only forwards a documented subset of JSX event props. Bind the
   // real input event explicitly so keyboard, paste and IME changes all work.
   useEffect(() => {
     const element = input.current;
     if (!element) return;
     const change = () => { if (!disabled) onChange(element.value); };
+    const startComposition = () => { composing.current = true; };
+    const endComposition = () => { composing.current = false; };
     element.addEventListener('input', change);
-    return () => element.removeEventListener('input', change);
+    element.addEventListener('compositionstart', startComposition);
+    element.addEventListener('compositionend', endComposition);
+    return () => {
+      element.removeEventListener('input', change);
+      element.removeEventListener('compositionstart', startComposition);
+      element.removeEventListener('compositionend', endComposition);
+    };
   }, [disabled, onChange]);
-  return <NativeInteractive label={label} disabled={disabled}
-    className={'lholo-input-shell' + (editing ? ' is-editing' : '')}
-    onClick={() => { if (!disabled) input.current?.focus(); }}>
-    <input ref={input} className="lholo-text-input" type="text" value={value}
-      disabled={disabled} maxLength={maxLength} data-narrate={label}
-      onFocus={() => setEditing(true)} onBlur={() => { setEditing(false); onBlur?.(); }}
-      onKeyDown={event => { if (event.key === 'Enter' || event.keyCode === 13) input.current?.blur(); }} />
-  </NativeInteractive>;
+
+  const combinedClass = ('lholo-input-shell ' + className + (editing ? ' is-editing' : '')).trim();
+
+  return (
+    <NativeInteractive
+      label={label}
+      disabled={disabled}
+      className={combinedClass}
+      onClick={() => { if (!disabled) input.current?.focus(); }}
+    >
+      <input
+        ref={input}
+        className="lholo-text-input"
+        type="text"
+        value={value}
+        placeholder={placeholder}
+        disabled={disabled}
+        maxLength={maxLength}
+        data-narrate={label}
+        onFocus={() => setEditing(true)}
+        onBlur={() => { setEditing(false); onBlur?.(); }}
+        onKeyDown={event => {
+          if (composing.current || event.nativeEvent?.isComposing || event.keyCode === 229) return;
+          if (event.key === 'Enter' || event.keyCode === 13) {
+            input.current?.blur();
+            onEnter?.();
+          } else if (event.key === 'Escape' || event.keyCode === 27) {
+            input.current?.blur();
+            onEscape?.();
+          }
+        }}
+      />
+    </NativeInteractive>
+  );
 }
 
 export function LHoloCheckbox({ label, value, onChange, disabled }: {

@@ -71,9 +71,10 @@ StructureSessionSnapshot StructureSession::snapshot() const {
     result.lastPath  = mLastPath;
     result.transform = transformRelaxed();
     result.saved     = savedProjectionLocked();
-    if (mLoaded) {
-        result.maxLayerY = maxLayerFor(*mLoaded, LayerAxis::Y);
-        result.maxLayerX = maxLayerFor(*mLoaded, LayerAxis::X);
+    auto editor = mLoaded && mLoaded->composed ? mEditorStructure : mLoaded;
+    if (editor) {
+        result.maxLayerY = maxLayerFor(*editor, LayerAxis::Y);
+        result.maxLayerX = maxLayerFor(*editor, LayerAxis::X);
     }
     return result;
 }
@@ -117,6 +118,7 @@ void StructureSession::replaceLoadedLocked(
     mLastPath = std::move(path);
     mStatus   = std::move(status);
     mLoaded   = std::move(loaded);
+    if (!mLoaded->composed) { mEditorStructure.reset(); mSelectedSource = -1; }
     mLoadOrigin = origin;
 }
 
@@ -142,12 +144,20 @@ bool StructureSession::completeRestoreLoad(
 void StructureSession::cancelPendingLoad() {
     std::lock_guard lock(mMutex);
     ++mLoadRevision;
+    mCompositionPending=false;
 }
 
 StructureLoadRequest StructureSession::beginFileLoad(StructureLoadOrigin origin) {
     std::lock_guard lock(mMutex);
+    mCompositionPending=false;
     mStatus = i18n::Message{i18n::TextKey::StatusLoading};
     return {++mLoadRevision, origin};
+}
+StructureLoadRequest StructureSession::beginCompositionLoad(StructureLoadOrigin origin) {
+    std::lock_guard lock(mMutex);
+    mCompositionPending=true;
+    mStatus=i18n::Message{i18n::TextKey::TasksLoading};
+    return {++mLoadRevision,origin};
 }
 
 bool StructureSession::completeFileLoad(
@@ -166,6 +176,7 @@ bool StructureSession::failFileLoad(StructureLoadRequest const& request, i18n::M
     if (request.revision != mLoadRevision) return false;
     ++mLoadRevision;
     mStatus = std::move(status);
+    mCompositionPending=false;
     return true;
 }
 
@@ -178,11 +189,37 @@ void StructureSession::clearLoaded(i18n::Message status) {
     refreshSavedTransformLocked();
     ++mLoadRevision;
     mLoaded.reset();
+    mCompositionPending=false;
+    mEditorStructure.reset(); mSelectedSource = -1;
     mLoadOrigin.reset();
     mStatus = std::move(status);
 }
 
 StructureTransformSnapshot StructureSession::transform() const { return transformRelaxed(); }
+
+bool StructureSession::completeCompositionLoad(StructureLoadRequest const& request, std::shared_ptr<LoadedStructure> loaded, StructureLoadOrigin origin) {
+    std::lock_guard lock(mMutex);
+    if (request.revision != mLoadRevision) return false;
+    mSelectedSource=-2; mEditorStructure.reset();
+    replaceLoadedLocked(std::move(loaded), {}, i18n::Message{i18n::TextKey::TasksActive}, origin);
+    mCompositionPending=false;
+    return true;
+}
+void StructureSession::selectCompositionFile(std::shared_ptr<LoadedStructure const> loaded, StructureTransformSnapshot const& t, int source, std::string path) {
+    std::lock_guard lock(mMutex);
+    if (!mLoaded || !mLoaded->composed) return;
+    mEditorStructure=std::move(loaded); mSelectedSource=source; mLastPath=std::move(path); ++mLoadRevision;
+    setRotation(t.rotation); setMirror(t.mirror); setOffsetX(t.offsetX); setOffsetY(t.offsetY); setOffsetZ(t.offsetZ);
+    setLayerAxis(t.layerAxis); setLayerDisplayMode(t.layerDisplayMode); setDisplayLayer(t.displayLayer);
+}
+std::shared_ptr<LoadedStructure const> StructureSession::editorStructure() const {
+    std::lock_guard lock(mMutex);
+    return mLoaded && mLoaded->composed ? mEditorStructure : mLoaded;
+}
+int StructureSession::selectedSourceFor(LoadedStructure const& loaded) const {
+    std::lock_guard lock(mMutex);
+    return mLoaded.get()==&loaded ? mSelectedSource.load(std::memory_order_acquire) : -2;
+}
 
 TransformState StructureSession::transformEditorState() const {
     std::lock_guard lock(mMutex);
@@ -192,7 +229,8 @@ TransformState StructureSession::transformEditorState() const {
 
 bool StructureSession::applyTransformEdit(TransformEdit const& edit) {
     std::lock_guard lock(mMutex);
-    if (!validTransformEdit(edit) || edit.context != mLoadRevision) return false;
+    if (mCompositionPending || (mLoaded && mLoaded->composed && mSelectedSource<0)
+        || !validTransformEdit(edit) || edit.context != mLoadRevision) return false;
     std::atomic_int* target{};
     switch (edit.field) {
     case TransformField::Rotation: target = &mRotationQuarterTurns; break;
@@ -214,8 +252,9 @@ LayerSettingsSnapshot StructureSession::layerSettings() const {
     std::lock_guard lock(mMutex);
     auto t = transformRelaxed();
     LayerSettingsSnapshot result{{t.layerAxis, t.layerDisplayMode, t.displayLayer}, {}, mLoadRevision};
-    if (mLoaded) result.maximum = {maxLayerFor(*mLoaded, LayerAxis::Y), maxLayerFor(*mLoaded, LayerAxis::X),
-        std::max(0, static_cast<int>(std::min(mLoaded->materialCount, static_cast<std::size_t>(std::numeric_limits<int>::max()))) - 1)};
+    auto editor = mLoaded && mLoaded->composed ? mEditorStructure : mLoaded;
+    if (editor) result.maximum = {maxLayerFor(*editor, LayerAxis::Y), maxLayerFor(*editor, LayerAxis::X),
+        std::max(0, static_cast<int>(std::min(editor->materialCount, static_cast<std::size_t>(std::numeric_limits<int>::max()))) - 1)};
     return result;
 }
 
@@ -225,9 +264,11 @@ bool StructureSession::applyLayerSettings(std::uint64_t context, LayerSettings c
     if (context != mLoadRevision || LayerSettings{t.layerAxis, t.layerDisplayMode, t.displayLayer} != expected
         || toInt(desired.axis) < 0 || toInt(desired.axis) > 2 || toInt(desired.mode) < 0 || toInt(desired.mode) > 3) return false;
     if (desired == expected) return true;
-    auto const maximum = !mLoaded ? 0 : desired.axis == LayerAxis::Material
-        ? static_cast<int>(std::min(mLoaded->materialCount, static_cast<std::size_t>(std::numeric_limits<int>::max()))) - 1
-        : maxLayerFor(*mLoaded, desired.axis);
+    if (mCompositionPending || (mLoaded && mLoaded->composed && mSelectedSource<0)) return false;
+    auto editor = mLoaded && mLoaded->composed ? mEditorStructure : mLoaded;
+    auto const maximum = !editor ? 0 : desired.axis == LayerAxis::Material
+        ? static_cast<int>(std::min(editor->materialCount, static_cast<std::size_t>(std::numeric_limits<int>::max()))) - 1
+        : maxLayerFor(*editor, desired.axis);
     desired.layer = std::clamp(desired.layer, 0, std::max(0, maximum));
     setLayerAxis(desired.axis);
     setLayerDisplayMode(desired.mode);
@@ -260,22 +301,25 @@ bool StructureSession::setLayerAxis(LayerAxis value) {
 }
 
 void StructureSession::adjustOffsets(int deltaX, int deltaY, int deltaZ) {
+    if (mCompositionPending || mSelectedSource==-2) return;
     if (deltaX != 0) setOffsetX(addClamped(mOffsetX.load(std::memory_order_relaxed), deltaX));
     if (deltaY != 0) setOffsetY(addClamped(mOffsetY.load(std::memory_order_relaxed), deltaY));
     if (deltaZ != 0) setOffsetZ(addClamped(mOffsetZ.load(std::memory_order_relaxed), deltaZ));
 }
 
 bool StructureSession::adjustDisplayLayer(int delta) {
+    if (mCompositionPending || mSelectedSource==-2) return false;
     if (delta == 0 || layerDisplayModeFromInt(mLayerDisplayMode.load(std::memory_order_relaxed))
         == LayerDisplayMode::All) return false;
     auto const axis = layerAxisFromInt(mLayerAxis.load(std::memory_order_relaxed));
     auto       maxLayer = 0;
     {
         std::lock_guard lock(mMutex);
-        if (mLoaded) {
+        auto editor = mLoaded && mLoaded->composed ? mEditorStructure : mLoaded;
+        if (editor) {
             maxLayer = axis == LayerAxis::Material
-                ? std::max(0, static_cast<int>(mLoaded->materialCount) - 1)
-                : maxLayerFor(*mLoaded, axis);
+                ? std::max(0, static_cast<int>(editor->materialCount) - 1)
+                : maxLayerFor(*editor, axis);
         }
     }
     auto const current = static_cast<long long>(mDisplayLayer.load(std::memory_order_relaxed));
@@ -313,7 +357,7 @@ void StructureSession::refreshSavedTransformIfActive() {
 }
 
 void StructureSession::refreshSavedTransformLocked() {
-    if (!mLoaded || !mHasSavedProjection.load(std::memory_order_acquire)) return;
+    if (!mLoaded || mLoaded->composed || !mHasSavedProjection.load(std::memory_order_acquire)) return;
     auto const current = transformRelaxed();
     mSavedRotation.store(current.rotation, std::memory_order_relaxed);
     mSavedMirror.store(current.mirror, std::memory_order_relaxed);
@@ -327,6 +371,7 @@ void StructureSession::refreshSavedTransformLocked() {
 
 void StructureSession::recordProjectionAnchor(int x, int y, int z) {
     std::lock_guard lock(mMutex);
+    if (mLoaded && mLoaded->composed) return;
     mHasSavedProjection.store(false, std::memory_order_relaxed);
     auto const current = transformRelaxed();
     mSavedAnchorX.store(x, std::memory_order_relaxed);

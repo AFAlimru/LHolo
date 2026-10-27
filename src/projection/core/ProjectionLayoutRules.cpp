@@ -7,6 +7,7 @@
 
 #include "projection/core/ProjectionRules.h"
 #include "projection/core/ProjectionVisibilityRules.h"
+#include "structure/StructureTransform.h"
 
 namespace lholo::projection::detail {
 
@@ -81,16 +82,8 @@ BlockPos transformStructurePosition(
     int                               mirrorMode,
     int                               rotation
 ) {
-    int x = position.x;
-    int z = position.z;
-    if (mirrorMode == 1) x = loaded.sizeX - 1 - x;
-    if (mirrorMode == 2) z = loaded.sizeZ - 1 - z;
-    switch (rotation) {
-    case 1: return BlockPos{loaded.sizeZ - 1 - z, position.y, x};
-    case 2: return BlockPos{loaded.sizeX - 1 - x, position.y, loaded.sizeZ - 1 - z};
-    case 3: return BlockPos{z, position.y, loaded.sizeX - 1 - x};
-    default: return BlockPos{x, position.y, z};
-    }
+    auto p = structure::transformCell(position.x, position.y, position.z, loaded.sizeX, loaded.sizeZ, mirrorMode, rotation);
+    return BlockPos{p[0], p[1], p[2]};
 }
 
 BlockPos inverseTransformStructurePosition(

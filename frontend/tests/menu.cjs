@@ -36,7 +36,7 @@ const context = {
       ItemIcon: ({ itemId }) => React.createElement('native-item-icon', { itemId }),
     },
     engine: {
-      on(name, fn) { assert(['lholo:menu-entry', 'lholo:menu-labels', 'lholo:structure-file', 'lholo:projection', 'lholo:materials', 'lholo:capture', 'lholo:transform', 'lholo:render', 'lholo:settings'].includes(name)); listeners.add({ name, fn }); },
+      on(name, fn) { assert(['lholo:menu-entry', 'lholo:menu-labels', 'lholo:projection', 'lholo:materials', 'lholo:capture', 'lholo:transform', 'lholo:render', 'lholo:settings', 'lholo:tasks'].includes(name)); listeners.add({ name, fn }); },
       off(name, fn) { for (const item of listeners) if (item.name === name && item.fn === fn) listeners.delete(item); },
       trigger(...args) { events.push(args); },
     },
@@ -77,89 +77,135 @@ assert(errors.length > 0);
 receive(JSON.stringify(labels));
 assert.equal(tree.root.findAllByType('native-scroll').length, 2);
 assert.equal(tree.root.findAllByType('button').filter(node => node.props.className?.includes('lholo-navigation-item')).length, 8);
-const fileState = (path, browsing = false, error = 0) => receive(JSON.stringify({ path, browsing, error }), 'lholo:structure-file');
+let taskState = {tasks:[{id:'castle',name:'城堡建造',selectedFileId:'roof',layers:[
+  {id:'body',name:'主体.mcstructure',path:'D:\\投影\\主体.mcstructure',hidden:false},
+  {id:'roof',name:'屋顶.litematic',path:'D:\\投影\\屋顶.litematic',hidden:false},
+  {id:'detail',name:'装饰.mcstructure',path:'D:\\投影\\装饰.mcstructure',hidden:true}]}],
+  currentTaskId:'castle',activeTaskId:'',revision:1,ack:0,accepted:false,loading:false,browsing:false,
+  worldAvailable:true,writable:true,error:'',errorFileId:''};
+const emitTasks = () => receive(JSON.stringify(taskState),'lholo:tasks');
+emitTasks();
+click(labels['tasks.nav']);
+assert(nodeText(tree.root).includes(labels['tasks.layers']));
+assert(nodeText(tree.root).includes(labels['tasks.currentSelection'] + ':'));
+assert.equal(tree.root.findByProps({className:'lholo-selected-file-label'}).children.join(''),
+  labels['tasks.currentSelection'] + ':', 'Task label and colon share a single text node');
+assert.equal(nodeText(tree.root.findByProps({className:'lholo-selected-file-name'})), '屋顶.litematic',
+  'Selected-file heading has no order number or parentheses');
+assert(nodeText(tree.root).includes('主体.mcstructure'));
+assert(nodeText(tree.root).includes('屋顶.litematic'));
+assert(nodeText(tree.root).includes('装饰.mcstructure'));
+assert(nodeText(tree.root).includes(labels['tasks.create']));
+assert(nodeText(tree.root).includes(labels['tasks.rename']));
+assert(nodeText(tree.root).includes(labels['tasks.delete']));
+taskState.error = '不支持的文件格式，请选择 .mcstructure 或 .litematic';
+taskState.errorFileId = 'roof'; emitTasks();
+let taskError = tree.root.findByProps({className:'lholo-muted lholo-task-error'});
+assert.deepEqual(taskError.findByProps({className:'lholo-task-error-heading'}).children,
+  [labels['tasks.error'] + ': 屋顶.litematic'], 'Error heading keeps punctuation with filename');
+assert.deepEqual(taskError.findByProps({className:'lholo-task-error-message'}).children,
+  [taskState.error], 'Error reason starts in its own text block');
+taskState.errorFileId = ''; emitTasks();
+taskError = tree.root.findByProps({className:'lholo-muted lholo-task-error'});
+assert.deepEqual(taskError.findByProps({className:'lholo-task-error-heading'}).children,
+  [labels['tasks.error'] + ':'], 'Storage error label keeps its punctuation');
+assert.deepEqual(taskError.findByProps({className:'lholo-task-error-message'}).children,
+  [taskState.error], 'Storage error reason also has its own line');
+taskState.error = ''; emitTasks();
+click(labels['tasks.hide']);
+const taskIntent = JSON.parse(events.filter(e => e[0]==='facet:request' && e[1]==='lholo.tasks.intent').at(-1)[3].request);
+assert.equal(taskIntent.action,'visible');assert.equal(taskIntent.fileId,'body');assert.equal(taskIntent.revision,1);
+assert(!taskState.tasks[0].layers[0].hidden,'Task UI waits for native state');
+taskState.tasks[0].layers[0].hidden=true;taskState.ack=taskIntent.id;taskState.revision++;taskState.accepted=true;emitTasks();
+assert.equal(tree.root.findByProps({ 'data-narrate': labels['tasks.path'] }).props.value, 'D:\\投影\\屋顶.litematic',
+  'Changing visibility does not select another file');
+click(labels['tasks.rename']);
+assert(nodeText(tree.root).includes(labels['tasks.renameTitle']));
+const beforeImeRequests = events.filter(e => e[0] === 'facet:request' && e[1] === 'lholo.tasks.intent').length;
+const nameInput = () => tree.root.findByProps({'data-narrate': labels['tasks.name']});
+const nameMock = inputMocks.get(labels['tasks.name']);
+renderer.act(() => nameMock.listeners.get('compositionstart')());
+renderer.act(() => nameInput().props.onKeyDown({key:'Enter',keyCode:13,nativeEvent:{isComposing:true}}));
+assert(nodeText(tree.root).includes(labels['tasks.renameTitle']), 'IME candidate Enter keeps task dialog open');
+assert.equal(events.filter(e => e[0] === 'facet:request' && e[1] === 'lholo.tasks.intent').length, beforeImeRequests);
+renderer.act(() => nameMock.listeners.get('compositionend')());
+renderer.act(() => nameInput().props.onKeyDown({key:'Enter',keyCode:229,nativeEvent:{}}));
+assert(nodeText(tree.root).includes(labels['tasks.renameTitle']), 'IME compatibility key cannot submit');
+click(labels['tasks.cancel']);
+assert(!nodeText(tree.root).includes(labels['tasks.renameTitle']));
+const taskRequests = () => events.filter(e => e[0] === 'facet:request' && e[1] === 'lholo.tasks.intent');
+const pathInput = () => tree.root.findByProps({'data-narrate': labels['tasks.path']});
+const editTaskPath = value => renderer.act(() => {
+  const input = inputMocks.get(labels['tasks.path']);
+  input.value = value; input.listeners.get('input')();
+});
+const beforeLongPath = taskRequests().length;
+editTaskPath('中'.repeat(11000));
+renderer.act(() => pathInput().props.onBlur());
+assert.equal(taskRequests().length, beforeLongPath, 'oversized UTF-8 value never enters native transport');
+assert(nodeText(tree.root).includes(labels['tasks.requestTooLarge']), 'oversized request has localized feedback');
+editTaskPath('D:\\' + '中'.repeat(2000) + '.mcstructure');
+renderer.act(() => pathInput().props.onBlur());
+assert.equal(taskRequests().length, beforeLongPath + 1, 'rejected request does not leave the page waiting');
+const longPathIntent = JSON.parse(taskRequests().at(-1)[3].request);
+assert(Buffer.byteLength(taskRequests().at(-1)[3].request, 'utf8') > 4096, 'regression reaches beyond old facet limit');
+taskState.ack=longPathIntent.id;taskState.revision++;emitTasks();
+assert(!nodeText(tree.root).includes(labels['tasks.requestTooLarge']));
+const beforeDeleteRequests = taskRequests().length;
+click(labels['tasks.delete']);
+assert.equal(nodeText(tree.root.findByProps({className:'lholo-modal-title'})), labels['tasks.delete']);
+assert(nodeText(tree.root).includes(labels['tasks.deleteTaskPrompt'].replace('%s','城堡建造')));
+assert.equal(tree.root.findByProps({className:'lholo-modal'}).findAllByType('input').length, 0);
+assert.equal(taskRequests().length, beforeDeleteRequests, 'Opening delete confirmation does not delete the task');
+click(labels['tasks.cancel']);
+assert.equal(taskRequests().length, beforeDeleteRequests, 'Cancel preserves the task');
+click(labels['tasks.removeFile']);
+assert(nodeText(tree.root).includes(labels['tasks.removeFilePrompt'].replace('%s','主体.mcstructure')));
+renderer.act(() => tree.root.findByProps({className:'lholo-modal-backdrop'}).props.onClick());
+assert.equal(taskRequests().length, beforeDeleteRequests, 'Closing the backdrop preserves the file');
+click(labels['tasks.removeFile']);
+assert.equal(taskRequests().length, beforeDeleteRequests, 'File removal also waits for confirmation');
+click(labels['tasks.confirm']);
+const removeFileIntent = JSON.parse(taskRequests().at(-1)[3].request);
+assert.equal(removeFileIntent.action,'removeFile');assert.equal(removeFileIntent.taskId,'castle');assert.equal(removeFileIntent.fileId,'body');
+taskState.tasks[0].layers=taskState.tasks[0].layers.filter(f=>f.id!=='body');
+taskState.ack=removeFileIntent.id;taskState.revision++;emitTasks();
+assert(!nodeText(tree.root).includes('主体.mcstructure'));
+click(labels['tasks.delete']);click(labels['tasks.confirm']);
+const deleteTaskIntent = JSON.parse(taskRequests().at(-1)[3].request);
+assert.equal(deleteTaskIntent.action,'delete');assert.equal(deleteTaskIntent.taskId,'castle');
+assert.equal(taskRequests().length, beforeDeleteRequests+2, 'Only the two confirmed deletions send native requests');
+taskState.tasks=[];taskState.currentTaskId='';taskState.ack=deleteTaskIntent.id;taskState.revision++;emitTasks();
+assert(nodeText(tree.root).includes(labels['tasks.emptyTasks']));
+click(labels['page.transform']);
+assert(!nodeText(tree.root).includes('城堡建造'));
+click(labels['page.render']);
+assert(!nodeText(tree.root).includes('屋顶.litematic'));
+click(labels['tasks.nav']);
+assert.equal(tree.root.findAllByType('native-scroll').length, 2);
+assert(!tree.root.findAllByType('button').some(node => nodeText(node) === labels['page.projection']), 'Legacy projection navigation removed');
 const buttonByLabel = label => tree.root.findAllByType('button').find(node => nodeText(node) === label);
 const projectionState = (changes = {}) => receive(JSON.stringify({
-  worldAvailable: true, status: labels['status.notLoaded'], loading: false, hasProjection: false, canRestore: false, savedOrigin: '', ...changes,
+  worldAvailable:true,loading:false,hasProjection:false,...changes,
 }), 'lholo:projection');
 projectionState();
-assert.equal(buttonByLabel(labels['button.load']).props.disabled, true);
-assert.equal(buttonByLabel(labels['button.closeProjection']).props.disabled, true);
-assert.equal(buttonByLabel(labels['button.restoreLastProjection']).props.disabled, true);
-
-fileState('');
-click(labels['button.browse']);
-assert(events.some(args => args[0] === 'query:subscribe/lholo.structure.browse'));
-const pendingButton = tree.root.findAllByType('button').find(node => nodeText(node) === labels['oreui.browsing']);
-assert.equal(pendingButton.props.disabled, true);
-const requests = events.length;
-renderer.act(() => pendingButton.props.onClick());
-assert.equal(events.length, requests, 'A pending browse cannot be submitted twice');
-const selectedPath = String.raw`D:\蓝图 文件夹\房屋.mcstructure`;
-fileState(selectedPath);
-assert.equal(tree.root.findByProps({ className: 'lholo-file-field' }).props.title, selectedPath);
-assert(JSON.stringify(tree.toJSON()).includes('房屋.mcstructure'));
-click(labels['button.browse']);
-fileState(selectedPath); // native Cancel keeps the existing draft path
-assert(JSON.stringify(tree.toJSON()).includes('房屋.mcstructure'));
-receive('{"path":9,"browsing":false,"error":0}', 'lholo:structure-file');
-assert(JSON.stringify(tree.toJSON()).includes('房屋.mcstructure'), 'Invalid payload cannot corrupt the displayed path');
-fileState(selectedPath, false, 123);
-assert(JSON.stringify(tree.toJSON()).includes(labels['oreui.browseFailed']));
-fileState(selectedPath);
-click(labels['material.listTitle']);
-assert(tree.root.findByProps({ className: 'lholo-material-modal' }), 'Material list modal opens when unloaded');
-assert(nodeText(tree.root.findByProps({ className: 'lholo-material-modal' })).includes(labels['status.notLoaded']));
-click(labels['page.render']);
-click(labels['page.projection']);
-assert(JSON.stringify(tree.toJSON()).includes('房屋.mcstructure'), 'Page navigation retains the selected path');
-assert.equal(buttonByLabel(labels['button.load']).props.disabled, false);
-projectionState({worldAvailable: false, canRestore: true});
-assert.equal(buttonByLabel(labels['button.load']).props.disabled, true);
-assert.equal(buttonByLabel(labels['button.restoreLastProjection']).props.disabled, true);
-const beforeTitleActions = events.length;
-renderer.act(() => buttonByLabel(labels['button.load']).props.onClick());
-renderer.act(() => buttonByLabel(labels['button.restoreLastProjection']).props.onClick());
-assert.equal(events.length, beforeTitleActions, 'World actions cannot queue from the title menu');
-projectionState();
-click(labels['button.load']);
-assert(events.some(args => args[0] === 'query:subscribe/lholo.projection.load'));
-assert.equal(buttonByLabel(labels['button.load']).props.disabled, true);
-assert.equal(buttonByLabel(labels['button.closeProjection']).props.disabled, false,
-  'Close remains available to cancel a pending first load');
-const beforeDuplicateLoad = events.length;
-renderer.act(() => buttonByLabel(labels['button.load']).props.onClick());
-assert.equal(events.length, beforeDuplicateLoad);
-assert(JSON.stringify(tree.toJSON()).includes(labels['status.notLoaded']), 'No optimistic loaded state');
-projectionState({ status: labels['status.loading'], loading: true });
-assert.equal(buttonByLabel(labels['button.browse']).props.disabled, true);
-click(labels['button.closeProjection']);
-assert(events.some(args => args[0] === 'query:subscribe/lholo.projection.close'));
-const beforeDuplicateClose = events.length;
-renderer.act(() => buttonByLabel(labels['button.closeProjection']).props.onClick());
-assert.equal(events.length, beforeDuplicateClose);
-projectionState({ status: labels['status.projectionClosed'], canRestore: true, savedOrigin: 'X 10 Y 63 Z -20' });
-assert.equal(buttonByLabel(labels['button.closeProjection']).props.disabled, true);
-assert.equal(buttonByLabel(labels['button.restoreLastProjection']).props.disabled, false);
-assert(JSON.stringify(tree.toJSON()).includes('X 10 Y 63 Z -20'));
-click(labels['button.restoreLastProjection']);
-assert(events.some(args => args[0] === 'query:subscribe/lholo.projection.restore'));
-assert.equal(buttonByLabel(labels['button.load']).props.disabled, true);
-projectionState({ status: labels['status.loading'], loading: true, canRestore: true });
-projectionState({ status: 'Restored test structure', hasProjection: true, canRestore: true });
-assert(JSON.stringify(tree.toJSON()).includes('Restored test structure'));
-receive('{"status":"bad","loading":"yes"}', 'lholo:projection');
-assert(JSON.stringify(tree.toJSON()).includes('Restored test structure'));
-click(labels['button.load']);
-projectionState({ status: 'Load failed: test', hasProjection: true, canRestore: true });
-assert(JSON.stringify(tree.toJSON()).includes('Load failed: test'));
-assert.equal(buttonByLabel(labels['button.closeProjection']).props.disabled, false,
-  'A failed replacement does not hide the current projection');
+assert.equal(buttonByLabel(labels['material.listTitle']).props.disabled, true, 'Materials require an active task file');
+const selectedTaskPath = String.raw`D:\蓝图 文件夹\房屋.mcstructure`;
+taskState.tasks=[{id:'materials-task',name:'材料任务',selectedFileId:'materials-file',layers:[
+  {id:'materials-file',name:'房屋.mcstructure',path:selectedTaskPath,hidden:false}]}];
+taskState.currentTaskId=taskState.activeTaskId='materials-task';taskState.revision++;emitTasks();
+projectionState({hasProjection:true});
+assert.equal(buttonByLabel(labels['material.listTitle']).props.disabled, false);
+receive('{"worldAvailable":true,"loading":"invalid","hasProjection":false}', 'lholo:projection');
+assert.equal(buttonByLabel(labels['material.listTitle']).props.disabled, false, 'Invalid context cannot replace native state');
 const beforeMaterials = events.length;
 click(labels['material.listTitle']);
 assert.equal(events.at(-1)[0], 'query:subscribe/lholo.materials.request', 'Opening materials modal requests native material snapshot');
 assert.equal(events.length, beforeMaterials + 1);
 const materialModal = tree.root.findByProps({ className: 'lholo-material-modal' });
+assert(nodeText(materialModal).includes('房屋.mcstructure'), 'Task materials identify the selected file');
+assert.equal(materialModal.findByProps({className:'lholo-selected-file-label'}).children.join(''),
+  labels['tasks.currentSelection'] + ':', 'Materials reuse the compact label with attached colon');
 
 assert(nodeText(materialModal).includes(labels['material.loading']), 'Pending snapshot shows calculation hint');
 assert(!nodeText(materialModal).includes(labels['hint.noPlaceableMaterials']));
@@ -193,7 +239,7 @@ renderer.act(() => materialModal.findAllByType('button').find(node => nodeText(n
 assert.equal(tree.root.findAllByProps({ className: 'lholo-material-modal' }).length, 0, 'Close button dismisses material modal');
 
 
-click(labels['page.projection']);
+click(labels['tasks.nav']);
 // Capture drafts live for the whole menu, and only native acknowledgements
 // commit player coordinates, world resets and export outcomes.
 click(labels['page.createStructure']);
@@ -290,10 +336,9 @@ captureState({revision: 8, ack: 8, draft: {
   second: {x: 2147483647, y: 2147483647, z: 2147483647}, includeEntities: false,
 }});
 assert(JSON.stringify(tree.toJSON()).includes('79228162514264337593543950336'), 'Large volume remains exact without BigInt');
-click(labels['page.projection']);
+click(labels['tasks.nav']);
 assert(events.every(args => ['query:subscribe/lholo.menu.ready', 'query:subscribe/lholo.menu.close',
-  'query:subscribe/lholo.structure.browse', 'query:subscribe/lholo.projection.load',
-  'query:subscribe/lholo.projection.close', 'query:subscribe/lholo.projection.restore', 'query:subscribe/lholo.materials.request', 'facet:discard', 'facet:request'].includes(args[0])));
+  'query:subscribe/lholo.materials.request', 'facet:discard', 'facet:request'].includes(args[0])));
 // Transform migration is frontend only: exact old controls, no game commands.
 const beforeTransform = events.length;
 let transformState = {values: {rotation: 0, mirror: 0, x: 0, y: 0, z: 0}, context: 8, ack: 0, accepted: false};
@@ -342,7 +387,7 @@ typeTransform(1, '-2147483649'); blurTransform(1); step(1, '-');
 assert.equal(transformInputs()[1].props.value, '-2147483648', 'Negative int32 boundary clamps without wrapping');
 typeTransform(2, '-'); blurTransform(2);
 assert.equal(transformInputs()[2].props.value, '-57', 'Incomplete text restores last valid value on blur');
-click(labels['page.projection']); click(labels['page.transform']);
+click(labels['tasks.nav']); click(labels['page.transform']);
 assert.equal(nodeText(selectTrigger(0)), '90°▼', 'Transform draft survives page navigation');
 assert.equal(nodeText(selectTrigger(1)), 'Z▼');
 assert.equal(transformInputs()[2].props.value, '-57');
@@ -389,7 +434,7 @@ transformState = {...transformState, values: {...transformState.values, x: 55}};
 assert.equal(transformInputs()[0].props.value, '55', 'Unchanged text cannot become a stale draft');
 assert.equal(transformRequests().length, beforeNoopTransform);
 renderer.act(() => selectTrigger(0).props.onClick());
-click(labels['page.projection']);
+click(labels['tasks.nav']);
 assert.equal(dropdownListeners.size, 0, 'Leaving transform cleans dropdown handlers');
 
 // Render settings migration is frontend only: exact old controls, texts and bounds, no game commands.
@@ -456,7 +501,7 @@ assert.equal(renderInputs()[1].props.value, '42', 'Incomplete opacity text resto
 renderer.act(() => pageChecks()[0].props.onClick());
 renderer.act(() => pageChecks()[1].props.onClick());
 renderer.act(() => pageChecks()[2].props.onClick());
-click(labels['page.projection']); click(labels['page.render']);
+click(labels['tasks.nav']); click(labels['page.render']);
 assert(!pageChecks()[0].props.className.includes('is-checked'), 'Render draft survives page navigation');
 assert(pageChecks()[1].props.className.includes('is-checked'));
 assert(pageChecks()[2].props.className.includes('is-checked'));
@@ -587,21 +632,22 @@ assert.equal(tree.root.findAllByProps({className: 'lholo-select-trigger'}).lengt
 click(labels['page.hotkeys']);
 const hotkeyRows=()=>tree.root.findAllByProps({className:'lholo-hotkey-row'});
 const hkButton=(n,b=0)=>hotkeyRows()[n].findAllByType('button')[b];
-assert.equal(hotkeyRows().length,11);
+assert.equal(hotkeyRows().length,9);
 assert.equal(nodeText(hkButton(0)),'Alt + M');
-renderer.act(()=>hkButton(9).props.onClick());ackSettings();
-assert.equal(nodeText(hkButton(9)),labels['hint.pressKeys']);
+renderer.act(()=>hkButton(7,2).props.onClick());ackSettings();
+renderer.act(()=>hkButton(7).props.onClick());ackSettings();
+assert.equal(nodeText(hkButton(7)),labels['hint.pressKeys']);
 assert.equal(dropdownListeners.size,0,'Game frontend installs no DOM hotkey capture listeners');
-nativeCapture(122);assert.equal(nodeText(hkButton(9)),labels['hint.pressKeys']);
-nativeCapture(27);assert.equal(nodeText(hkButton(9)),labels['key.notSet']);
-renderer.act(()=>hkButton(9).props.onClick());ackSettings();nativeCapture(77,2);
-assert.equal(nodeText(hkButton(9)),'Alt + M');assert.equal(nodeText(hkButton(0)),labels['key.notSet']);
-renderer.act(()=>hkButton(9).props.onClick());ackSettings();nativeCapture(8);
-assert.equal(nodeText(hkButton(9)),labels['key.notSet']);
-renderer.act(()=>hkButton(10).props.onClick());ackSettings();nativeCapture(5,1);
-assert.equal(nodeText(hkButton(10)),'Ctrl + '+labels['key.mouseSide1']);
-renderer.act(()=>hkButton(10,2).props.onClick());ackSettings();
-assert.equal(nodeText(hkButton(10)),labels['key.notSet']);
+nativeCapture(122);assert.equal(nodeText(hkButton(7)),labels['hint.pressKeys']);
+nativeCapture(27);assert.equal(nodeText(hkButton(7)),labels['key.notSet']);
+renderer.act(()=>hkButton(7).props.onClick());ackSettings();nativeCapture(77,2);
+assert.equal(nodeText(hkButton(7)),'Alt + M');assert.equal(nodeText(hkButton(0)),labels['key.notSet']);
+renderer.act(()=>hkButton(7).props.onClick());ackSettings();nativeCapture(8);
+assert.equal(nodeText(hkButton(7)),labels['key.notSet']);
+renderer.act(()=>hkButton(8).props.onClick());ackSettings();nativeCapture(5,1);
+assert.equal(nodeText(hkButton(8)),'Ctrl + '+labels['key.mouseSide1']);
+renderer.act(()=>hkButton(8,2).props.onClick());ackSettings();
+assert.equal(nodeText(hkButton(8)),labels['key.notSet']);
 renderer.act(()=>hkButton(0,1).props.onClick());ackSettings();assert.equal(nodeText(hkButton(0)),'Alt + M');
 renderer.act(()=>pageChecks()[0].props.onClick());settleSettings();
 assert.equal(settingsState.values.altWheelOffsetEnabled,false);
@@ -649,7 +695,7 @@ assert.equal(expInputs()[1].props.value,'17','Rejected edit restores authoritati
 renderer.act(()=>pageChecks()[0].props.onClick());
 settingsState={...settingsState,context:21,values:{...settingsState.values,activeMode:0}};emitSettings();
 assert(pageChecks().every(b=>!b.props.className.includes('is-checked')),'World context reset clears pending mode');
-click(labels['page.projection']);
+click(labels['tasks.nav']);
 
 click(labels['menu.close']);
 assert(events.some(args => args[0] === 'query:subscribe/lholo.menu.close'));
@@ -659,10 +705,9 @@ assert([...inputMocks.values()].every(input => input.listeners.size === 0), 'DOM
 mount();
 assert.equal(listeners.size, 9);
 receive(JSON.stringify(labels));
-assert(tree.root.findAllByType('button').some(node => nodeText(node) === labels['button.browse']));
-fileState(selectedPath);
-assert.equal(tree.root.findByProps({ className: 'lholo-file-field' }).props.title, selectedPath,
-  'Reopened menu displays the native draft snapshot');
+emitTasks();projectionState({hasProjection:true});
+assert.equal(tree.root.findByProps({'data-narrate':labels['tasks.path']}).props.value, selectedTaskPath,
+  'Reopened menu restores the native task file snapshot');
 renderer.act(() => tree.unmount());
 assert.equal(listeners.size, 0);
 assert([...inputMocks.values()].every(input => input.listeners.size === 0), 'DOM input subscriptions clean up');
@@ -699,4 +744,4 @@ assert.equal(icon.props.width, '1.6rem');
 assert.equal(icon.props.height, '1.6rem');
 assert.equal(adapterContext.window.__LHoloOreUiRuntime.ItemIcon({itemId: 'custom:stone'}).props.itemID, 'custom:stone',
   'Version adapter preserves non-vanilla namespaces');
-console.log('Menu tests passed: native transform, render, HUD, hotkeys, interface language, experimental settings and material list; no OreUI scale placeholder; automatic selection synchronization, preserved in-flight edits, no extra button, hidden scroll rails; capture coordinates, selection, export/cancel, invalid input and native input adapters; file selection, Unicode path, cancellation, duplicate click, invalid payload, navigation, cleanup/reopen, load/close/restore protocol, cancellation controls and native-state reconciliation.');
+console.log('Menu tests passed: task navigation and native catalog, deletion confirmations, task material entry, capture/export, transform/render/HUD/hotkeys/language/experimental settings, subscription cleanup and runtime adapters.');

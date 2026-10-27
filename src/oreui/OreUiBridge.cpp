@@ -6,6 +6,8 @@
 #include "oreui/TransformBindings.h"
 #include "oreui/RenderSettingsBindings.h"
 #include "oreui/SettingsBindings.h"
+#include "oreui/TaskBindings.h"
+#include "oreui/TaskProtocol.h"
 #include "i18n/Translator.h"
 #include "mc/client/gui/oreui/binding/FacetRegistry.h"
 #include "oreui/IntentFacet.h"
@@ -28,12 +30,11 @@
 
 namespace lholo::oreui {
 namespace {
-std::atomic_bool active{}, labelsPending{}, browsePending{}, fileStatePending{};
-std::atomic_bool loadPending{}, closeProjectionPending{}, restorePending{}, projectionStatePending{};
+std::atomic_bool active{}, labelsPending{};
 std::atomic_bool materialsRequestPending{}, materialsStatePending{};
 bool registered{}, viewInstalled{}, intentInstalled{};
 auto& logger() { return LHolo::getInstance().getSelf().getLogger(); }
-enum class MenuQuery { Ready, Close, BrowseStructure, LoadProjection, CloseProjection, RestoreProjection, RequestMaterials, CancelHotkeyCapture, EditHudLayout };
+enum class MenuQuery { Ready, Close, RequestMaterials, CancelHotkeyCapture, EditHudLayout };
 std::optional<i18n::Language> publishedLanguage;
 
 // Typed facet activation is the supported scalar-payload entry point. No
@@ -52,11 +53,14 @@ bool receiveRenderSettingsIntent(std::string_view request) {
 bool receiveSettingsIntent(std::string_view request) {
     return active.load() && isMenuOnTop() && queueSettingsIntent(request);
 }
+bool receiveTaskIntent(std::string_view request) {
+    return active.load() && isMenuOnTop() && queueTaskIntent(request);
+}
 LL_TYPE_INSTANCE_HOOK(MenuIntentActivation, ll::memory::HookPriority::Normal,
     OreUI::FacetRegistry, &OreUI::FacetRegistry::$activateFacet,
     std::optional<OreUI::IFacetRegistry::Error>, OreUI::FacetBinder& binder,
     std::string const& name, std::string const& id, FacetPayload const& payload) {
-    if (name == "lholo.capture.intent" || name == "lholo.transform.intent" || name == "lholo.render.intent" || name == "lholo.settings.intent") {
+    if (name == "lholo.capture.intent" || name == "lholo.transform.intent" || name == "lholo.render.intent" || name == "lholo.settings.intent" || name == "lholo.tasks.intent") {
         if (!active.load() || !isMenuOnTop()) return OreUI::IFacetRegistry::Error::ActivateNotFound;
         bool known{};
         for (auto const& prototype : mFacetPrototypes.get()) if (prototype.name.get() == name) known = true;
@@ -69,6 +73,8 @@ LL_TYPE_INSTANCE_HOOK(MenuIntentActivation, ll::memory::HookPriority::Normal,
                 $registerFacet(name, [] { return std::make_unique<IntentFacet>(receiveRenderSettingsIntent, "lholo.render.intent"); });
             else if (name == "lholo.settings.intent")
                 $registerFacet(name, [] { return std::make_unique<IntentFacet>(receiveSettingsIntent, "lholo.settings.intent"); });
+            else if (name == "lholo.tasks.intent")
+                $registerFacet(name, [] { return std::make_unique<IntentFacet>(receiveTaskIntent, "lholo.tasks.intent", kTaskIntentMaxBytes); });
         }
     }
     return origin(binder, name, id, payload);
@@ -81,11 +87,7 @@ public:
         if (!active.load()) return;
         switch (mQuery) {
         case MenuQuery::Close: requestMenuClose(); break;
-        case MenuQuery::Ready: labelsPending = fileStatePending = projectionStatePending = materialsStatePending = true; break;
-        case MenuQuery::BrowseStructure: browsePending = true; break;
-        case MenuQuery::LoadProjection: loadPending = true; break;
-        case MenuQuery::CloseProjection: closeProjectionPending = true; break;
-        case MenuQuery::RestoreProjection: restorePending = true; break;
+        case MenuQuery::Ready: labelsPending = materialsStatePending = true; break;
         case MenuQuery::RequestMaterials: materialsRequestPending = materialsStatePending = true; break;
         case MenuQuery::CancelHotkeyCapture: if (isMenuOnTop()) cancelSettingsHotkeyCapture(); break;
         case MenuQuery::EditHudLayout: if (isMenuOnTop()) app::requestHudLayoutEdit(); break;
@@ -110,41 +112,27 @@ LL_TYPE_INSTANCE_HOOK(MenuViewUpdate, ll::memory::HookPriority::Normal,
     if (!active.load()) return;
     try {
         auto const menuView = mUrl.get().find("lholo-menu.html") != std::string::npos;
-        bool load{}, close{}, restore{};
-        // Accept business intents before scheduling a menu pop. Once accepted,
-        // loading belongs to the structure session and survives closing the UI.
-        if (menuView && isMenuOnTop()) {
-            load = loadPending.exchange(false);
-            close = closeProjectionPending.exchange(false);
-            restore = restorePending.exchange(false);
-            if (close) closeActiveProjection();
-            else if (restore) restoreLastProjection();
-            else if (load) loadSelectedProjection();
-        }
         if (!menuView || !isMenuOnTop()) return;
         auto const ready = labelsPending.exchange(false);
-        if (ready) $triggerEvent("lholo:menu-entry", menuEntryPage() == MenuEntryPage::Hud ? R"("hud")" : R"("projection")");
+        if (ready) $triggerEvent("lholo:menu-entry", menuEntryPage() == MenuEntryPage::Hud ? R"("hud")" : R"("tasks")");
         if (ready || publishedLanguage != i18n::language()) {
             publishedLanguage = i18n::language();
             $triggerEvent("lholo:menu-labels", buildMenuLabels());
         }
-        if (browsePending.exchange(false)) requestStructureFileBrowse();
         if (materialsRequestPending.exchange(false)) requestMaterialList();
-        auto const forceProjection = projectionStatePending.exchange(false) || load || close || restore;
-        if (auto update = takeTransformUpdate(forceProjection)) $triggerEvent("lholo:transform", *update);
-        if (auto update = takeRenderSettingsUpdate(forceProjection)) $triggerEvent("lholo:render", *update);
-        if (auto update = takeSettingsUpdate(forceProjection)) $triggerEvent("lholo:settings", *update);
-        if (auto update = takeCaptureUpdate(forceProjection)) {
+        if (auto update = takeTransformUpdate(ready)) $triggerEvent("lholo:transform", *update);
+        if (auto update = takeRenderSettingsUpdate(ready)) $triggerEvent("lholo:render", *update);
+        if (auto update = takeSettingsUpdate(ready)) $triggerEvent("lholo:settings", *update);
+        if (auto update = takeTaskUpdate(ready)) $triggerEvent("lholo:tasks", *update);
+        if (auto update = takeCaptureUpdate(ready)) {
             $triggerEvent("lholo:capture", *update);
         }
-        if (auto update = takeProjectionUpdate(forceProjection)) {
+        if (auto update = takeProjectionUpdate(ready)) {
             $triggerEvent("lholo:projection", *update);
         }
-        if (auto update = takeMaterialsUpdate(forceProjection || materialsStatePending.exchange(false))) {
+        auto const forceMaterials = materialsStatePending.exchange(false) || ready;
+        if (auto update = takeMaterialsUpdate(forceMaterials)) {
             $triggerEvent("lholo:materials", *update);
-        }
-        if (auto update = takeStructureFileUpdate(fileStatePending.exchange(false))) {
-            $triggerEvent("lholo:structure-file", *update);
         }
     } catch (std::exception const& error) {
         logger().error("[oreui] menu update failed: {}", error.what());
@@ -167,10 +155,6 @@ bool installMenuBridge() {
                 for (auto const& definition : {
                     QueryDefinition{"lholo.menu.ready", MenuQuery::Ready},
                     QueryDefinition{"lholo.menu.close", MenuQuery::Close},
-                    QueryDefinition{"lholo.structure.browse", MenuQuery::BrowseStructure},
-                    QueryDefinition{"lholo.projection.load", MenuQuery::LoadProjection},
-                    QueryDefinition{"lholo.projection.close", MenuQuery::CloseProjection},
-                    QueryDefinition{"lholo.projection.restore", MenuQuery::RestoreProjection},
                     QueryDefinition{"lholo.materials.request", MenuQuery::RequestMaterials},
                     QueryDefinition{"lholo.hud.edit-layout", MenuQuery::EditHudLayout},
                     QueryDefinition{"lholo.hotkeys.cancel", MenuQuery::CancelHotkeyCapture}
@@ -189,14 +173,14 @@ bool installMenuBridge() {
 }
 
 void resetMenuBridge() {
-    labelsPending = browsePending = fileStatePending = false;
-    loadPending = closeProjectionPending = restorePending = projectionStatePending = false;
+    labelsPending = false;
     materialsRequestPending = materialsStatePending = false;
     resetMenuBindings();
     resetCaptureBindings();
     resetTransformBindings();
     resetRenderSettingsBindings();
     resetSettingsBindings();
+    resetTaskBindings();
     publishedLanguage.reset();
 }
 bool hasMenuRegistrations() { return registered; }
@@ -207,7 +191,7 @@ void uninstallMenuBridge() {
     intentInstalled = false;
     if (viewInstalled) MenuViewUpdate::unhook();
     viewInstalled = false;
-    shutdownMenuBindings();
+    shutdownTaskBindings();
     shutdownCaptureBindings();
 }
 }

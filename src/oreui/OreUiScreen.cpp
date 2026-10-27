@@ -45,7 +45,7 @@ namespace {
 std::atomic_bool active{}, openPending{}, closePending{}, menuOnTop{}, escapeHeld{}, escapeForwarded{};
 bool sendInstalled{}, serverInstalled{}, downInstalled{}, upInstalled{}, updateInstalled{};
 std::optional<ClientInstanceState> openedState;
-std::atomic<MenuEntryPage> entryPage{MenuEntryPage::Projection};
+std::atomic<MenuEntryPage> entryPage{MenuEntryPage::Tasks};
 std::string openedScreenName;
 auto& logger() { return LHolo::getInstance().getSelf().getLogger(); }
 bool isMenuScene(std::string const& name) { return name.find("lholo-menu.html") != std::string::npos; }

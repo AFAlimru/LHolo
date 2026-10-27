@@ -119,6 +119,7 @@ ProjectionInvalidationResult reconcileProjectionInvalidation(
         state.extraBlockPositions.clear();
         for (auto& positions : state.sectionExtraBlockPositions) positions.clear();
         state.progressExtraCount = 0;
+        for (auto& p:state.sourceProgress) p.extra=0;
         state.extraScanRegion = 0;
         state.extraScanCell = 0;
         markAllSectionsDirty(state, false);
@@ -159,6 +160,7 @@ ProjectionInvalidationResult reconcileProjectionInvalidation(
         ++state.progressRevision;
         std::fill(state.progressErrorKind.begin(), state.progressErrorKind.end(), 0);
         state.progressCorrectCount = 0;
+        for (auto& p:state.sourceProgress) { p.placed=0; p.visiblePlaced=0; p.wrongType=0; p.wrongState=0; p.extra=0; }
         state.progressVisibleCorrectCount = 0;
         state.progressWrongTypeCount = 0;
         state.progressWrongStateCount = 0;

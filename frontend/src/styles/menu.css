@@ -6,6 +6,63 @@
 .lholo-menu { padding:1.25rem; border-radius:0.6rem; background-color:#121212; border:0.06rem solid #303030; }
 .lholo-menu-header { flex-direction:row; flex-shrink:0; align-items:center; justify-content:space-between; padding-bottom:0.75rem; border-bottom:0.06rem solid #303030; }
 .lholo-brand { font-size:1.25rem; line-height:1.5; }
+/* Build tasks */
+.lholo-tasks-page { box-sizing:border-box; width:100%; flex-shrink:0; }
+
+.lholo-task-control-row { flex-direction:row; align-items:center; flex-wrap:wrap; margin-top:0.9rem; }
+.lholo-task-control-row .lholo-select { min-width:10rem; width:15rem; max-width:100%; margin-right:0.5rem; }
+.lholo-task-control-secondary { flex-direction:row; align-items:center; margin-left:auto; }
+.lholo-task-control-secondary > .lholo-button { background-color:transparent; color:#a8a8a8; margin-left:0.15rem; }
+.lholo-task-control-secondary > .lholo-button.lholo-control-hovered { background-color:#282828; color:#ededed; }
+.lholo-task-control-secondary > .lholo-button.lholo-control-pressed { background-color:#383838; }
+.lholo-task-control-secondary > .lholo-button.lholo-control-disabled { color:#666666; }
+.lholo-task-section-title { flex-direction:row; align-items:baseline; font-size:1.05rem; font-weight:600; line-height:1.4; color:#ededed; margin-top:1.25rem; padding-bottom:0.45rem; border-bottom:0.06rem solid #303030; }
+.lholo-task-error { display:flex; flex-direction:column; overflow-wrap:break-word; }
+.lholo-task-error-heading, .lholo-task-error-message { display:block; }
+
+/* Layer list */
+.lholo-tasks-layer-list { flex-direction:column; margin-top:0.65rem; border-radius:0.3rem; overflow:hidden; border:0.06rem solid #303030; background-color:#1b1b1b; }
+.lholo-tasks-layer-row { box-sizing:border-box; flex-direction:row; align-items:center; height:2.55rem; min-height:2.55rem; padding:0 0.7rem; border-bottom:0.06rem solid #2a2a2a; background-color:transparent; transition:background-color 140ms ease; }
+.lholo-tasks-layer-row:hover { background-color:#222222; }
+.lholo-tasks-layer-row.is-selected { background-color:#252525; }
+.lholo-tasks-layer-row.is-selected:hover { background-color:#2a2a2a; }
+.lholo-tasks-layer-num { min-width:1.5rem; margin-left:0.6rem; flex-shrink:0; align-items:center; font-size:0.92rem; color:#7a7a7a; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.lholo-tasks-layer-row.is-selected .lholo-tasks-layer-num { color:#ededed; font-weight:600; }
+.lholo-tasks-eye-btn { width:1.9rem; height:1.9rem; padding:0; margin-right:0.55rem; flex-shrink:0; background-color:transparent !important; border:none !important; border-radius:0.25rem; justify-content:center; align-items:center; }
+.lholo-tasks-eye-btn.lholo-control-hovered { background-color:rgba(255,255,255,0.08) !important; }
+.lholo-tasks-eye-btn.lholo-control-pressed { background-color:rgba(255,255,255,0.15) !important; }
+.lholo-tasks-eye-btn.lholo-control-focused { border:none !important; box-shadow:inset 0 0 0 0.06rem rgba(255,255,255,0.3) !important; }
+.lholo-tasks-eye-btn .lholo-button-label { display:none; }
+.lholo-tasks-eye-btn .lholo-button-icon { width:1.2rem; height:1.2rem; display:flex; align-items:center; justify-content:center; }
+.lholo-tasks-eye-btn .lholo-button-icon svg { width:100%; height:100%; }
+.lholo-tasks-eye-btn.is-visible .lholo-button-icon { color:#ededed; }
+.lholo-tasks-eye-btn.is-hidden .lholo-button-icon { color:#8b8b8b; }
+.lholo-tasks-layer-name { flex:1 1 0; min-width:0; flex-direction:row; align-items:center; overflow:hidden; height:100%; cursor:pointer; }
+.lholo-tasks-layer-title { font-size:0.94rem; color:#ededed; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.lholo-tasks-layer-row.is-selected .lholo-tasks-layer-title { color:#ffffff; font-weight:600; }
+.lholo-tasks-layer-row.is-hidden .lholo-tasks-layer-title { color:#a0a0a0; }
+.lholo-tasks-layer-actions { flex-direction:row; align-items:center; flex-shrink:0; margin-left:0.6rem; }
+.lholo-button.lholo-tasks-arrow-btn { width:1.85rem; height:1.85rem; padding:0; margin-left:0.15rem; background-color:transparent; border:none; border-radius:0.25rem; justify-content:center; align-items:center; }
+.lholo-button.lholo-tasks-arrow-btn.lholo-control-hovered { background-color:#383838; }
+.lholo-button.lholo-tasks-arrow-btn.lholo-control-pressed { background-color:#464646; }
+.lholo-tasks-arrow-btn.lholo-control-focused { border:0.08rem solid #ededed; }
+.lholo-tasks-arrow-btn .lholo-button-label { display:none; }
+.lholo-tasks-arrow-btn .lholo-button-icon { width:1rem; height:1rem; color:#bdbdbd; display:flex; align-items:center; justify-content:center; }
+.lholo-tasks-arrow-btn .lholo-button-icon svg { width:100%; height:100%; }
+.lholo-tasks-arrow-btn.lholo-control-disabled .lholo-button-icon { color:#555555; }
+.lholo-tasks-delete-btn { margin-left:0.45rem; }
+.lholo-tasks-delete-btn.lholo-control-hovered { background-color:#3d2222; }
+.lholo-tasks-delete-btn.lholo-control-hovered .lholo-button-icon { color:#ff7875; }
+.lholo-tasks-delete-btn.lholo-control-pressed { background-color:#542222; }
+.lholo-tasks-delete-btn.lholo-control-pressed .lholo-button-icon { color:#ff9c9c; }
+.lholo-button.lholo-tasks-add-row { width:100%; height:2.45rem; justify-content:flex-start; background-color:transparent; color:#b0b0b0; border-radius:0; padding:0 0.9rem; }
+.lholo-button.lholo-tasks-add-row.lholo-control-hovered { background-color:#282828; color:#ededed; }
+.lholo-button.lholo-tasks-add-row.lholo-control-pressed { background-color:#333333; }
+.lholo-tasks-add-row .lholo-button-icon { margin-right:0.5rem; }
+
+/* 选中文件检查器 */
+.lholo-tasks-file-box { margin-top:0.55rem; }
+.lholo-tasks-file-box .lholo-file-row { margin-bottom:0.4rem; }
 .lholo-menu-body { flex:1; min-height:0; flex-direction:row; overflow:hidden; padding-top:0.7rem; }
 .lholo-navigation { width:11rem; flex-shrink:0; min-height:0; overflow:hidden; padding-right:0.8rem; }
 .lholo-content-viewport { flex:1; min-width:0; min-height:0; overflow:hidden; }
@@ -14,10 +71,14 @@
 .lholo-section-title { font-size:1.2rem; font-weight:600; line-height:1.5; padding-bottom:0.65rem; border-bottom:0.06rem solid #303030; }
 .lholo-status { font-size:1rem; line-height:1.5; margin:1rem 0; }
 .lholo-muted { color:#909090; font-size:0.9rem; line-height:1.5; margin-top:0.4rem; }
-.lholo-file-row, .lholo-action-row, .lholo-restore-row { flex-direction:row; align-items:center; }
-.lholo-file-field { flex:1; min-width:0; min-height:2.2rem; justify-content:center; padding:0.4rem 0.8rem; overflow-wrap:break-word; background-color:#242424; border-radius:0.25rem; font-size:1rem; }
+/* Gameface divs are column flex: keep label/punctuation in one text node. */
+.lholo-selected-file-context { display:flex; flex-direction:row; align-items:baseline; min-width:0; margin-top:0.4rem; margin-bottom:0.6rem; color:#909090; font-size:0.9rem; line-height:1.5; }
+.lholo-selected-file-label { flex-shrink:0; white-space:nowrap; margin-right:0.45rem; }
+.lholo-selected-file-name { min-width:0; flex-shrink:1; overflow-wrap:break-word; }
+.lholo-selected-file-context.lholo-task-file-heading { margin-top:1.25rem; margin-bottom:0; padding-bottom:0.45rem; border-bottom:0.06rem solid #303030; }
+.lholo-file-row, .lholo-action-row { flex-direction:row; align-items:center; }
 .lholo-file-row > .lholo-button { margin-left:0.65rem; }
-.lholo-action-row, .lholo-restore-row { margin-top:1rem; flex-wrap:wrap; }
+.lholo-action-row { margin-top:1rem; flex-wrap:wrap; }
 .lholo-action-row > .lholo-button { margin-right:0.65rem; margin-bottom:0.4rem; }
 .lholo-notice { color:#b6cde3; font-size:1rem; line-height:1.5; margin-top:1rem; }
 /* Shared control size: 2.2rem high, 1rem text; navigation has its own size. */
@@ -158,6 +219,51 @@
 .lholo-modal-body { margin-top:0.4rem; }
 .lholo-modal-paragraph { font-size:1.05rem; line-height:1.55; margin-top:0.55rem; color:#e0e0e0; }
 .lholo-modal > .lholo-action-row, .lholo-modal > .lholo-transform-divider { flex-shrink:0; }
+
+.lholo-modal-input-group { box-sizing:border-box; width:100%; margin:1.15rem 0 0.85rem; }
+.lholo-modal-input-label { width:100%; flex-shrink:0; white-space:nowrap; font-size:0.95rem; color:#b0b0b0; margin-bottom:0.5rem; font-weight:500; }
+.lholo-modal-input-hint { font-size:0.85rem; color:#858585; margin-top:0.45rem; }
+
+/* Full width task inputs */
+.lholo-input-shell.lholo-input-full,
+.lholo-input-shell.lholo-modal-input {
+  box-sizing:border-box;
+  width:100% !important;
+  max-width:100%;
+  height:2.4rem;
+  min-height:2.4rem;
+  background-color:#242424;
+  border:0.06rem solid #383838;
+  border-radius:0.25rem;
+  padding:0 0.4rem;
+  transition:border-color 140ms ease, background-color 140ms ease;
+}
+.lholo-input-shell.lholo-input-full.lholo-control-hovered,
+.lholo-input-shell.lholo-modal-input.lholo-control-hovered {
+  border-color:#505050;
+  background-color:#2a2a2a;
+}
+.lholo-input-shell.lholo-input-full.lholo-control-focused,
+.lholo-input-shell.lholo-input-full.is-editing,
+.lholo-input-shell.lholo-modal-input.lholo-control-focused,
+.lholo-input-shell.lholo-modal-input.is-editing {
+  border-color:#ededed;
+  background-color:#202020;
+}
+.lholo-input-shell.lholo-input-full input.lholo-text-input,
+.lholo-input-shell.lholo-modal-input input.lholo-text-input {
+  box-sizing:border-box;
+  width:100%;
+  height:100%;
+  font-size:1rem;
+  color:#ededed;
+  padding:0.2rem 0.5rem;
+  background-color:transparent;
+}
+.lholo-input-shell.lholo-input-full input.lholo-text-input::placeholder,
+.lholo-input-shell.lholo-modal-input input.lholo-text-input::placeholder {
+  color:#606060;
+}
 
 /* Material list uses the same neutral surfaces and type scale as the menu. */
 .lholo-material-modal { padding:1.25rem; border-radius:0.6rem; border:0.06rem solid #303030; background-color:#151515; }

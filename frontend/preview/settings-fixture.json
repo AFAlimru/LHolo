@@ -13,8 +13,6 @@
     {"labelKey":"hotkey.moveUp", "key":38, "modifiers":4},
     {"labelKey":"hotkey.moveDown", "key":40, "modifiers":4},
     {"labelKey":"hotkey.layerIncrease", "key":38, "modifiers":2},
-    {"labelKey":"hotkey.layerDecrease", "key":40, "modifiers":2},
-    {"labelKey":"hotkey.loadProjection", "key":0, "modifiers":0},
-    {"labelKey":"hotkey.closeProjection", "key":0, "modifiers":0}
+    {"labelKey":"hotkey.layerDecrease", "key":40, "modifiers":2}
   ]
 }

@@ -92,6 +92,7 @@ struct ProjectionState {
     std::uint64_t                   progressWrongTypeCount{};
     std::uint64_t                   progressWrongStateCount{};
     std::uint64_t                   progressExtraCount{};
+    std::vector<BuildProgress>       sourceProgress;
     std::size_t                     correctionScanCursor{};
     std::size_t                     extraScanRegion{};
     std::uint64_t                   extraScanCell{};

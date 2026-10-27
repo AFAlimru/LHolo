@@ -4,8 +4,8 @@ import { selectionMetrics } from '../application/selectionMetrics';
 import type { MenuLabels } from '../platform/bridge';
 import { LHoloButton, LHoloCheckbox, LHoloTextField } from '../components/LHoloControls';
 
-export function CreateStructurePage({ labels, capture, fileBrowsing }: {
-  labels: MenuLabels; capture: CaptureControls; fileBrowsing: boolean;
+export function CreateStructurePage({ labels, capture }: {
+  labels: MenuLabels; capture: CaptureControls;
 }) {
   const { state, first, second, setFirst, setSecond, includeEntities, setIncludeEntities, valid, draft, busy, editingBusy, submit } = capture;
   const disabled = !state?.worldAvailable || busy;
@@ -47,7 +47,7 @@ export function CreateStructurePage({ labels, capture, fileBrowsing }: {
     <div className="lholo-action-row">
       <LHoloButton label={labels['button.clearSelection']} disabled={disabled} onClick={() => submit('clear')} />
       <LHoloButton label={labels['button.exportMcstructure']}
-        disabled={disabled || fileBrowsing || !valid || !draft?.first || !draft.second} onClick={() => submit('export')} />
+        disabled={disabled || !valid || !draft?.first || !draft.second} onClick={() => submit('export')} />
     </div>
     {editingBusy && <div className="lholo-notice">{labels['oreui.captureBusy']}</div>}
     {state?.error && <div className="lholo-notice">{state.error}</div>}

@@ -17,8 +17,7 @@ HUD 布局编辑使用独立原生 UIScene，入口仍在 OreUI HUD 设置页。
 
 OreUI 渐进迁移状态（2026-10-25）：聊天命令和菜单快捷键均打开当前自有样式的 OreUI 主菜单，旧 ImGui 菜单保留代码但不开放入口。
 主界面入口试验：菜单快捷键允许在 Idle + start_screen 打开同一页面；路由调度在主 ClientInstance::update 上执行，不依赖已有 OreUI View。进入/退出世界或加载状态变化关闭旧上下文页面。无世界时允许浏览文件和编辑偏好，禁用加载/恢复投影、选区/导出与辅助放置启用；前后端均校验 worldAvailable。主界面实机结果待验收。
-浏览、加载、关闭投影、恢复、材料清单弹窗、创建结构选区/导出、结构变换、渲染设置、HUD、快捷键、语言和实验性功能已接入；OreUI 不提供缩放控件，不写旧 ImGui 缩放。前端 → 通信桥 → MenuBindings，
-浏览进入独立异步文件选择服务；投影意图进入 structure/ProjectionActions，在现有应用控制帧执行并复用加载器与会话，业务模块不依赖 OreUI。协议、取消、测试与部署要求见
+默认入口为建造任务，旧单文件“投影”页面和专用浏览/加载/恢复桥接已移除；材料清单位于任务页。前端任务意图经 TaskBindings/TaskProtocol 进入 app/TaskActions，复用现有加载器、合成器和投影会话；MenuBindings 只提供材料与运行上下文快照。OreUI 不提供缩放控件，不写旧 ImGui 缩放。协议、取消、测试与部署要求见
 [OreUI 迁移说明](docs/OREUI_MIGRATION.md)；前端入口见 [frontend/README.md](frontend/README.md)。
 材料清单经 useMaterials → MaterialsBridge → MenuBindings 读取 StructureUiState 的版本化一致快照。协议 iconId 仅用于显示，保留完整命名空间；版本私有格式转换集中在 tools/oreui/runtime_adapter.js，不借图标显示改变材料背包计数或辅助放置规则。原生快照未变化时不复制材料数组或重建 JSON。
 收尾审计、官方依据/私有适配边界与未闭合事项见 [OreUI 审计报告](docs/OREUI_AUDIT.md)。
@@ -29,6 +28,10 @@ OreUI 渐进迁移状态（2026-10-25）：聊天命令和菜单快捷键均打�
 渲染设置经 application/useRenderSettings → RenderSettingsBindings/Protocol → app/RenderSettingsActions 接入。AppKernel::processControlFrame 在 ImGui 初始化前编排结构动作与渲染设置，并复用 saveSettings。应用启用时向 Overlay 注册原子帧回调，Overlay 不依赖 AppKernel，关闭时移除回调。投影视觉参数仍由 projection 持有，分层和真实范围由 StructureSession / LayerSettings 持有；下层不得反向依赖 app 或 OreUI。请求只包含改动字段，控制帧校验原值、会话和分层轴，避免整页配置覆盖。
 
 HUD/快捷键/语言/实验性功能由 app/SettingsActions 统一接收字段或具体命令，原生持有实际状态；前端共享 useSettings 的应答调度，各页 hook 只持有局部编辑状态。语言列表/快捷键标签与默认值不在正式前端复制；input/HotkeyCapture 共用原有输入规则。模式不持久化，知情确认和参数沿用原有保存；缩放协议不开放。详见迁移说明。
+
+建造任务的数据规则和原子存储位于 `src/tasks/`，`app/TaskActions` 负责控制帧、运行态和发布，`structure/TaskComposer` 合成获胜方块并保留文件来源与真实覆盖区域。原始文件缓存复用 `StructureFileLoader` 的世界生命周期，现有投影管线消费单个不可变合成快照；选中文件决定变换、切片、HUD/材料和放置目标。任务保存在 `data/tasks.json`，与全局配置及旧单文件恢复记录分离。实现边界和验证清单见 [建造任务](docs/TASKS_DESIGN.md)；本次多文件运行仍需游戏内验收。
+
+任务审计修正：`TaskActions` 保留成功/待合成两份运行定义，失败不阻断旧投影的文件编辑；`TaskContext` 隔离玩家锚点和数据路径，隔离测试可运行真实任务控制帧。`TaskStoreWriter` 使用单写入线程合并 300 ms 内连续编辑，停用时完成最终保存；任务级变换与切片不重复写全局配置。任务 Facet 的 JSON 信封大小与任务协议一致，前端超长输入有明确错误且不进入等待；任务名称 IME 候选确认不误提交。无调用的 `restoreSavedProjection()` 门面已删除，隐藏旧 ImGui 菜单仍按现有约束保留。
 
 OreUI 可视控件集中在 frontend/src/components/LHoloControls.tsx，视觉与排版以当前旧 ImGui 的 FluentTheme.cpp / MenuPages.cpp 为准；原版仅提供交互焦点/激活原语，输入框显式绑定真实 DOM input 事件，不直接套用原版表单外观。
 
@@ -59,7 +62,7 @@ LHolo 的投影、纠错、HUD 和菜单都只存在于客户端，不产生碰�
 - 默认结构移动：`Ctrl + 方向键` 按玩家朝向水平移动（左右垂直于朝向、前后沿朝向），`Shift + ↑/↓` 调整 Y。
 - 默认显示层：`Alt + ↑/↓`；“完整结构”模式下按键无效。
 - 默认结构偏移：按住 `Alt` 并滚动滚轮，结构沿视线方向整体移动；按住期间快捷栏锁定，滚轮不会切换手持物品，松开后恢复。触发键固定为 `Alt`，不是按下式热键，不出现在热键页，但可在热键页用“`Alt + 滚轮 调整结构位置`”开关整体关闭；关闭后不认领 `Alt`、不接管滚轮、也不锁定快捷栏。
-- 支持保存和恢复上次投影文件、锚点及当时的变换/分层参数。
+- 任务目录持久化外部文件路径、选择、顺序、显隐、变换与切片；进入世界后显式加载任务。旧单文件恢复记录仅为内部兼容保留，现行菜单没有恢复入口。
 - “创建结构”页支持用玩家脚下位置或手动 XYZ 设置包含端点的选区，以红色整体线框持续显示，并通过原版结构 API 导出 `.mcstructure`。目前只提供客户端模式，且只读取当前已加载范围；实体默认不包含。
 - 退出世界、切换存档或失去有效客户端上下文时清理投影，禁止跨世界复用世界对象；完成清理后在底部提示投影已关闭。
 - 仅切换维度时保留已加载结构、锚点、变换、HUD 配置和辅助放置模式。投影与原维度绑定：进入其他维度时释放旧维度运行资源、隐藏投影及 HUD，并在底部提示投影已暂停；返回原维度并成功按原锚点重建后提示投影已恢复，材料 HUD 随恢复后的投影重新统计。投影生命周期状态提示均显示 2.5 秒。

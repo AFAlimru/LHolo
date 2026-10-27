@@ -41,6 +41,7 @@ struct MaterialProgressKey {
     structure::LayerDisplayMode layerDisplayMode{structure::LayerDisplayMode::All};
     int           displayLayer{};
     structure::LayerAxis        layerAxis{structure::LayerAxis::Y};
+    int selectedSource{-1};
 
     bool operator==(MaterialProgressKey const&) const = default;
 };

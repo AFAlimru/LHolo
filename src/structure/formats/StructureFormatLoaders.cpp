@@ -22,7 +22,7 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
+#include "structure/StructureGeneration.h"
 #include <bit>
 #include <cstdint>
 #include <cstring>
@@ -63,7 +63,6 @@ namespace {
 
 constexpr std::uintmax_t kMaximumStructureFileSize = 512ull * 1024ull * 1024ull;
 constexpr std::size_t    kMaximumInflatedFileSize  = 1024ull * 1024ull * 1024ull;
-std::atomic_uint64_t     gGeneration{0};
 
 void assignMaterialIndices(LoadedStructure& loaded) {
     std::map<std::string, std::uint64_t> bodyCounts;
@@ -644,7 +643,7 @@ std::shared_ptr<LoadedStructure> loadMcstructure(std::filesystem::path const& pa
         });
     }
     assignMaterialIndices(*loaded);
-    loaded->generation = gGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
+    loaded->generation = nextStructureGeneration();
     loaded->sourcePath = path;
     return loaded;
 }
@@ -881,7 +880,7 @@ std::shared_ptr<LoadedStructure> loadLitematic(std::filesystem::path const& path
     });
     loaded->primaryBlocks = loaded->renderBlocks.size();
     assignMaterialIndices(*loaded);
-    loaded->generation = gGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
+    loaded->generation = nextStructureGeneration();
     loaded->sourcePath = path;
     return loaded;
 } catch (std::exception const& exception) {

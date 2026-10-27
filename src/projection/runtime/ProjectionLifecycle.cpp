@@ -69,7 +69,7 @@ bool prepareProjectionState(
 ) {
     auto& client = renderContext.mClientInstance;
     auto* player = client.getLocalPlayer();
-    if (!player || !loaded || loaded->renderBlocks.empty()) return false;
+    if (!player || !loaded || (loaded->renderBlocks.empty() && !loaded->composed)) return false;
 
     state.client = &client;
     state.level = &player->getLevel();
@@ -89,6 +89,10 @@ bool prepareProjectionState(
     );
     state.progressCorrect.resize(state.structure->renderBlocks.size(), 0);
     state.progressErrorKind.resize(state.structure->renderBlocks.size(), 0);
+    state.sourceProgress.resize(state.structure->sourceFiles.size());
+    for (auto const& block:state.structure->renderBlocks) if (block.sourceIndex>=0) {
+        auto& progress=state.sourceProgress[block.sourceIndex]; ++progress.total; ++progress.visibleTotal;
+    }
     state.blockActorRendererAvailable = std::make_shared<std::vector<uchar>>(
         state.structure->renderBlocks.size(), 0
     );

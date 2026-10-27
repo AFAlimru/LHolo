@@ -93,9 +93,15 @@ public:
                              SavedProjectionSnapshot const& saved, i18n::Message status);
     void cancelPendingLoad();
     [[nodiscard]] StructureLoadRequest beginFileLoad(StructureLoadOrigin origin);
+    [[nodiscard]] StructureLoadRequest beginCompositionLoad(StructureLoadOrigin origin);
     bool completeFileLoad(StructureLoadRequest const& request, std::shared_ptr<LoadedStructure> loaded,
                           std::string path, i18n::Message status);
     bool failFileLoad(StructureLoadRequest const& request, i18n::Message status);
+    bool completeCompositionLoad(StructureLoadRequest const&, std::shared_ptr<LoadedStructure>, StructureLoadOrigin);
+    void selectCompositionFile(std::shared_ptr<LoadedStructure const>, StructureTransformSnapshot const&, int sourceIndex, std::string path);
+    [[nodiscard]] std::shared_ptr<LoadedStructure const> editorStructure() const;
+    [[nodiscard]] int selectedSource() const { return mSelectedSource.load(std::memory_order_acquire); }
+    [[nodiscard]] int selectedSourceFor(LoadedStructure const&) const;
 
     [[nodiscard]] StructureTransformSnapshot transform() const;
     [[nodiscard]] TransformState transformEditorState() const;
@@ -131,6 +137,9 @@ private:
 
     mutable std::mutex              mMutex;
     std::shared_ptr<LoadedStructure> mLoaded;
+    std::shared_ptr<LoadedStructure const> mEditorStructure;
+    std::atomic_int mSelectedSource{-1};
+    std::atomic_bool mCompositionPending{};
     std::optional<StructureLoadOrigin> mLoadOrigin;
     std::uint64_t mLoadRevision{};
     std::string                      mSavedStructurePath;

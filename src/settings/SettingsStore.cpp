@@ -70,12 +70,6 @@ bool loadSettingsFile(std::filesystem::path const& path, Settings& out) {
         = json.value("layerIncreaseHotkeyModifiers", out.layerIncreaseHotkeyModifiers);
     out.layerDecreaseHotkeyModifiers
         = json.value("layerDecreaseHotkeyModifiers", out.layerDecreaseHotkeyModifiers);
-    out.loadProjectionHotkey = json.value("loadProjectionHotkey", out.loadProjectionHotkey);
-    out.loadProjectionHotkeyModifiers
-        = json.value("loadProjectionHotkeyModifiers", out.loadProjectionHotkeyModifiers);
-    out.closeProjectionHotkey = json.value("closeProjectionHotkey", out.closeProjectionHotkey);
-    out.closeProjectionHotkeyModifiers
-        = json.value("closeProjectionHotkeyModifiers", out.closeProjectionHotkeyModifiers);
     out.altWheelOffsetEnabled
         = json.value("altWheelOffsetEnabled", out.altWheelOffsetEnabled);
 
@@ -181,10 +175,6 @@ void saveSettingsFile(std::filesystem::path const& path, Settings const& setting
         {"layerDecreaseHotkey", settings.layerDecreaseHotkey},
         {"layerIncreaseHotkeyModifiers", settings.layerIncreaseHotkeyModifiers},
         {"layerDecreaseHotkeyModifiers", settings.layerDecreaseHotkeyModifiers},
-        {"loadProjectionHotkey", settings.loadProjectionHotkey},
-        {"loadProjectionHotkeyModifiers", settings.loadProjectionHotkeyModifiers},
-        {"closeProjectionHotkey", settings.closeProjectionHotkey},
-        {"closeProjectionHotkeyModifiers", settings.closeProjectionHotkeyModifiers},
         {"altWheelOffsetEnabled", settings.altWheelOffsetEnabled},
         {"moveLeftHotkey", settings.moveHotkeys[0]},
         {"moveRightHotkey", settings.moveHotkeys[1]},

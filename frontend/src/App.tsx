@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { LHoloMenu } from './LHoloMenu';
-import { useStructureFile } from './application/useStructureFile';
 import { useTransform } from './application/useTransform';
 import { useRenderSettings } from './application/useRenderSettings';
 import { useSettings } from './application/useSettings';
@@ -10,16 +9,16 @@ import { useInterfaceSettings } from './application/useInterfaceSettings';
 import { useExperimentalSettings } from './application/useExperimentalSettings';
 import { useMaterials } from './application/useMaterials';
 import { useCapture } from './application/useCapture';
-import { useProjection } from './application/useProjection';
+import { useProjectionState } from './application/useProjectionState';
+import { useTasks } from './application/useTasks';
 import { menuBridge, type MenuLabels } from './platform/bridge';
 import { FrameCompletion, GameShell } from './platform/native';
 import { LHoloButton } from './components/LHoloControls';
 
 function MenuPage() {
-  const [entryPage, setEntryPage] = useState<'projection' | 'hud'>('projection');
+  const [entryPage, setEntryPage] = useState<'tasks' | 'hud'>('tasks');
   const [labels, setLabels] = useState<MenuLabels | null>(null);
-  const { file, browse } = useStructureFile(menuBridge);
-  const projection = useProjection(menuBridge);
+  const projection = useProjectionState(menuBridge);
   const capture = useCapture(menuBridge);
   const transform = useTransform(menuBridge);
   const render = useRenderSettings(menuBridge);
@@ -29,13 +28,14 @@ function MenuPage() {
   const interfaceSettings = useInterfaceSettings(settings);
   const experimental = useExperimentalSettings(settings);
   const materialsState = useMaterials(menuBridge);
+  const tasks = useTasks();
   useEffect(() => menuBridge.subscribeEntry(setEntryPage), []);
   useEffect(() => menuBridge.subscribe(setLabels), []);
   return <>
-    {labels ? <LHoloMenu entryPage={entryPage} labels={labels} file={file} projection={projection} capture={capture}
+    {labels ? <LHoloMenu entryPage={entryPage} labels={labels} projection={projection} capture={capture}
       transform={transform} render={render} hud={hud} hotkeys={hotkeys}
-      interfaceSettings={interfaceSettings} experimental={experimental} materialsState={materialsState}
-      onBrowse={browse} onClose={menuBridge.close} />
+      interfaceSettings={interfaceSettings} experimental={experimental} materialsState={materialsState} tasks={tasks}
+      onClose={menuBridge.close} />
       : <div className="lholo-loading"><div>LHolo</div>
         <LHoloButton label="×" onClick={menuBridge.close} /></div>}
     <FrameCompletion />

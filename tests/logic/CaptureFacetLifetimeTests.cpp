@@ -1,4 +1,5 @@
 #include "oreui/IntentFacet.h"
+#include "oreui/TaskProtocol.h"
 #include <cstdio>
 #include <string>
 
@@ -54,9 +55,19 @@ int runCaptureFacetLifetimeTests() {
         auto facet = std::make_unique<IntentFacet>(receive);
         check(facet->init({}) == OreUI::Status::Error, "missing payload uses safe cleanup");
         check(facet->init(Payload{{"request", true}}) == OreUI::Status::Error, "wrong type rejected");
+        check(facet->init(Payload{{"request", std::string(4097, ' ')}}) == OreUI::Status::Error,
+              "ordinary facet retains its small request limit");
+    }
+    {
+        accept = true;
+        IntentFacet facet(receive, "lholo.tasks.intent", lholo::oreui::kTaskIntentMaxBytes);
+        check(facet.init(Payload{{"request", std::string(8000, ' ')}}) == OreUI::Status::Ok,
+              "task transport accepts requests beyond the old 4 KiB ceiling");
+        check(facet.init(Payload{{"request", std::string(lholo::oreui::kTaskIntentMaxBytes + 1, ' ')}})
+                  == OreUI::Status::Error, "task transport rejects requests outside its contract");
     }
     check(missingControlBlocks == 0, "all destruction paths have initialized control blocks");
-    check(destructions - before == 34, "all facets destroyed");
+    check(destructions - before == 35, "all facets destroyed");
     std::printf("CaptureFacetLifetimeTests: %d failures\n", failures);
     return failures;
 }

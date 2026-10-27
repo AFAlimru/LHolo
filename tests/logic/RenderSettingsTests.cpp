@@ -85,6 +85,17 @@ int runRenderSettingsTests() {
     edit.id++; edit.context = getRenderSettingsState().context;
     submitRenderSettingsEdit(edit); resetRenderSettingsEdits();
     check(!processRenderSettingsEdits() && !getRenderSettingsState().accepted, "menu close cancels pending edit");
+    auto composed = std::make_shared<structure::LoadedStructure>();
+    composed->composed = true;
+    auto request = session.beginCompositionLoad({});
+    session.completeCompositionLoad(request, composed, {});
+    auto editor = std::make_shared<structure::LoadedStructure>();
+    editor->sizeY = 10;
+    session.selectCompositionFile(editor, {}, 0, "task-file.mcstructure");
+    check(!apply({{RenderField::Layer, 0, 2}, {RenderField::Mode, 0, 1}}) &&
+          getRenderSettingsState().accepted && session.transform().displayLayer == 2,
+          "task layer change applies without requesting a global config save");
+    check(apply({{RenderField::Fill, 15, 20}}), "task visual style still requests global persistence");
     session.clearLoaded({}); session.resetTransform();
     check(getRenderSettingsState().maximum == std::array{0, 0, 0}, "empty session bounds");
     std::printf("RenderSettingsTests: %d failures\n", failures);

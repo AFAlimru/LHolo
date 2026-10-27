@@ -35,6 +35,8 @@ int runRenderSettingsTests();
 int runSettingsActionsTests();
 int runCaptureFacetLifetimeTests();
 int runNativeHudTests();
+int runTaskTests();
+int runTaskActionsTests();
 void benchmarkProjectionDrawCache();
 
 namespace {
@@ -631,14 +633,10 @@ void testStructureUiState() {
     auto const moveLeftSlot = lholo::input::hotkeyIndex(lholo::input::HotkeyId::MoveLeft);
     auto const moveRightSlot = lholo::input::hotkeyIndex(lholo::input::HotkeyId::MoveRight);
     auto const layerIncreaseSlot = lholo::input::hotkeyIndex(lholo::input::HotkeyId::LayerIncrease);
-    auto const loadProjectionSlot = lholo::input::hotkeyIndex(lholo::input::HotkeyId::LoadProjection);
-    auto const closeProjectionSlot = lholo::input::hotkeyIndex(lholo::input::HotkeyId::CloseProjection);
     LHOLO_CHECK(state.hotkey(guiSlot).key == 'M');
     LHOLO_CHECK(state.hotkey(guiSlot).modifiers == lholo::ui::kHotkeyModifierAlt);
     LHOLO_CHECK(state.hotkey(moveLeftSlot).key == VK_LEFT);
     LHOLO_CHECK(state.hotkey(layerIncreaseSlot).key == VK_UP);
-    LHOLO_CHECK(state.hotkey(loadProjectionSlot).key == 0);
-    LHOLO_CHECK(state.hotkey(closeProjectionSlot).key == 0);
 
     state.beginHotkeyCapture(moveLeftSlot);
     LHOLO_CHECK(state.capturingHotkey() == moveLeftSlot);
@@ -668,16 +666,12 @@ void testStructureUiState() {
     // hotkey produces is resolved in ViewMoveBasis from the player's facing.
     state.queueOffsetDelta(-1, 1, 0);
     state.queueLayerDelta(-1);
-    state.queueLoadProjection();
-    state.queueCloseProjection();
     state.requestSettingsSave();
     auto const pending = state.consumePendingHotkeyActions();
     LHOLO_CHECK(pending.offsetX == -1);
     LHOLO_CHECK(pending.offsetY == 1);
     LHOLO_CHECK(pending.offsetZ == 0);
     LHOLO_CHECK(pending.layerDelta == -1);
-    LHOLO_CHECK(pending.loadProjection);
-    LHOLO_CHECK(pending.closeProjection);
     LHOLO_CHECK(pending.settingsSave);
 
     state.clearMaterials();
@@ -758,8 +752,6 @@ void testStructureUiState() {
     state.setControlHeld(true);
     state.queueOffsetDelta(1, 0, 0);
     state.queueLayerDelta(1);
-    state.queueLoadProjection();
-    state.queueCloseProjection();
     state.requestSettingsSave();
     state.setAltWheelOffsetEnabled(false);
     state.replaceMaterialRequirements({
@@ -787,8 +779,6 @@ void testStructureUiState() {
     LHOLO_CHECK(afterWorldExit.offsetY == 0);
     LHOLO_CHECK(afterWorldExit.offsetZ == 0);
     LHOLO_CHECK(afterWorldExit.layerDelta == 0);
-    LHOLO_CHECK(!afterWorldExit.loadProjection);
-    LHOLO_CHECK(!afterWorldExit.closeProjection);
     // A pending settings write is not world-owned and must still complete.
     LHOLO_CHECK(afterWorldExit.settingsSave);
     LHOLO_CHECK(state.experimentalConsentGiven());
@@ -1126,6 +1116,8 @@ int main(int argc, char** argv) {
     testI18n();
     LHOLO_CHECK(runSettingsActionsTests() == 0);
     LHOLO_CHECK(runNativeHudTests() == 0);
+    LHOLO_CHECK(runTaskTests() == 0);
+    LHOLO_CHECK(runTaskActionsTests() == 0);
     std::printf("LHoloLogicTests: %d checks, %d failures\n", gChecks, gFailures);
     return gFailures == 0 ? 0 : 1;
 }

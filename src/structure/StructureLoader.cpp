@@ -71,8 +71,6 @@ namespace {
 constexpr std::size_t kGuiHotkeyIndex = input::hotkeyIndex(input::HotkeyId::Gui);
 constexpr std::size_t kLayerIncreaseHotkeyIndex = input::hotkeyIndex(input::HotkeyId::LayerIncrease);
 constexpr std::size_t kLayerDecreaseHotkeyIndex = input::hotkeyIndex(input::HotkeyId::LayerDecrease);
-constexpr std::size_t kLoadProjectionHotkeyIndex = input::hotkeyIndex(input::HotkeyId::LoadProjection);
-constexpr std::size_t kCloseProjectionHotkeyIndex = input::hotkeyIndex(input::HotkeyId::CloseProjection);
 constexpr float kActionHintVerticalScreenRatio = 0.80f;
 // Background alpha for the legacy transient action hint. Native HUD styling
 // belongs to ui/hud/NativeHudRenderer.
@@ -203,24 +201,6 @@ bool handleGuiHotkeyKeyDown(unsigned int virtualKey) {
         }
         return true;
     }
-    auto const loadProjectionHotkey = uiState().inputHotkey(kLoadProjectionHotkeyIndex);
-    if (loadProjectionHotkey.key != 0 && virtualKey == loadProjectionHotkey.key
-        && modifiers == loadProjectionHotkey.modifiers) {
-        if (GetTickCount64() >= uiState().ignoreHotkeyUntil()
-            && uiState().tryPressHotkey(kLoadProjectionHotkeyIndex)) {
-            uiState().queueLoadProjection();
-        }
-        return true;
-    }
-    auto const closeProjectionHotkey = uiState().inputHotkey(kCloseProjectionHotkeyIndex);
-    if (closeProjectionHotkey.key != 0 && virtualKey == closeProjectionHotkey.key
-        && modifiers == closeProjectionHotkey.modifiers) {
-        if (GetTickCount64() >= uiState().ignoreHotkeyUntil()
-            && uiState().tryPressHotkey(kCloseProjectionHotkeyIndex)) {
-            uiState().queueCloseProjection();
-        }
-        return true;
-    }
     return false;
 }
 
@@ -284,21 +264,12 @@ void processPendingActions() {
     session.adjustOffsets(pending.offsetX, pending.offsetY, pending.offsetZ);
     if (layerActionEnabled) session.adjustDisplayLayer(pending.layerDelta);
 
-    if (pending.loadProjection) {
-        requestProjectionRestore();
-        showActionHint(i18n::Message{i18n::TextKey::ActionHintLoadProjection});
-    }
-    if (pending.closeProjection) {
-        requestProjectionClose();
-        showActionHint(i18n::Message{i18n::TextKey::ActionHintCloseProjection});
-    }
-
     processProjectionActions();
     changed = processTransformEdits() || changed;
     capture::processActions();
 
-    changed = pending.settingsSave || changed;
-    if (changed) saveSettings();
+    auto loaded = session.loaded();
+    if (pending.settingsSave || (changed && (!loaded || !loaded->composed))) saveSettings();
 }
 
 void resetDimensionSession() {
@@ -483,16 +454,6 @@ void loadSettings() {
                 std::clamp(settings.moveHotkeyModifiers[index], 0, 7)
             );
         }
-        uiState().setHotkey(
-            kLoadProjectionHotkeyIndex,
-            std::clamp(settings.loadProjectionHotkey, 0, 255),
-            std::clamp(settings.loadProjectionHotkeyModifiers, 0, 7)
-        );
-        uiState().setHotkey(
-            kCloseProjectionHotkeyIndex,
-            std::clamp(settings.closeProjectionHotkey, 0, 255),
-            std::clamp(settings.closeProjectionHotkeyModifiers, 0, 7)
-        );
         session.setSavedProjection({
             settings.hasSavedProjection,
             settings.savedAnchorX,
@@ -569,12 +530,6 @@ void saveSettings() {
             settings.moveHotkeys[index] = moveHotkey.key;
             settings.moveHotkeyModifiers[index] = moveHotkey.modifiers;
         }
-        auto const loadProjectionHotkey = uiState().hotkey(kLoadProjectionHotkeyIndex);
-        auto const closeProjectionHotkey = uiState().hotkey(kCloseProjectionHotkeyIndex);
-        settings.loadProjectionHotkey = loadProjectionHotkey.key;
-        settings.loadProjectionHotkeyModifiers = loadProjectionHotkey.modifiers;
-        settings.closeProjectionHotkey = closeProjectionHotkey.key;
-        settings.closeProjectionHotkeyModifiers = closeProjectionHotkey.modifiers;
         settings.altWheelOffsetEnabled = uiState().altWheelOffsetEnabled();
         settings.hasSavedProjection = sessionSnapshot.saved.available;
         settings.savedAnchorX = sessionSnapshot.saved.anchorX;
@@ -617,6 +572,8 @@ int getDisplayLayer() { return detail::StructureSession::getInstance().transform
 LayerAxis getLayerAxis() { return detail::StructureSession::getInstance().transform().layerAxis; }
 
 void recordProjectionAnchor(int x, int y, int z) {
+    auto loaded = getLoaded();
+    if (loaded && loaded->composed) return;
     detail::StructureSession::getInstance().recordProjectionAnchor(x, y, z);
     saveSettings();
 }
@@ -631,10 +588,6 @@ void recordProjectionAnchor(int x, int y, int z) {
 // waiting for a key-up.
 bool scrollLockActive() {
     return getLoaded() != nullptr && uiState().altWheelOffsetEnabled() && uiState().altHeld();
-}
-
-void restoreSavedProjection() {
-    detail::startSavedProjectionLoad();
 }
 
 namespace {

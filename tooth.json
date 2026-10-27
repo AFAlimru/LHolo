@@ -34,7 +34,8 @@
         }
       ],
       "preserve_files": [
-        "mods/LHolo/config/config.json"
+        "mods/LHolo/config/config.json",
+        "mods/LHolo/data/tasks.json"
       ],
       "remove_files": [],
       "scripts": {

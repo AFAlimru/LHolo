@@ -1,27 +1,12 @@
 import { settingsBridge, type SettingsBridge } from './settingsBridge';
 export type MenuLabels = Record<string, string>;
-export interface StructureFileState {
-  path: string;
-  browsing: boolean;
-  error: number;
-}
-export interface StructureFileBridge {
-  subscribeStructureFile(listener: (state: StructureFileState) => void): () => void;
-  browseStructureFile(): void;
-}
 export interface ProjectionState {
   worldAvailable: boolean;
-  status: string;
   loading: boolean;
   hasProjection: boolean;
-  canRestore: boolean;
-  savedOrigin: string;
 }
 export interface ProjectionBridge {
   subscribeProjection(listener: (state: ProjectionState) => void): () => void;
-  loadProjection(): void;
-  closeProjection(): void;
-  restoreProjection(): void;
 }
 export interface MaterialItem {
   displayName: string;
@@ -79,9 +64,9 @@ export interface RenderBridge {
   subscribeRender(listener: (state: RenderState) => void): () => void;
   renderSettings(edit: RenderEdit): void;
 }
-export interface MenuBridge extends StructureFileBridge, ProjectionBridge, MaterialsBridge, CaptureBridge, TransformBridge, RenderBridge, SettingsBridge {
+export interface MenuBridge extends ProjectionBridge, MaterialsBridge, CaptureBridge, TransformBridge, RenderBridge, SettingsBridge {
   editHudLayout(): void;
-  subscribeEntry(listener: (page: 'projection' | 'hud') => void): () => void;
+  subscribeEntry(listener: (page: 'tasks' | 'hud') => void): () => void;
   subscribe(listener: (labels: MenuLabels) => void): () => void;
   close(): void;
 }
@@ -101,35 +86,21 @@ export function parseLabels(payload: string): MenuLabels {
   const value: unknown = JSON.parse(payload);
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || !Object.values(value).every(item => typeof item === 'string')
-    || !('menu.close' in value) || !('page.projection' in value)) {
+    || !('menu.close' in value) || !('tasks.nav' in value)) {
     throw new Error('Invalid LHolo menu labels');
   }
   return value as MenuLabels;
 }
 
-export function parseStructureFile(payload: string): StructureFileState {
-  const value: unknown = JSON.parse(payload);
-  if (!value || typeof value !== 'object' || !('path' in value) || typeof value.path !== 'string'
-    || !('browsing' in value) || typeof value.browsing !== 'boolean'
-    || !('error' in value) || typeof value.error !== 'number'
-    || !Number.isSafeInteger(value.error) || value.error < 0) {
-    throw new Error('Invalid LHolo structure file state');
-  }
-  return { path: value.path, browsing: value.browsing, error: value.error };
-}
-
 export function parseProjection(payload: string): ProjectionState {
   const value: unknown = JSON.parse(payload);
-  if (!value || typeof value !== 'object' || !('status' in value) || typeof value.status !== 'string'
-    || !('savedOrigin' in value) || typeof value.savedOrigin !== 'string'
+  if (!value || typeof value !== 'object'
     || !('worldAvailable' in value) || typeof value.worldAvailable !== 'boolean'
     || !('loading' in value) || typeof value.loading !== 'boolean'
-    || !('hasProjection' in value) || typeof value.hasProjection !== 'boolean'
-    || !('canRestore' in value) || typeof value.canRestore !== 'boolean') {
+    || !('hasProjection' in value) || typeof value.hasProjection !== 'boolean') {
     throw new Error('Invalid LHolo projection state');
   }
-  return { worldAvailable: value.worldAvailable, status: value.status, savedOrigin: value.savedOrigin, loading: value.loading,
-    hasProjection: value.hasProjection, canRestore: value.canRestore };
+  return { worldAvailable: value.worldAvailable, loading: value.loading, hasProjection: value.hasProjection };
 }
 
 export function parseMaterials(payload: string): MaterialsState {
@@ -232,15 +203,6 @@ export const menuBridge: MenuBridge = {
     send('lholo.menu.ready');
     return () => window.engine.off('lholo:menu-labels', receive);
   },
-  subscribeStructureFile(listener) {
-    const receive = (payload: string) => {
-      try { listener(parseStructureFile(payload)); }
-      catch (error) { console.error(error); }
-    };
-    window.engine.on('lholo:structure-file', receive);
-    return () => window.engine.off('lholo:structure-file', receive);
-  },
-  browseStructureFile: () => send('lholo.structure.browse'),
   subscribeProjection(listener) {
     const receive = (payload: string) => {
       try { listener(parseProjection(payload)); }
@@ -249,9 +211,6 @@ export const menuBridge: MenuBridge = {
     window.engine.on('lholo:projection', receive);
     return () => window.engine.off('lholo:projection', receive);
   },
-  loadProjection: () => send('lholo.projection.load'),
-  closeProjection: () => send('lholo.projection.close'),
-  restoreProjection: () => send('lholo.projection.restore'),
   subscribeMaterials(listener) {
     const receive = (payload: string) => {
       try { listener(parseMaterials(payload)); }
@@ -282,7 +241,7 @@ export const menuBridge: MenuBridge = {
   subscribeEntry(listener) {
     const receive = (payload: string) => {
       const page: unknown = JSON.parse(payload);
-      if (page === 'projection' || page === 'hud') listener(page);
+      if (page === 'tasks' || page === 'hud') listener(page);
     };
     window.engine.on('lholo:menu-entry', receive);
     return () => window.engine.off('lholo:menu-entry', receive);

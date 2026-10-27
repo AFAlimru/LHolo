@@ -86,8 +86,8 @@ MenuModel buildStructureMenuModel(float effectiveUiScale) {
     model.savedAnchorZ = sessionSnapshot.saved.anchorZ;
     model.maxLayerY = sessionSnapshot.maxLayerY;
     model.maxLayerX = sessionSnapshot.maxLayerX;
-    model.materialCount = sessionSnapshot.loaded
-        ? static_cast<int>(sessionSnapshot.loaded->materialCount) : 0;
+    auto const editorStructure = structure::detail::StructureSession::getInstance().editorStructure();
+    model.materialCount = editorStructure ? static_cast<int>(editorStructure->materialCount) : 0;
     model.structureBoundsEnabled = projection::getStructureBoundsEnabled();
     model.correctionSeeThrough = projection::getCorrectionSeeThrough();
     model.missingSeeThrough = projection::getMissingSeeThrough();

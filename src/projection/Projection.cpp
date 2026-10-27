@@ -22,6 +22,7 @@
 #include "projection/runtime/ProjectionWorldEvents.h"
 #include "projection/core/ProjectionState.h"
 #include "projection/world/ProjectionQueries.h"
+#include "structure/StructureSession.h"
 
 #include <vector>
 
@@ -99,7 +100,11 @@ bool isDimensionSuspended() {
 }
 
 BuildProgress getBuildProgress() {
-    return detail::getPublishedBuildProgress();
+    return detail::ProjectionSession::getInstance().withLockedState([](detail::ProjectionState& state, overlay::BoundsWireframe&) {
+        if (!state.enabled || !state.structure || !state.structure->composed) return detail::getPublishedBuildProgress();
+        auto source=structure::detail::StructureSession::getInstance().selectedSourceFor(*state.structure);
+        return source>=0 && source<static_cast<int>(state.sourceProgress.size()) ? state.sourceProgress[source] : BuildProgress{};
+    });
 }
 
 std::optional<MaterialProgressKey> getMaterialProgressKey() {
@@ -118,6 +123,7 @@ std::optional<MaterialProgressKey> getMaterialProgressKey() {
                 *state.cachedLayerDisplayMode,
                 state.cachedDisplayLayer,
                 *state.cachedLayerAxis,
+                state.structure->composed ? structure::detail::StructureSession::getInstance().selectedSourceFor(*state.structure) : -1,
             };
         }
     );
@@ -136,7 +142,8 @@ std::optional<MaterialProgressSnapshot> captureMaterialProgress(
                 && state.progressRevision == expected.progressRevision
                 && state.cachedLayerDisplayMode == expected.layerDisplayMode
                 && state.cachedDisplayLayer == expected.displayLayer
-                && state.cachedLayerAxis == expected.layerAxis;
+                && state.cachedLayerAxis == expected.layerAxis
+                && (!state.structure->composed || structure::detail::StructureSession::getInstance().selectedSourceFor(*state.structure)==expected.selectedSource);
             if (!matches) return std::nullopt;
             return MaterialProgressSnapshot{expected, state.structure, state.progressCorrect};
         }
