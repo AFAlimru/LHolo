@@ -42,6 +42,18 @@ int runTaskTests() {
         return p;
     };
     auto result = structure::composeTask(files, copy);
+    auto boundsInTask = [](structure::Composition const& composition, std::size_t index) {
+        auto const& bounds = composition.loaded->sourceBounds.at(index);
+        return std::array<long long, 6>{bounds.minimum[0] + composition.origin[0],
+            bounds.minimum[1] + composition.origin[1], bounds.minimum[2] + composition.origin[2],
+            bounds.maximum[0] + composition.origin[0], bounds.maximum[1] + composition.origin[1],
+            bounds.maximum[2] + composition.origin[2]};
+    };
+    check(result.loaded->sourceBounds.size() == 2,
+          "overlapping visible files each retain a full-file border");
+    check(boundsInTask(result, 0) == std::array<long long, 6>{0, 0, 0, 3, 2, 2}
+              && boundsInTask(result, 1) == std::array<long long, 6>{0, 0, 0, 3, 2, 2},
+          "file borders use full file dimensions rather than the winning cells");
     check(result.loaded->renderBlocks.size() == 3, "overlap deduplicated and upper air reveals lower solid");
     check(result.loaded->renderBlocks.front().block == stone &&
               result.loaded->renderBlocks.front().sourceIndex == 0,
@@ -60,6 +72,8 @@ int runTaskTests() {
     std::swap(files[0], files[1]);
     files[0].visible = false;
     result = structure::composeTask(files, copy);
+    check(result.loaded->sourceBounds.size() == 1 && result.loaded->sourceBounds[0].sourceIndex == 1,
+          "hidden files have no border, independently of selected source");
     check(result.loaded->renderBlocks.front().block == glass &&
               result.loaded->renderBlocks.front().sourceIndex == 1,
           "hidden upper file reveals lower");
@@ -68,6 +82,8 @@ int runTaskTests() {
     files[0].slice = {structure::LayerAxis::Y, structure::LayerDisplayMode::Single, 1};
     result = structure::composeTask(files, copy);
     check(result.loaded->renderBlocks.front().block == glass, "slice filtering precedes priority");
+    check(boundsInTask(result, 0) == std::array<long long, 6>{0, 0, 0, 3, 2, 2},
+          "slice filtering does not shrink the full-file border");
     files[1].visible = false;
     files[0].slice = {};
     files[0].x = -8;
@@ -77,11 +93,16 @@ int runTaskTests() {
     result = structure::composeTask(files, copy);
     check(result.origin == std::array<int, 3>{-8, 5, 0}, "negative offsets preserve task origin");
     check(result.loaded->sizeX == 2 && result.loaded->sizeZ == 3, "rotation swaps footprint");
+    check(boundsInTask(result, 0) == std::array<long long, 6>{-8, 5, 0, -6, 7, 3},
+          "file border follows negative offset, rotation and mirror");
     for (auto const& b : result.loaded->renderBlocks)
         check(b.x >= 0 && b.y >= 0 && b.z >= 0, "normalized coordinates");
     files[1].visible = true;
     files[1].x = 20;
     result = structure::composeTask(files, copy);
+    check(boundsInTask(result, 0) == std::array<long long, 6>{-8, 5, 0, -6, 7, 3}
+              && boundsInTask(result, 1) == std::array<long long, 6>{20, 0, 0, 23, 2, 2},
+          "normalization preserves each file's separate task-space border");
     for (auto const& b : result.loaded->renderBlocks)
         if (b.sourceIndex == 1 && b.block == glass)
             check(b.x + result.origin[0] == 20 && b.y + result.origin[1] == 0,
@@ -92,6 +113,27 @@ int runTaskTests() {
     check(result.loaded->composed && result.loaded->renderBlocks.empty() && result.loaded->regions.empty(),
           "all files hidden produces empty projection");
     check(result.loaded->sourceFiles.size() == 2, "hidden files keep stable source identities");
+    check(result.loaded->sourceBounds.empty(), "all hidden files produce no task-wide fallback border");
+
+    {
+        std::vector<structure::CompositionFile> identical{{"a", first, true}, {"b", first, true}};
+        auto covered = structure::composeTask(identical, copy);
+        check(covered.loaded->sourceBounds.size() == 2,
+              "fully occluded visible files still have their own border");
+        auto empty = std::make_shared<structure::LoadedStructure>();
+        empty->sizeX = 11; empty->sizeY = 2; empty->sizeZ = 3;
+        empty->regions = {{0, 0, 0, 1, 2, 3}, {10, 0, 0, 1, 2, 3}};
+        identical = {{"air", empty, true}};
+        auto air = structure::composeTask(identical, copy);
+        check(air.loaded->renderBlocks.empty() && air.loaded->sourceBounds.size() == 1
+                  && boundsInTask(air, 0) == std::array<long long, 6>{0, 0, 0, 11, 2, 3},
+              "multi-region air file has one whole-file border across region gaps");
+        identical[0].slice = {structure::LayerAxis::Material, structure::LayerDisplayMode::Single, 99};
+        auto slicedAway = structure::composeTask(identical, copy);
+        check(slicedAway.loaded->renderBlocks.empty() && slicedAway.loaded->regions.empty()
+                  && slicedAway.loaded->sourceBounds.size() == 1,
+              "fully filtered file retains its border without contributing correction air coverage");
+    }
 
     tasks::Catalog catalog;
     tasks::Intent edit;

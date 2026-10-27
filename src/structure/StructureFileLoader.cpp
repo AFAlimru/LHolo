@@ -17,6 +17,7 @@
 #include <unordered_map>
 #include <limits>
 #include <algorithm>
+#include <atomic>
 #include <stdexcept>
 
 #include <chrono>
@@ -34,6 +35,7 @@
 
 namespace lholo::structure::detail {
 namespace {
+std::atomic_uint64_t worldRevision{1};
 
 struct FileLoader final : LevelListener {
     std::mutex mutex;
@@ -49,6 +51,7 @@ struct FileLoader final : LevelListener {
         // registry. Stop publication and finish parsing BEFORE it is freed,
         // including a first load which has no active projection listener yet.
         level = nullptr;
+        worldRevision.fetch_add(1, std::memory_order_release);
         resetProjectionActions();
         StructureSession::getInstance().clearLoaded(i18n::Message{i18n::TextKey::StatusWorldExited});
         if (task.valid()) task.wait();
@@ -136,7 +139,10 @@ void enableStructureFileLoader() {
     auto& loader = fileLoader();
     std::lock_guard lock(loader.mutex);
     loader.stopped = false;
+    worldRevision.fetch_add(1, std::memory_order_release);
 }
+
+std::uint64_t structureFileWorldRevision() { return worldRevision.load(std::memory_order_acquire); }
 
 void shutdownStructureFileLoader() {
     auto& loader = fileLoader();

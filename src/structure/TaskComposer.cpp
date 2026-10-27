@@ -61,6 +61,13 @@ Composition composeTask(std::span<CompositionFile const> files, BlockTransform c
         if (!file.visible || !file.loaded)
             continue;
         auto const& loaded = *file.loaded;
+        if (loaded.sizeX > 0 && loaded.sizeY > 0 && loaded.sizeZ > 0) {
+            bool const rotated = (file.rotation & 1) != 0;
+            std::array<long long, 3> const minimum{file.x, file.y, file.z};
+            output.sourceBounds.push_back({static_cast<int>(source), minimum,
+                {minimum[0] + (rotated ? loaded.sizeZ : loaded.sizeX), minimum[1] + loaded.sizeY,
+                 minimum[2] + (rotated ? loaded.sizeX : loaded.sizeZ)}});
+        }
         auto position = [&](int x, int y, int z) {
             auto p = transformCell(x, y, z, loaded.sizeX, loaded.sizeZ, file.mirror, file.rotation);
             p[0] = coordinate(static_cast<long long>(p[0]) + file.x);
@@ -129,6 +136,11 @@ Composition composeTask(std::span<CompositionFile const> files, BlockTransform c
         }
     }
     result.origin = minimum;
+    for (auto& bounds : output.sourceBounds)
+        for (int axis = 0; axis < 3; ++axis) {
+            bounds.minimum[axis] -= minimum[axis];
+            bounds.maximum[axis] -= minimum[axis];
+        }
     output.sizeX = hasBounds ? coordinate(static_cast<long long>(maximum[0]) - minimum[0] + 1) : 0;
     output.sizeY = hasBounds ? coordinate(static_cast<long long>(maximum[1]) - minimum[1] + 1) : 0;
     output.sizeZ = hasBounds ? coordinate(static_cast<long long>(maximum[2]) - minimum[2] + 1) : 0;

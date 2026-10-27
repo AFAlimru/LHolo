@@ -20,6 +20,7 @@
 #include "structure/LayerDisplayTypes.h"
 
 #include <cstdint>
+#include <array>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -34,6 +35,13 @@ namespace lholo::structure {
 inline constexpr std::uint64_t kProjectionLifecycleHintDurationMs = 2500;
 
 struct LoadedStructure {
+    struct FileBounds {
+        int sourceIndex{-1};
+        // Full-file box in composite-local space; maximum is exclusive.
+        // Keep wide coordinates because slicing can leave bounds outside the
+        // normalized occupied area. This is display data, not air coverage.
+        std::array<long long, 3> minimum{}, maximum{};
+    };
     struct RegionBox {
         int x{};
         int y{};
@@ -56,6 +64,7 @@ struct LoadedStructure {
     std::size_t                          materialCount{};
     bool                                 composed{};
     std::vector<std::string>              sourceFiles;
+    std::vector<FileBounds>               sourceBounds;
     // Cells covered by the source format. mcstructure contributes one box;
     // litematic contributes one per region so gaps between regions are not
     // mistaken for schematic air by projection correction.

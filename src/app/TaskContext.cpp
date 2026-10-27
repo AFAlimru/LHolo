@@ -1,4 +1,5 @@
 #include "app/TaskContext.h"
+#include "structure/StructureFileLoader.h"
 #include "plugin/LHolo.h"
 #include "ll/api/mod/NativeMod.h"
 #include "ll/api/service/Bedrock.h"
@@ -8,6 +9,7 @@
 #include <cmath>
 
 namespace lholo::app::detail {
+std::uint64_t taskWorldRevision() { return structure::detail::structureFileWorldRevision(); }
 std::filesystem::path taskStorePath() {
     return LHolo::getInstance().getSelf().getDataDir() / "tasks.json";
 }

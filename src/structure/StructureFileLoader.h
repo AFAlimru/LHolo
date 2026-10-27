@@ -17,6 +17,8 @@ struct StructureLoadOrigin;
 void enableStructureFileLoader();
 void shutdownStructureFileLoader();
 bool isStructureFileLoading();
+// Advances on Level destruction or loader restart, even while tasks are closed.
+std::uint64_t structureFileWorldRevision();
 bool startStructureFileLoad(std::string path, StructureLoadOrigin origin);
 bool startSavedProjectionLoad();
 struct CompositionLoadResult {

@@ -290,7 +290,7 @@ void renderProjection(
             renderOrigin,
             camera,
             renderAlphaLayer,
-            ProjectionSession::getInstance().structureBoundsEnabled() && !state.structure->renderBlocks.empty(),
+            ProjectionSession::getInstance().structureBoundsEnabled(),
             ProjectionSession::getInstance().correctionSeeThrough(),
             ProjectionSession::getInstance().missingSeeThrough()
         );

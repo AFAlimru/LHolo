@@ -7,6 +7,7 @@
 #include "structure/MaterialTracker.h"
 #include <algorithm>
 #include <deque>
+#include <map>
 #include <mutex>
 
 namespace lholo::app {
@@ -16,6 +17,10 @@ TaskSnapshot state;
 std::deque<TaskIntent> pending;
 std::optional<structure::detail::StructureLoadOrigin> anchor;
 std::optional<structure::detail::StructureLoadOrigin> activeAnchor;
+// Retain original task anchors through Close, separately from normalized
+// composition origins. World destruction invalidates even closed tasks.
+std::map<std::pair<std::string, std::optional<int>>, structure::detail::StructureLoadOrigin> taskAnchors;
+std::uint64_t anchorWorldRevision{};
 std::uint64_t activeGeneration{};
 bool dirty{}, loading{};
 std::optional<tasks::Task> activeDefinition, pendingDefinition;
@@ -71,8 +76,10 @@ bool activate(tasks::Task const* task) {
     auto origin = detail::taskPlayerOrigin();
     if (!task || !origin)
         return false;
-    if (task->id != state.activeTaskId || !anchor)
-        anchor = origin;
+    if (task->id != state.activeTaskId || !anchor) {
+        auto const previous = taskAnchors.find({task->id, origin->dimensionId});
+        anchor = previous == taskAnchors.end() ? *origin : previous->second;
+    }
     pendingDefinition = *task;
     dirty = true;
     reloadFiles = true;
@@ -90,6 +97,8 @@ bool mutate(TaskIntent const& i) {
     }
     if (!tasks::applyCatalogEdit(state.catalog, i))
         return false;
+    if (i.action == TaskAction::Delete)
+        std::erase_if(taskAnchors, [&](auto const& entry) { return entry.first.first == i.taskId; });
     if (i.action == TaskAction::Create || i.action == TaskAction::Select) {
         auto* selected = tasks::findTask(state.catalog, state.catalog.selectedTaskId);
         if (detail::taskPlayerOrigin())
@@ -115,6 +124,8 @@ bool mutate(TaskIntent const& i) {
 } // namespace
 void loadTasks() {
     std::lock_guard lock(mutex);
+    taskAnchors.clear();
+    anchorWorldRevision = detail::taskWorldRevision();
     state.writable = false;
     try {
         auto path = detail::taskStorePath();
@@ -167,9 +178,15 @@ void shutdownTasks() {
     loading = false;
     state.writable = false;
     clearRuntime();
+    taskAnchors.clear();
 }
 void processTaskActions() {
     std::lock_guard lock(mutex);
+    if (auto const world = detail::taskWorldRevision(); world != anchorWorldRevision) {
+        taskAnchors.clear();
+        clearRuntime();
+        anchorWorldRevision = world;
+    }
     auto current = session().loaded();
     if (writer)
         if (auto result = writer->takeResult()) storageError = std::move(*result);
@@ -200,6 +217,7 @@ void processTaskActions() {
                     state.activeTaskId = result->taskId;
                     activeGeneration = generation;
                     activeAnchor = anchor;
+                    taskAnchors[{result->taskId, anchor->dimensionId}] = *anchor;
                     activeDefinition = std::move(pendingDefinition);
                     auto* task = tasks::findTask(state.catalog, state.activeTaskId);
                     if (task && task->files == activeDefinition->files) {

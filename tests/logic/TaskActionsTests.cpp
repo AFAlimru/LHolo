@@ -4,12 +4,16 @@
 #include "structure/MaterialTracker.h"
 #include "tasks/TaskStore.h"
 #include <cstdio>
+#include <algorithm>
+#include <array>
 #include <unordered_map>
 #include <utility>
 
 namespace {
 std::filesystem::path taskPath;
 bool world{}, inFlight{};
+std::uint64_t worldRevision{1};
+lholo::structure::detail::StructureLoadOrigin playerOrigin{10, 20, 30, 0};
 std::shared_ptr<lholo::structure::detail::CompositionLoadResult> requested, completed;
 std::vector<std::string> requestedPaths;
 std::unordered_map<std::string, std::shared_ptr<lholo::structure::LoadedStructure const>> cache;
@@ -18,9 +22,10 @@ std::unordered_map<std::string, std::shared_ptr<lholo::structure::LoadedStructur
 // composer, catalog rules and asynchronous store writer run in this test.
 namespace lholo::app::detail {
 std::filesystem::path taskStorePath() { return taskPath; }
+std::uint64_t taskWorldRevision() { return worldRevision; }
 std::optional<structure::detail::StructureLoadOrigin> taskPlayerOrigin() {
     if (!world) return {};
-    return structure::detail::StructureLoadOrigin{10, 20, 30, 0};
+    return playerOrigin;
 }
 }
 namespace lholo::structure {
@@ -63,9 +68,9 @@ int runTaskActionsTests() {
     auto& session = structure::detail::StructureSession::getInstance();
     session.clearLoaded({});
     loadTasks();
-    auto command = [&](TaskAction action, std::string value = {}, std::string file = {}) {
+    auto command = [&](TaskAction action, std::string value = {}, std::string file = {}, std::string task = {}) {
         auto s = getTaskSnapshot();
-        TaskIntent intent{s.ack + 1, s.revision, action, s.catalog.selectedTaskId, file, value};
+        TaskIntent intent{s.ack + 1, s.revision, action, task.empty() ? s.catalog.selectedTaskId : task, file, value};
         check(submitTaskIntent(intent), "queue task action");
         processTaskActions();
         check(getTaskStatus().accepted, "action accepted by real control frame");
@@ -126,6 +131,60 @@ int runTaskActionsTests() {
     check(inFlight && requested->files.size() == 1 && requested->files[0].y == 2,
           "existing file remains editable after another file fails to attach");
     finish(true);
+    // Compare actual file/world positions, not just the normalized composite
+    // origin: reopening also loads a catalog file absent from the old result.
+    auto fileWorldPosition = [&](std::string const& id) -> std::optional<std::array<long long, 3>> {
+        auto const activation = session.activation();
+        if (!activation.loaded || !activation.origin) return {};
+        auto const& loaded = *activation.loaded;
+        auto source = std::find(loaded.sourceFiles.begin(), loaded.sourceFiles.end(), id);
+        if (source == loaded.sourceFiles.end()) return {};
+        auto index = static_cast<int>(source - loaded.sourceFiles.begin());
+        for (auto const& block : loaded.renderBlocks) if (block.sourceIndex == index)
+            return std::array<long long, 3>{static_cast<long long>(activation.origin->x) + block.x,
+                static_cast<long long>(activation.origin->y) + block.y,
+                static_cast<long long>(activation.origin->z) + block.z};
+        return {};
+    };
+    auto const originalTask = getTaskSnapshot().catalog.selectedTaskId;
+    auto const originalPosition = fileWorldPosition(fileId);
+    command(TaskAction::Close);
+    playerOrigin = {100, 70, -200, 0};
+    command(TaskAction::Activate);
+    check(requested->request.origin == structure::detail::StructureLoadOrigin{10, 20, 30, 0},
+          "reopen after walking uses the task's original anchor");
+    finish(true);
+    check(originalPosition && fileWorldPosition(fileId) == originalPosition,
+          "reopen preserves file world position even when normalization changes");
+    command(TaskAction::Close);
+    ++worldRevision;
+    playerOrigin = {200, 80, 300, 0};
+    command(TaskAction::Activate);
+    check(requested->request.origin == playerOrigin, "new world clears anchors even while tasks are closed");
+    finish(true);
+    auto const newWorldPosition = fileWorldPosition(fileId);
+    command(TaskAction::Close);
+    playerOrigin = {500, 90, 600, 1};
+    command(TaskAction::Activate);
+    check(requested->request.origin == playerOrigin, "different dimension gets its own anchor");
+    finish(true);
+    command(TaskAction::Close);
+    playerOrigin = {700, 100, 800, 0};
+    command(TaskAction::Activate);
+    check(requested->request.origin == structure::detail::StructureLoadOrigin{200, 80, 300, 0},
+          "returning dimension reuses that dimension's anchor");
+    finish(true);
+    check(fileWorldPosition(fileId) == newWorldPosition, "dimension-scoped reopen preserves file world position");
+    command(TaskAction::Create, "第二个任务"); finish(true);
+    auto const otherTask = getTaskSnapshot().catalog.selectedTaskId;
+    command(TaskAction::Select, {}, {}, originalTask);
+    check(requested->request.origin == structure::detail::StructureLoadOrigin{200, 80, 300, 0},
+          "task switching does not re-anchor the original task");
+    finish(true);
+    command(TaskAction::Select, {}, {}, otherTask);
+    check(requested->request.origin == playerOrigin, "second task keeps its independent anchor");
+    finish(true);
+    command(TaskAction::Select, {}, {}, originalTask); finish(true);
     command(TaskAction::Activate);
     command(TaskAction::Close);
     auto closed = session.loaded();

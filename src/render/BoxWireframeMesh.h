@@ -3,6 +3,7 @@
 
 #include <array>
 #include <memory>
+#include <span>
 #include <string_view>
 #include "mc/deps/core/math/Vec3.h"
 
@@ -10,6 +11,10 @@ class Tessellator;
 namespace mce { class Mesh; }
 
 namespace lholo::render {
+
+struct BoxWireframeBounds {
+    Vec3 minimum, maximum;
+};
 
 inline std::array<Vec3, 24> boxWireframeVertices(Vec3 const& minimum, Vec3 const& maximum) {
     auto const x0 = minimum.x, y0 = minimum.y, z0 = minimum.z;
@@ -29,6 +34,12 @@ inline std::array<Vec3, 24> boxWireframeVertices(Vec3 const& minimum, Vec3 const
 // Called only on the render thread; section workers never build/upload this mesh.
 std::unique_ptr<mce::Mesh> buildBoxWireframeMesh(
     Tessellator& tessellator, Vec3 const& minimum, Vec3 const& maximum,
+    std::string_view debugName
+);
+
+// Independent boxes share one line-list upload/draw; no enclosing union box.
+std::unique_ptr<mce::Mesh> buildBoxWireframesMesh(
+    Tessellator& tessellator, std::span<BoxWireframeBounds const> boxes,
     std::string_view debugName
 );
 

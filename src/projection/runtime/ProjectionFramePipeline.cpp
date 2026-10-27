@@ -8,9 +8,11 @@
 #include "projection/mesh/ProjectionMeshUpload.h"
 #include "projection/runtime/ProjectionProgress.h"
 #include "projection/runtime/ProjectionVisibility.h"
+#include "projection/runtime/ProjectionSession.h"
 #include "projection/core/ProjectionState.h"
 #include "structure/StructureLoader.h"
 #include "render/BoxWireframeMesh.h"
+#include <vector>
 
 #include "mc/client/renderer/block/BlockTessellator.h"
 #include "mc/world/level/BlockSource.h"
@@ -24,9 +26,22 @@ void ensureStructureBoundsMesh(
     Tessellator&     tessellator,
     int              rotationTurns
 ) {
-    // The bounds are only 24 line vertices and are intentionally generated
-    // once on the render thread, independently of the section worker mode.
+    // Cache 24 line vertices per visible file in one GPU batch. Bounds are
+    // independent of winner cells, slicing and the selected editor file.
     if (state.structureBoundsMesh) return;
+
+    if (state.structure->composed) {
+        std::vector<render::BoxWireframeBounds> boxes;
+        boxes.reserve(state.structure->sourceBounds.size());
+        for (auto const& bounds : state.structure->sourceBounds)
+            boxes.push_back({
+                {static_cast<float>(bounds.minimum[0]), static_cast<float>(bounds.minimum[1]),
+                 static_cast<float>(bounds.minimum[2])},
+                {static_cast<float>(bounds.maximum[0]), static_cast<float>(bounds.maximum[1]),
+                 static_cast<float>(bounds.maximum[2])}});
+        state.structureBoundsMesh = render::buildBoxWireframesMesh(tessellator, boxes, "LHoloFileBounds");
+        return;
+    }
 
     auto const rotated = rotationTurns == 1 || rotationTurns == 3;
     auto const width = static_cast<float>(
@@ -100,7 +115,8 @@ void processProjectionOpaqueFrame(
             target.incrementalDirty = true;
             ++target.requestedRevision;
         }, ++state.biomeRefreshFrame);
-    ensureStructureBoundsMesh(state, tessellator, buildSettings.rotationTurns);
+    if (ProjectionSession::getInstance().structureBoundsEnabled())
+        ensureStructureBoundsMesh(state, tessellator, buildSettings.rotationTurns);
     scheduleProjectionMeshBuild(
         state, tessellator, region, cameraPosition, buildSettings
     );
