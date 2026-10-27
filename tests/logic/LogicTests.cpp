@@ -36,6 +36,7 @@ int runSettingsActionsTests();
 int runCaptureFacetLifetimeTests();
 int runNativeHudTests();
 int runTaskTests();
+int runIndependentTaskFilesTests();
 int runTaskActionsTests();
 void benchmarkProjectionDrawCache();
 
@@ -1117,6 +1118,7 @@ int main(int argc, char** argv) {
     LHOLO_CHECK(runSettingsActionsTests() == 0);
     LHOLO_CHECK(runNativeHudTests() == 0);
     LHOLO_CHECK(runTaskTests() == 0);
+    LHOLO_CHECK(runIndependentTaskFilesTests() == 0);
     LHOLO_CHECK(runTaskActionsTests() == 0);
     std::printf("LHoloLogicTests: %d checks, %d failures\n", gChecks, gFailures);
     return gFailures == 0 ? 0 : 1;

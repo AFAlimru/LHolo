@@ -1,6 +1,7 @@
 #include "ui/hud/HudContent.h"
 #include "ui/hud/editor/HudEditor.h"
 #include "structure/StructureLoader.h"
+#include "structure/IndependentTaskFiles.h"
 #include "structure/StructureSession.h"
 #include "structure/StructureUiState.h"
 #include "structure/StructurePaths.h"
@@ -28,7 +29,11 @@ HudContent readHudContent() {
         auto editor=structure::detail::StructureSession::getInstance().editorStructure();
         data.fileName = structure::detail::pathToUtf8((session.loaded->composed
             ? structure::detail::pathFromUtf8(session.lastPath) : session.loaded->sourcePath).filename());
-        if (session.loaded->composed && session.loaded->renderBlocks.empty()) data.fileName=i18n::tr(i18n::TextKey::TasksNoVisible);
+        bool const empty=session.loaded->independentFiles
+            ? std::none_of(session.loaded->independentFiles->files.begin(),session.loaded->independentFiles->files.end(),
+                [](auto const& f) { return f.visible && f.loaded; })
+            : session.loaded->renderBlocks.empty();
+        if (session.loaded->composed && empty) data.fileName=i18n::tr(i18n::TextKey::TasksNoVisible);
         data.axis = session.transform.layerAxis;
         data.mode = session.transform.layerDisplayMode;
         data.layer = session.transform.displayLayer;

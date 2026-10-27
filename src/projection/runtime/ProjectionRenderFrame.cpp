@@ -20,6 +20,8 @@
 #include "projection/runtime/ProjectionLifecycle.h"
 #include "projection/runtime/ProjectionProgress.h"
 #include "projection/runtime/ProjectionWorldEvents.h"
+#include "projection/runtime/IndependentFileProjection.h"
+#include "structure/IndependentTaskFiles.h"
 #include "projection/world/ProjectionPlacement.h"
 
 #include "overlay/BoundsWireframe.h"
@@ -33,6 +35,7 @@
 #include <cstddef>
 #include <exception>
 #include <memory>
+#include <limits>
 #include <tuple>
 #include <utility>
 
@@ -158,7 +161,8 @@ void renderProjection(
 
     if (!state.blockTessellator) return;
     if (!renderAlphaLayer) {
-        auto const transform = state.structure->composed ? structure::detail::StructureTransformSnapshot{}
+        auto const transform = state.fileTransform ? *state.fileTransform
+            : state.structure->composed ? structure::detail::StructureTransformSnapshot{}
             : structure::detail::StructureSession::getInstance().transform();
         auto const mirrorMode = transform.mirror;
         auto const rotationTurns = transform.rotation;
@@ -253,9 +257,9 @@ void renderProjection(
     // absolute coordinates to the GPU. Render vertices relative to the projection
     // origin, matching the strategy used by chunk meshes.
     BlockPos const renderOrigin{
-        state.anchor.x + (state.structure->composed ? 0 : structure::getOffsetX()),
-        state.anchor.y + (state.structure->composed ? 0 : structure::getOffsetY()),
-        state.anchor.z + (state.structure->composed ? 0 : structure::getOffsetZ())
+        state.anchor.x + (state.fileTransform ? state.fileTransform->offsetX : state.structure->composed ? 0 : structure::getOffsetX()),
+        state.anchor.y + (state.fileTransform ? state.fileTransform->offsetY : state.structure->composed ? 0 : structure::getOffsetY()),
+        state.anchor.z + (state.fileTransform ? state.fileTransform->offsetZ : state.structure->composed ? 0 : structure::getOffsetZ())
     };
 
     submitProjectedBlockActorPass(
@@ -296,10 +300,12 @@ void renderProjection(
         );
     } catch (std::exception const& exception) {
         logger().error("Projection immediate mesh submission failed: {}", exception.what());
+        if (state.fileTransform) throw;
         resetProjectionState(state);
         return;
     } catch (...) {
         logger().error("Projection immediate mesh submission failed with an unknown exception");
+        if (state.fileTransform) throw;
         resetProjectionState(state);
         return;
     }
@@ -309,7 +315,9 @@ void renderProjection(
 
 bool shouldSuppressProjectionHitSelect(BlockPos const& pos) {
     return ProjectionSession::getInstance().withLockedState(
-        [&](ProjectionState& state, overlay::BoundsWireframe&) {
+        [&](ProjectionState& root, overlay::BoundsWireframe&) {
+            if (!root.enabled) return false;
+            auto suppresses=[&](ProjectionState const& state) {
             if (state.enabled && state.structure) {
                 auto const found = state.expectedWorldBlockIndices->find(
                     std::tuple{pos.x, pos.y, pos.z}
@@ -346,6 +354,9 @@ bool shouldSuppressProjectionHitSelect(BlockPos const& pos) {
                 }
             }
             return false;
+            };
+            for (auto const& file:root.files) if (suppresses(*file)) return true;
+            return suppresses(root);
         }
     );
 }
@@ -380,8 +391,13 @@ void renderProjectionFrame(BaseActorRenderContext& renderContext, bool renderAlp
             bool const originDimensionReady = activation.origin && (!activation.origin->dimensionId
                 || (activationPlayer
                     && *activation.origin->dimensionId == static_cast<int>(activationPlayer->getDimensionId())));
+            bool const reuseFiles=activation.loaded && activation.loaded->independentFiles
+                && state.enabled && state.structure && state.structure->independentFiles
+                && originDimensionReady && state.anchor.x==activation.origin->x
+                && state.anchor.y==activation.origin->y && state.anchor.z==activation.origin->z
+                && classifyProjectionContext(state,renderContext.mClientInstance,activationPlayer)==ProjectionContextStatus::Current;
             if (auto loaded = activation.loaded; loaded && loaded->generation != state.structureGeneration
-                && originDimensionReady) {
+                && originDimensionReady && !reuseFiles) {
                 auto* player = activationPlayer;
                 if (!player) return;
                 auto& session = ProjectionSession::getInstance();
@@ -443,7 +459,50 @@ void renderProjectionFrame(BaseActorRenderContext& renderContext, bool renderAlp
                 suspendProjectionDimension(state);
                 return;
             }
-            renderProjection(state, renderContext, renderAlphaLayer);
+            if (state.structure->independentFiles) {
+                try {
+                    if (!renderAlphaLayer) {
+                        {
+                            std::lock_guard lifecycleLock(projectionWorldLifecycleMutex());
+                            if (consumeWorldExitRequest()) { worldExitPending=true; return; }
+                            if (activation.loaded && activation.loaded->independentFiles
+                                && !updateIndependentFiles(state,renderContext,activation.loaded)) return;
+                        }
+                        // Apply the selected file's live tuple on this frame,
+                        // without waiting for the asynchronous task publication.
+                        if (auto* selected=selectedFileProjection(state)) {
+                            auto source=structure::detail::StructureSession::getInstance().selectedSourceFor(*state.structure);
+                            auto const* definition=structure::independentTaskFile(*state.structure,source);
+                            if (definition) {
+                                auto live=structure::detail::StructureSession::getInstance().transform();
+                                auto candidate=*definition;
+                                candidate.x=live.offsetX; candidate.y=live.offsetY; candidate.z=live.offsetZ;
+                                candidate.rotation=live.rotation; candidate.mirror=live.mirror;
+                                std::array<long long,3> origin{static_cast<long long>(state.anchor.x)+candidate.x,
+                                    static_cast<long long>(state.anchor.y)+candidate.y,
+                                    static_cast<long long>(state.anchor.z)+candidate.z};
+                                bool rotated=(candidate.rotation&1)!=0;
+                                std::array<int,3> extent{rotated?candidate.loaded->sizeZ:candidate.loaded->sizeX,
+                                    candidate.loaded->sizeY,rotated?candidate.loaded->sizeX:candidate.loaded->sizeZ};
+                                bool fits=true;
+                                for (int axis=0;axis<3;++axis)
+                                    if (origin[axis]<std::numeric_limits<int>::min()
+                                        || origin[axis]+extent[axis]-1>std::numeric_limits<int>::max()) fits=false;
+                                if (fits && structure::independentTaskPlacement(candidate,state.structure->independentFiles->files))
+                                    selected->fileTransform=live;
+                            }
+                        }
+                        distributeIndependentFileEvents(state);
+                    }
+                    for (auto& file:state.files) renderProjection(*file,renderContext,renderAlphaLayer);
+                } catch (std::exception const& error) {
+                    logger().error("Independent projection failed: {}",error.what());
+                    resetProjectionState(state);
+                } catch (...) {
+                    logger().error("Independent projection failed");
+                    resetProjectionState(state);
+                }
+            } else renderProjection(state, renderContext, renderAlphaLayer);
         }
     );
     if (worldExitPending) {

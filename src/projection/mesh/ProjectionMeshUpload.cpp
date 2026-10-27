@@ -49,7 +49,7 @@ void uploadCompletedProjectionMeshes(ProjectionState& state, Tessellator& tessel
         auto const uploadStarted = std::chrono::steady_clock::now();
         for (std::size_t uploaded = 0; uploaded < 2; ++uploaded) {
             if (std::chrono::steady_clock::now() - uploadStarted >= std::chrono::milliseconds(1)) break;
-            auto completed = takeCompletedSectionBuilds(1);
+            auto completed = state.fileTransform ? std::exchange(state.fileCompleted,{}) : takeCompletedSectionBuilds(1);
             if (completed.empty()) break;
             auto result = std::move(completed.front());
             if (result.workerGeneration != state.meshWorkerGeneration

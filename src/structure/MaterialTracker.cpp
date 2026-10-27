@@ -2,6 +2,7 @@
 // Copyright (C) 2026  MarmieQi
 
 #include "structure/MaterialTracker.h"
+#include "structure/IndependentTaskFiles.h"
 
 #include "block/BlockPlacementRules.h"
 #include "projection/Projection.h"
@@ -290,7 +291,13 @@ void processPendingMaterialList(LocalPlayer& player) {
     std::vector<MaterialRequirement> materials;
     if (loaded && loaded->composed) {
         std::vector<LoadedStructure::RenderBlock> selected;
-        for (auto const& block:loaded->renderBlocks) if (block.sourceIndex==source) selected.push_back(block);
+        if (auto const* file=independentTaskFile(*loaded,source); file && file->visible && file->loaded) {
+            for (auto const& block:file->loaded->renderBlocks)
+                if (projection::isLayerVisible(file->slice.axis==LayerAxis::X ? block.x : block.y,
+                    file->slice.mode,file->slice.layer,block.materialIndex,block.liquidMaterialIndex,file->slice.axis))
+                    selected.push_back(block);
+        } else for (auto const& block:loaded->renderBlocks)
+            if (block.sourceIndex==source) selected.push_back(block);
         materials=collectMaterials(selected,player.getLocaleCode());
     } else if (loaded) materials = collectMaterials(loaded->renderBlocks, player.getLocaleCode());
     // Loading another structure can overlap this game-thread calculation. Never

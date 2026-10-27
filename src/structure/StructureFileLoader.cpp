@@ -9,6 +9,7 @@
 #include "structure/StructureLoader.h"
 #include "structure/StructurePaths.h"
 #include "structure/StructureSession.h"
+#include "structure/IndependentTaskFiles.h"
 #include "structure/StructureUiState.h"
 #include "structure/formats/StructureFormatLoaders.h"
 #include "mc/world/level/block/states/VanillaBlockStateTransformUtils.h"
@@ -232,7 +233,7 @@ bool startTaskComposition(std::string taskId, std::uint64_t revision, StructureL
             }
             result->errorFileId.clear();
             result->composition =
-                composeTask(result->files, [](Block const* block, int mirror, int rotation) -> Block const* {
+                composeTaskProjection(result->files, [](Block const* block, int mirror, int rotation) -> Block const* {
                     if (!block || (mirror == 0 && rotation == 0))
                         return block;
                     constexpr Rotation rotations[]{Rotation::None, Rotation::Clockwise90,
@@ -250,6 +251,19 @@ bool startTaskComposition(std::string taskId, std::uint64_t revision, StructureL
                 auto maximum = minimum + std::max(0, size[axis] - 1);
                 if (minimum < std::numeric_limits<int>::min() || maximum > std::numeric_limits<int>::max())
                     throw std::runtime_error("Task world coordinates exceed supported range");
+            }
+            if (composed.independentFiles) for (auto const& f:composed.independentFiles->files) {
+                if (!f.visible || !f.loaded) continue;
+                std::array<int,3> offset{f.x,f.y,f.z};
+                bool rotated=(f.rotation&1)!=0;
+                std::array<int,3> extent{rotated?f.loaded->sizeZ:f.loaded->sizeX,f.loaded->sizeY,
+                    rotated?f.loaded->sizeX:f.loaded->sizeZ};
+                for (int axis=0;axis<3;++axis) {
+                    auto lo=static_cast<long long>(base[axis])+offset[axis];
+                    auto hi=lo+extent[axis]-1;
+                    if (lo<std::numeric_limits<int>::min() || hi>std::numeric_limits<int>::max())
+                        throw std::runtime_error("Task world coordinates exceed supported range");
+                }
             }
         } catch (std::exception const& error) {
             result->error = error.what();

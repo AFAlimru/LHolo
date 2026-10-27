@@ -179,6 +179,7 @@ ProjectionInvalidationResult reconcileProjectionInvalidation(
                 ++state.progressVisibleCorrectCount;
             }
         }
+        state.progressVisibleTotal=visibleTotal;
         publishVisibleProgress(state.progressVisibleCorrectCount, visibleTotal);
     }
 

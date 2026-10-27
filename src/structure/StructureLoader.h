@@ -31,6 +31,7 @@ class Block;
 class CompoundTag;
 
 namespace lholo::structure {
+struct IndependentTaskFiles;
 
 inline constexpr std::uint64_t kProjectionLifecycleHintDurationMs = 2500;
 
@@ -63,6 +64,7 @@ struct LoadedStructure {
     std::uint64_t                        generation{};
     std::size_t                          materialCount{};
     bool                                 composed{};
+    std::shared_ptr<IndependentTaskFiles const> independentFiles;
     std::vector<std::string>              sourceFiles;
     std::vector<FileBounds>               sourceBounds;
     // Cells covered by the source format. mcstructure contributes one box;

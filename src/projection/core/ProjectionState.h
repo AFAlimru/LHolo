@@ -11,6 +11,9 @@
 #include "projection/core/ProjectionVisibilityRules.h"
 #include "projection/core/ProjectionDrawCache.h"
 #include "projection/core/ProjectionBiomeRefresh.h"
+#include "projection/runtime/ProjectionWorldEvents.h"
+#include "projection/mesh/ProjectionMeshWorker.h"
+#include "structure/StructureSession.h"
 
 #include <array>
 #include <cstddef>
@@ -59,6 +62,14 @@ struct SectionState {
 };
 
 struct ProjectionState {
+    // Independent files use exactly the existing single-file pipeline. The
+    // root only owns their lifetime and routes shared event/worker queues.
+    std::string fileId;
+    std::optional<structure::detail::StructureTransformSnapshot> fileTransform;
+    std::vector<std::shared_ptr<ProjectionState>> files;
+    std::vector<PendingBlockChange> fileBlockChanges;
+    std::vector<AsyncSectionBuildResult> fileCompleted;
+    std::uint64_t progressVisibleTotal{};
     bool                            enabled{};
     BlockPos                        anchor{};
     IClientInstance*                client{};

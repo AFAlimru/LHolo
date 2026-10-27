@@ -7,6 +7,7 @@
 // (at your option) any later version.
 
 #include "projection/correction/ProjectionCorrectionTracker.h"
+#include <utility>
 
 #include "block/BlockPlacementRules.h"
 #include "projection/core/ProjectionRules.h"
@@ -305,7 +306,8 @@ CorrectionProgressChanges updateCorrectionTracker(
     // The cache is populated once after a structure/transform change. Once
     // that pass completes, a stable world performs no correction reads.
     // Official BlockSource notifications update only changed cells.
-    auto const changedPositions = takePendingBlockChanges(kCorrectionChecksPerFrame);
+    auto const changedPositions = state.fileTransform ? std::exchange(state.fileBlockChanges,{})
+        : takePendingBlockChanges(kCorrectionChecksPerFrame);
     std::size_t correctionChecks{};
     for (auto const& change : changedPositions) {
         auto const& changedPosition = change.position;
@@ -348,7 +350,8 @@ CorrectionProgressChanges updateCorrectionTracker(
         }
     }
 
-    auto const loadedSubChunks = takePendingLoadedSubChunks(kSubChunkEventsPerFrame);
+    auto const loadedSubChunks = state.fileTransform ? std::vector<SubChunkKey>{}
+        : takePendingLoadedSubChunks(kSubChunkEventsPerFrame);
     state.pendingLoadedSubChunks.insert(loadedSubChunks.begin(), loadedSubChunks.end());
 
     auto const scanRemaining = totalBlocks - state.correctionScanCursor;

@@ -20,6 +20,7 @@
 #include "projection/runtime/ProjectionProgress.h"
 #include "projection/runtime/ProjectionSession.h"
 #include "projection/runtime/ProjectionWorldEvents.h"
+#include "projection/runtime/IndependentFileProjection.h"
 #include "projection/core/ProjectionState.h"
 #include "projection/world/ProjectionQueries.h"
 #include "structure/StructureSession.h"
@@ -102,6 +103,13 @@ bool isDimensionSuspended() {
 BuildProgress getBuildProgress() {
     return detail::ProjectionSession::getInstance().withLockedState([](detail::ProjectionState& state, overlay::BoundsWireframe&) {
         if (!state.enabled || !state.structure || !state.structure->composed) return detail::getPublishedBuildProgress();
+        if (state.structure->independentFiles) {
+            auto* file=detail::selectedFileProjection(state);
+            if (!file) return BuildProgress{};
+            return BuildProgress{file->progressCorrectCount,file->structure->renderBlocks.size(),
+                file->progressVisibleCorrectCount,file->progressVisibleTotal,
+                file->progressWrongTypeCount,file->progressWrongStateCount,file->progressExtraCount};
+        }
         auto source=structure::detail::StructureSession::getInstance().selectedSourceFor(*state.structure);
         return source>=0 && source<static_cast<int>(state.sourceProgress.size()) ? state.sourceProgress[source] : BuildProgress{};
     });
@@ -109,8 +117,11 @@ BuildProgress getBuildProgress() {
 
 std::optional<MaterialProgressKey> getMaterialProgressKey() {
     return detail::ProjectionSession::getInstance().withLockedState(
-        [](detail::ProjectionState& state, overlay::BoundsWireframe&)
+        [](detail::ProjectionState& root, overlay::BoundsWireframe&)
             -> std::optional<MaterialProgressKey> {
+            auto* selected=detail::selectedFileProjection(root);
+            if (!root.enabled || !selected) return std::nullopt;
+            auto& state=*selected;
             if (!state.enabled || !state.structure
                 || !state.cachedLayerDisplayMode || !state.cachedLayerAxis
                 || state.correctionScanCursor != state.structure->renderBlocks.size()) {
@@ -133,8 +144,11 @@ std::optional<MaterialProgressSnapshot> captureMaterialProgress(
     MaterialProgressKey const& expected
 ) {
     return detail::ProjectionSession::getInstance().withLockedState(
-        [&expected](detail::ProjectionState& state, overlay::BoundsWireframe&)
+        [&expected](detail::ProjectionState& root, overlay::BoundsWireframe&)
             -> std::optional<MaterialProgressSnapshot> {
+            auto* selected=detail::selectedFileProjection(root);
+            if (!root.enabled || !selected) return std::nullopt;
+            auto& state=*selected;
             auto const matches = state.enabled && state.structure
                 && state.correctionScanCursor == state.structure->renderBlocks.size()
                 && state.structureGeneration == expected.structureGeneration
@@ -171,6 +185,10 @@ std::vector<BrokenProjectionCell> takeBrokenProjectionCells(LocalPlayer& player)
             if (!state.enabled || !state.structure) return;
             if (!projectionWorldViewMatches(state, player)) return;
             result.swap(state.pendingBrokenCells);
+            for (auto& file:state.files) {
+                result.insert(result.end(),file->pendingBrokenCells.begin(),file->pendingBrokenCells.end());
+                file->pendingBrokenCells.clear();
+            }
         }
     );
     return result;
@@ -182,7 +200,8 @@ ProjectionQuery queryProjection(LocalPlayer& player, BlockPos const& worldPos) {
         [&](detail::ProjectionState& state, overlay::BoundsWireframe&) {
             if (!state.enabled || !state.structure) return;
             if (!projectionWorldViewMatches(state, player)) return;
-            result = detail::queryProjectionCell(state, worldPos);
+            if (auto* selected=detail::selectedFileProjection(state))
+                result = detail::queryProjectionCell(*selected, worldPos);
         }
     );
     return result;
@@ -194,7 +213,8 @@ std::vector<RangeCandidate> queryMissingCellsInRange(LocalPlayer& player, Vec3 c
         [&](detail::ProjectionState& state, overlay::BoundsWireframe&) {
             if (!state.enabled || !state.structure) return;
             if (!projectionWorldViewMatches(state, player)) return;
-            result = detail::queryMissingProjectionCells(state, center, radius);
+            if (auto* selected=detail::selectedFileProjection(state))
+                result = detail::queryMissingProjectionCells(*selected, center, radius);
         }
     );
     return result;

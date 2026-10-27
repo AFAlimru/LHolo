@@ -1,6 +1,7 @@
 #include "app/TaskActions.h"
 #include "app/TaskContext.h"
 #include "structure/StructureFileLoader.h"
+#include "structure/IndependentTaskFiles.h"
 #include "structure/MaterialTracker.h"
 #include "tasks/TaskStore.h"
 #include <cstdio>
@@ -88,7 +89,7 @@ int runTaskActionsTests() {
                 file.loaded = loaded;
                 cache[requestedPaths[i]] = loaded;
             }
-            requested->composition = structure::composeTask(requested->files,
+            requested->composition = structure::composeTaskProjection(requested->files,
                 [](Block const* b, int, int) { return b; });
         } else {
             requested->error = "Missing file";
@@ -140,6 +141,11 @@ int runTaskActionsTests() {
         auto source = std::find(loaded.sourceFiles.begin(), loaded.sourceFiles.end(), id);
         if (source == loaded.sourceFiles.end()) return {};
         auto index = static_cast<int>(source - loaded.sourceFiles.begin());
+        if (auto const* file=structure::independentTaskFile(loaded,index); file && file->loaded && file->visible) {
+            return std::array<long long,3>{static_cast<long long>(activation.origin->x)+file->x,
+                static_cast<long long>(activation.origin->y)+file->y,
+                static_cast<long long>(activation.origin->z)+file->z};
+        }
         for (auto const& block : loaded.renderBlocks) if (block.sourceIndex == index)
             return std::array<long long, 3>{static_cast<long long>(activation.origin->x) + block.x,
                 static_cast<long long>(activation.origin->y) + block.y,
