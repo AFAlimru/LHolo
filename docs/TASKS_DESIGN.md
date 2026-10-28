@@ -42,11 +42,11 @@ frontend/src/
 
 ## 持久化模型
 
-文件位置：`mods/LHolo/data/tasks.json`。代码通过 `LHolo::getInstance().getSelf().getDataDir() / "tasks.json"` 获取路径，不自行拼接游戏安装目录。LeviLamina 的 `getDataDir()` 对应模组的 `data/`，`getConfigDir()` 对应 `config/`。`config/config.json` 继续只存全局设置和旧单文件恢复记录。任务文件存储定义，不复制或导入投影文件；目录和文件在第一次保存任务时创建。JSON 字符串使用 UTF-8；路径使用用户选定的绝对路径，并复用 `StructurePaths` 做 Windows 路径转换。任务和文件 ID 在创建时生成，顺序由数组位置表示，不另存易失同步的编号或 ID 计数器。
+文件位置：`mods/LHolo/data/tasks.json`。代码通过 `LHolo::getInstance().getSelf().getDataDir() / "tasks.json"` 获取路径，不自行拼接游戏安装目录。LeviLamina 的 `getDataDir()` 对应模组的 `data/`，`getConfigDir()` 对应 `config/`。`config/config.json` v13 只存全局偏好，不再保存旧单文件恢复记录。任务文件存储定义，不复制或导入投影文件；目录和文件在第一次保存任务时创建。JSON 字符串使用 UTF-8；路径使用用户选定的绝对路径，并复用 `StructurePaths` 做 Windows 路径转换。任务和文件 ID 在创建时生成，顺序由数组位置表示，不另存易失同步的编号或 ID 计数器。
 
 ```text
 mods/LHolo/
-  config/config.json       语言、HUD、快捷键等设置及旧单文件恢复记录
+  config/config.json       语言、HUD、快捷键等全局偏好
   data/tasks.json          用户创建的任务、外部文件引用、每文件维度/坐标和设置
   resource_packs/LHoloUI/  模组页面资源；不存用户数据
 ```

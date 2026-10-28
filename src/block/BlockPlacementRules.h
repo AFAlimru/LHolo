@@ -14,6 +14,8 @@
 class Block;
 class BlockActor;
 class ItemStack;
+class CompoundTag;
+class Level;
 
 namespace lholo::block {
 
@@ -87,6 +89,8 @@ struct PlacementItem {
 // Resolves the real inventory item represented by a block. Must run on the game
 // tick thread because it touches the Bedrock item registry/localization data.
 [[nodiscard]] PlacementItem resolvePlacementItem(Block const& block, BlockActor const* blockActor = nullptr);
+// Shared native pick path for blueprint block-entity data (beds, banners, etc.).
+[[nodiscard]] PlacementItem resolvePlacementItem(Block const& block, CompoundTag const& nbt, Level& level);
 
 [[nodiscard]] std::string stripMinecraftFormatting(std::string_view text);
 

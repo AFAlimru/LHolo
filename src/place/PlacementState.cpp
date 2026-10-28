@@ -164,14 +164,14 @@ void PlacementState::cacheFailedPlan(
     mFailedRangePlans[key] = expiresAt;
 }
 
-std::string PlacementState::aimedProjectedBlockName() const {
-    std::lock_guard lock(mAimedProjectedBlockNameMutex);
-    return mAimedProjectedBlockName;
+AimedProjectedBlock PlacementState::aimedProjectedBlock() const {
+    std::lock_guard lock(mAimedProjectedBlockMutex);
+    return mAimedProjectedBlock;
 }
 
-void PlacementState::setAimedProjectedBlockName(std::string name) {
-    std::lock_guard lock(mAimedProjectedBlockNameMutex);
-    mAimedProjectedBlockName = std::move(name);
+void PlacementState::setAimedProjectedBlock(AimedProjectedBlock value) {
+    std::lock_guard lock(mAimedProjectedBlockMutex);
+    mAimedProjectedBlock = std::move(value);
 }
 
 void PlacementState::resetDimensionSession() {
@@ -185,7 +185,7 @@ void PlacementState::resetDimensionSession() {
         mAutoPlacementSuppressions.clear();
         mFailedRangePlans.clear();
     }
-    setAimedProjectedBlockName({});
+    setAimedProjectedBlock({});
 }
 
 void PlacementState::resetWorldSession() {

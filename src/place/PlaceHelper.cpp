@@ -271,8 +271,8 @@ bool isManualMode() {
     return placementState().manualMode();
 }
 
-std::string getAimedProjectedBlockName() {
-    return placementState().aimedProjectedBlockName();
+AimedProjectedBlock getAimedProjectedBlock() {
+    return placementState().aimedProjectedBlock();
 }
 
 void resetDimensionSession() {

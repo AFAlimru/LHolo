@@ -2,6 +2,11 @@
 // Copyright (C) 2026  MarmieQi
 
 #include "block/BlockPlacementRules.h"
+#include "mc/dataloadhelper/NewUniqueIdsDataLoadHelper.h"
+#include "mc/world/level/Level.h"
+#include "mc/world/level/BlockPos.h"
+#include "mc/world/level/block/actor/BlockActor.h"
+#include "mc/world/level/block/actor/VanillaBlockActorFactory.h"
 
 #include "mc/world/item/ItemInstance.h"
 #include "mc/world/item/SaveContext.h"
@@ -86,6 +91,23 @@ PlacementItem resolvePlacementItem(Block const& block, BlockActor const* blockAc
     }
 
     return {};
+}
+
+PlacementItem resolvePlacementItem(Block const& block, CompoundTag const& nbt, Level& level) {
+    try {
+        BlockPos const origin{0, 0, 0};
+        auto actor = VanillaBlockActorFactory::createBlockActor(origin, block.getBlockType());
+        if (actor) {
+            NewUniqueIdsDataLoadHelper helper;
+            helper.mLevel = &level;
+            actor->load(level, nbt, helper);
+            actor->mPosition = origin;
+            return resolvePlacementItem(block, actor.get());
+        }
+    } catch (...) {
+        // Unsupported actor data must not discard the ordinary block item.
+    }
+    return resolvePlacementItem(block);
 }
 
 } // namespace lholo::block

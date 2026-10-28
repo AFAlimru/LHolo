@@ -11,12 +11,9 @@
 #include "structure/StructureUiState.h"
 
 #include "mc/client/player/LocalPlayer.h"
-#include "mc/dataloadhelper/NewUniqueIdsDataLoadHelper.h"
 #include "mc/world/level/Level.h"
 #include "mc/world/level/BlockPos.h"
 #include "mc/world/level/block/BlockType.h"
-#include "mc/world/level/block/actor/BlockActor.h"
-#include "mc/world/level/block/actor/VanillaBlockActorFactory.h"
 #include "mc/locale/I18n.h"
 #include "mc/world/actor/player/Inventory.h"
 #include "mc/world/item/ItemStack.h"
@@ -127,23 +124,6 @@ std::string localizedBlockName(Block const& block, std::string_view localeCode) 
     return name;
 }
 
-block::PlacementItem resolveMaterialItem(Block const& blockValue, CompoundTag const* nbt, Level& level) {
-    if (nbt) try {
-        BlockPos const origin{0, 0, 0};
-        auto actor = VanillaBlockActorFactory::createBlockActor(origin, blockValue.getBlockType());
-        if (actor) {
-            NewUniqueIdsDataLoadHelper helper;
-            helper.mLevel = &level;
-            actor->load(level, *nbt, helper);
-            actor->mPosition = origin;
-            return block::resolvePlacementItem(blockValue, actor.get());
-        }
-    } catch (...) {
-        // Malformed or unsupported actor data must not discard material counts.
-    }
-    return block::resolvePlacementItem(blockValue);
-}
-
 std::vector<MaterialRequirement> resolveMaterials(
     RawMaterialCounts counts,
     std::string_view localeCode,
@@ -165,7 +145,7 @@ std::vector<MaterialRequirement> resolveMaterials(
             requirement.nameKey = i18n::TextKey::MaterialWater;
         } else if (typeName == "minecraft:lava" || typeName == "minecraft:flowing_lava") {
             requirement.nameKey = i18n::TextKey::MaterialLava;
-        } else if (auto const item = resolveMaterialItem(*blockValue, nbt, level); item.valid) {
+        } else if (auto const item = (nbt ? block::resolvePlacementItem(*blockValue, *nbt, level) : block::resolvePlacementItem(*blockValue)); item.valid) {
             requirement.displayName = item.displayName;
             requirement.itemId = item.itemId;
             requirement.stackSize = item.stackSize;

@@ -33,7 +33,7 @@ ProjectionQuery queryProjectionCell(
     // Liquids have no normal block item, so they are never a valid place target.
     if (block && block->getBlockType().mMaterial.mLiquid) block = nullptr;
     bool const missing = (*state.correctionStates)[foundIndex->second] == CorrectionState::Missing;
-    return {block, missing};
+    return {block, missing, block ? state.structure->renderBlocks[foundIndex->second].blockEntityNbt : nullptr};
 }
 
 std::vector<RangeCandidate> queryMissingProjectionCells(

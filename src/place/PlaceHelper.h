@@ -17,6 +17,7 @@
 #pragma once
 
 #include <string>
+#include "place/AimedProjectedBlock.h"
 
 namespace lholo::place {
 
@@ -35,7 +36,7 @@ int  getAutoPlacementBreakCooldownSeconds();
 void setManualMode(bool manual);
 bool isManualMode();
 // Display name of the projected blueprint block currently under the crosshair.
-std::string getAimedProjectedBlockName();
+AimedProjectedBlock getAimedProjectedBlock();
 
 // Clears actions and coordinate-keyed caches owned by the previous dimension
 // while preserving the user's active assisted-placement modes and settings.

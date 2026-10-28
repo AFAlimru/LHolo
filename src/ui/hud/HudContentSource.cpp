@@ -49,7 +49,12 @@ HudContent readHudContent() {
             : data.axis == structure::LayerAxis::X ? session.maxLayerX : session.maxLayerY;
         if (settings.showOverallProgress || settings.showProgress || settings.showWrongState || settings.showWrongType || settings.showExtraBlocks)
             data.progress = projection::getBuildProgress();
-        if (settings.showProjectedBlockName) data.aimedBlock = place::getAimedProjectedBlockName();
+        if (settings.showProjectedBlockName) {
+            auto const aimed = place::getAimedProjectedBlock();
+            data.aimedBlock = aimed.name;
+            data.aimedBlockIconId = aimed.iconId;
+            data.aimedBlockIconItem = aimed.iconItem;
+        }
         using i18n::TextKey;
         if (place::isManualMode()) data.placementMode = i18n::tr(TextKey::ModeManual);
         else if (place::isEnabled()) data.placementMode = i18n::tr(TextKey::ModeEasy);

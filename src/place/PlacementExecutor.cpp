@@ -140,10 +140,22 @@ void consumeBrokenProjectionCells(LocalPlayer& player, std::uint64_t now) {
     }
 }
 
-void updateAimedProjectedBlockName(Block const* block) {
-    placementState().setAimedProjectedBlockName(
-        block ? block->buildDescriptionName() : std::string{}
-    );
+void updateAimedProjectedBlock(Block const* block, std::shared_ptr<CompoundTag const> nbt = {}, Level* level = nullptr) {
+    // Only one target is retained, never a world-sized icon cache. Immutable
+    // blueprint NBT identity distinguishes differently colored/patterned actors.
+    static Block const* previousBlock{};
+    static std::shared_ptr<CompoundTag const> previousNbt;
+    static block::PlacementItem item;
+    if (block != previousBlock || nbt != previousNbt) {
+        item = block ? (nbt && level ? block::resolvePlacementItem(*block, *nbt, *level)
+                                    : block::resolvePlacementItem(*block)) : block::PlacementItem{};
+        previousBlock = block;
+        previousNbt = std::move(nbt);
+    }
+    placementState().setAimedProjectedBlock(block
+        ? AimedProjectedBlock{block->buildDescriptionName(), item.itemId.empty()
+            ? std::string{block->getTypeName()} : item.itemId, item.displayItem}
+        : AimedProjectedBlock{});
 }
 
 struct ItemFind {
@@ -288,6 +300,7 @@ struct ProjectionTarget {
     uchar        face;
     Block const* block;
     Vec3         clickPos{};  // Exact click point; chosen to reproduce the ghost.
+    std::shared_ptr<CompoundTag const> blockEntityNbt;
 };
 
 // Which face of a cell points most along the given (unit) direction.
@@ -389,7 +402,7 @@ std::optional<ProjectionTarget> findProjectionTarget(
             BlockPos const neighbor = neighborOf(cell, entryFace);
             auto const query = projection::queryProjection(player, neighbor);
             if (neighbor != originCell && query.block && query.missing) {
-                return ProjectionTarget{neighbor, cell, entryFace, query.block};
+                return ProjectionTarget{neighbor, cell, entryFace, query.block, {}, query.blockEntityNbt};
             }
             break;
         }
@@ -398,7 +411,9 @@ std::optional<ProjectionTarget> findProjectionTarget(
 
         // The ghost itself is the target; reuse the shared support selection
         // (real neighbor preferred, air-mPos fallback when floating).
-        return selectPlacementTarget(region, cell, dir, query.block);
+        auto target = selectPlacementTarget(region, cell, dir, query.block);
+        target.blockEntityNbt = query.blockEntityNbt;
+        return target;
     }
     return std::nullopt;
 }
@@ -821,12 +836,12 @@ void tickRangePlaceImpl(LocalPlayer& player, PlacementContext const& placementCo
 void tickEasyPlaceImpl() {
     auto client = ll::service::getClientInstance();
     if (!client) {
-        updateAimedProjectedBlockName(nullptr);
+        updateAimedProjectedBlock(nullptr);
         return;
     }
     auto* player = client->getLocalPlayer();
     if (!player) {
-        updateAimedProjectedBlockName(nullptr);
+        updateAimedProjectedBlock(nullptr);
         return;
     }
     auto const tickNow = GetTickCount64();
@@ -834,7 +849,7 @@ void tickEasyPlaceImpl() {
     // Only act during gameplay: menus, pause screens and the LHolo GUI itself
     // disable in-game input.
     if (!client->isInGameInputEnabled() || structure::isGuiVisible()) {
-        updateAimedProjectedBlockName(nullptr);
+        updateAimedProjectedBlock(nullptr);
         return;
     }
 
@@ -843,7 +858,7 @@ void tickEasyPlaceImpl() {
         || placementState().rangeEnabled();
     bool const showProjectedBlockName = structure::shouldShowProjectedBlockName();
     if (!placementActive && !showProjectedBlockName) {
-        updateAimedProjectedBlockName(nullptr);
+        updateAimedProjectedBlock(nullptr);
         return;
     }
 
@@ -852,15 +867,16 @@ void tickEasyPlaceImpl() {
     Vec3 const rawDir = player->getViewVector(1.0f);
     float const length = std::sqrt(rawDir.x * rawDir.x + rawDir.y * rawDir.y + rawDir.z * rawDir.z);
     if (length <= 0.0f) {
-        updateAimedProjectedBlockName(nullptr);
+        updateAimedProjectedBlock(nullptr);
         return;
     }
     Vec3 const dir{rawDir.x / length, rawDir.y / length, rawDir.z / length};
 
     float const pickRange = player->getPickRange();
     auto target = findProjectionTarget(*player, origin, dir, pickRange);
-    updateAimedProjectedBlockName(
-        showProjectedBlockName && target ? target->block : nullptr
+    updateAimedProjectedBlock(
+        showProjectedBlockName && target ? target->block : nullptr,
+        showProjectedBlockName && target ? target->blockEntityNbt : nullptr, &player->getLevel()
     );
     if (!placementActive) return;
     PlacementContext const placementContext = makePlacementContext(origin, dir, pickRange);

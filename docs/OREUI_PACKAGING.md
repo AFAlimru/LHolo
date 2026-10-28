@@ -74,7 +74,7 @@ LHolo/
 2. 正式发行计划对 LHolo 自有 JS/CSS 采用内容散列文件名作为缓存隔离方案；当前测试资源仍使用固定文件名，适配响应设置 `Cache-Control: no-store`。仍须实测新版替换后的 Gameface 缓存行为，不能仅靠资源包版本号宣称已解决。
 3. 配置和用户数据不进入发行物，也不参与资源目录清理。已有 `tooth.json` 保留 `mods/LHolo/config/config.json`；若增加持久化文件，应按真实路径补充保留策略。lip 的 `preserve_files` 是卸载阶段保留规则，并不是通用的配置备份或合并机制。
 4. 新版移除的自有资源必须有明确的旧文件清理策略。lip 管理安装和手动 ZIP 覆盖应分别验证；手动覆盖不能假定会删除旧文件。清理限于可确认归属 LHolo 的发行文件，不能清空整个模组目录。
-5. 更新需要退出游戏后完成，不承诺热更新。回滚恢复匹配的 DLL 和完整 UI 资源；配置如有未来格式迁移，须另行设计备份与兼容，本轮不改变配置格式。
+5. 更新需要退出游戏后完成，不承诺热更新。回滚恢复匹配的 DLL 和完整 UI 资源；v26.51.7 使用配置 v13，升级会保留 config.json.legacy.bak；回滚到旧版本时应先恢复相应旧配置备份。
 6. 从现有开发部署迁移时，仅处理已确认属于 LHolo 的游戏目录测试文件；不得删除或改写原版 `gameplay` bundle、其他模组资源或用户资源包设置。
 
 依据：[lip 包清单与文件保留规则](https://lip.levimc.org/concepts/package_manifest.html)、[LeviLamina 发布教程](https://docs.levimc.org/LeviLamina/developer_guides/tutorials/create_your_first_mod/)。
@@ -95,7 +95,7 @@ LHolo/
 
 ```powershell
 xmake
-python tools/oreui/release_package.py --output build/release/LHolo-client-windows-x64.zip --tag v26.51.6
+python tools/oreui/release_package.py --output build/release/LHolo-client-windows-x64.zip --tag v26.51.7
 ```
 
 该工具只收集组装报告中的六项必需文件，再校验包内版本、UUID 与协议；同名 `.zip.sha256` 仅用于构建机本地校验，不作为发行附件上传。ZIP 顶层为 `LHolo/`，与 tooth 的安装规则一致；不包含配置、PDB、构建报告、游戏安装路径或其他本机文件。

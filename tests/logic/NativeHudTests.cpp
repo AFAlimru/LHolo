@@ -35,7 +35,19 @@ int runNativeHudTests() {
         && panel.lines[6].tone == TextTone::Extra, "error semantics retain their colors");
     check(panel.lines[7].text == "Projected block: Stone" && panel.lines[8].text == "Assist: Manual", "aimed block and assist mode");
     check(std::none_of(panel.lines.begin(), panel.lines.end(), [](auto const& line) { return line.iconId.has_value(); }),
-        "ordinary HUD never reserves material icon columns");
+        "ordinary HUD has no icon column without a resolved target item");
+    auto aimedToken = std::make_shared<int>(7);
+    data.aimedBlockIconId = "minecraft:bed";
+    data.aimedBlockIconItem = std::shared_ptr<ItemStack const>(aimedToken, reinterpret_cast<ItemStack const*>(aimedToken.get()));
+    panel = makeProjectionHud(settings, data);
+    check(!panel.lines[7].iconId && !panel.lines[7].iconItem && panel.lines[7].iconPrefix.empty()
+        && panel.lines[7].text == "Projected block: Stone",
+        "aimed block icon is temporarily disabled even when native item data is available");
+    data.aimedBlock.clear();
+    panel = makeProjectionHud(settings, data);
+    check(std::none_of(panel.lines.begin(), panel.lines.end(), [](auto const& line) { return line.iconId.has_value(); }),
+        "absent target hides its icon even when old display data remains");
+    data.aimedBlock = "Stone";
     settings.enabled = false;
     check(makeProjectionHud(settings, data).lines.empty(), "ordinary HUD disabled");
     settings.enabled = true;
