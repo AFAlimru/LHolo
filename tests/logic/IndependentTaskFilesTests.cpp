@@ -1,4 +1,7 @@
 #include "structure/IndependentTaskFiles.h"
+#include "projection/mesh/ProjectionBuildCompletionQueue.h"
+#include "projection/runtime/IndependentFileFrame.h"
+#include <array>
 #include <cstdio>
 #include <limits>
 
@@ -11,6 +14,50 @@ int runIndependentTaskFilesTests() {
             std::printf("IndependentTaskFilesTests FAILED: %s\n", message);
         }
     };
+    // Multiple CPU builds can reach a file before its next upload pass. A
+    // one-result budget must never discard the rest and strand in-flight bits.
+    struct Completion { int section; std::unique_ptr<int> mesh; };
+    std::deque<Completion> completed;
+    for (int index = 0; index < 3; ++index)
+        completed.push_back({index, std::make_unique<int>(index + 10)});
+    std::array<bool, 3> inFlight{true, true, true};
+    auto first = lholo::projection::detail::takeProjectionBuildResults(completed, 1);
+    check(first.size() == 1 && first[0].section == 0 && *first[0].mesh == 10
+        && completed.size() == 2 && completed.front().section == 1,
+        "upload budget keeps unconsumed file completions and native mesh ownership");
+    inFlight[first[0].section] = false;
+    check(lholo::projection::detail::takeProjectionBuildResults(completed, 0).empty()
+        && completed.size() == 2, "exhausted upload budget preserves queued results");
+    for (int expected = 1; expected < 3; ++expected) {
+        auto result = lholo::projection::detail::takeProjectionBuildResults(completed, 1);
+        check(result.size() == 1 && result[0].section == expected && *result[0].mesh == expected + 10,
+            "later frames consume each pending completion exactly once in order");
+        inFlight[result[0].section] = false;
+    }
+    check(completed.empty() && !inFlight[0] && !inFlight[1] && !inFlight[2],
+        "all completed sections leave in-flight state instead of becoming permanently missing");
+
+    // Reproduce contention: all files stay dirty and the worker can accept
+    // only the first submission in each frame. Fixed file order starves 1/2.
+    std::size_t cursor{};
+    std::array<int, 3> visited{}, accepted{};
+    for (int frame = 0; frame < 6; ++frame) {
+        bool busy{};
+        lholo::projection::detail::forEachIndependentProjectionFile(3, cursor, [&](std::size_t file) {
+            ++visited[file];
+            if (!busy) { ++accepted[file]; busy = true; }
+        });
+    }
+    check(visited == std::array<int, 3>{6, 6, 6}, "fair submission never skips a file's frame or live movement");
+    check(accepted == std::array<int, 3>{2, 2, 2}, "continuous correction work cannot starve later files");
+    cursor = 7;
+    int visits{};
+    lholo::projection::detail::forEachIndependentProjectionFile(1, cursor, [&](std::size_t file) {
+        check(file == 0, "shrinking file list normalizes its cursor"); ++visits;
+    });
+    check(visits == 1 && cursor == 0, "single-file visit remains once per frame");
+    lholo::projection::detail::forEachIndependentProjectionFile(0, cursor, [&](std::size_t) { ++visits; });
+    check(visits == 1 && cursor == 0, "empty file list performs no work");
     auto raw = std::make_shared<LoadedStructure>();
     raw->sizeX = 3;
     raw->sizeY = 2;

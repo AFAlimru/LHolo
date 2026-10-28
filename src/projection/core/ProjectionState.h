@@ -68,7 +68,7 @@ struct ProjectionState {
     std::optional<structure::detail::StructureTransformSnapshot> fileTransform;
     std::vector<std::shared_ptr<ProjectionState>> files;
     std::vector<PendingBlockChange> fileBlockChanges;
-    std::vector<AsyncSectionBuildResult> fileCompleted;
+    std::size_t fileFrameCursor{};
     std::uint64_t progressVisibleTotal{};
     bool                            enabled{};
     BlockPos                        anchor{};

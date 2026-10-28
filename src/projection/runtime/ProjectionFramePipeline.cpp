@@ -100,7 +100,8 @@ void processProjectionOpaqueFrame(
     }
 
     // Consume completed CPU data only in the opaque render pass.
-    uploadCompletedProjectionMeshes(state, tessellator);
+    // Independent files share a single root upload pass before their frames.
+    if (!state.fileTransform) uploadCompletedProjectionMeshes(state, tessellator);
     // Classify first so pending visible tint work has its own retry budget.
     updateProjectionVisibility(state, renderContext, cameraPosition);
     refreshProjectionBiomes(state.sections, state.biomeRefreshVisibleCursor, state.biomeRefreshCursor,

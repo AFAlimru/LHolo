@@ -85,13 +85,6 @@ void distributeIndependentFileEvents(ProjectionState& root) {
                 }
         }
     }
-    for (auto& result : takeCompletedSectionBuilds(2))
-        for (auto& file : root.files)
-            if (file->structureGeneration == result.structureGeneration &&
-                file->meshWorkerGeneration == result.workerGeneration) {
-                file->fileCompleted.push_back(std::move(result));
-                break;
-            }
 }
 ProjectionState* selectedFileProjection(ProjectionState& root) {
     if (!root.structure || !root.structure->independentFiles)

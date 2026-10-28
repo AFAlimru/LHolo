@@ -13,6 +13,7 @@
 #include "projection/core/ProjectionRules.h"
 #include "projection/core/ProjectionState.h"
 #include "projection/mesh/ProjectionMeshWorker.h"
+#include "projection/mesh/ProjectionMeshUpload.h"
 #include "projection/mesh/ProjectionRenderer.h"
 #include "projection/mesh/ProjectionSectionBuilder.h"
 #include "projection/runtime/ProjectionFramePipeline.h"
@@ -21,6 +22,7 @@
 #include "projection/runtime/ProjectionProgress.h"
 #include "projection/runtime/ProjectionWorldEvents.h"
 #include "projection/runtime/IndependentFileProjection.h"
+#include "projection/runtime/IndependentFileFrame.h"
 #include "structure/IndependentTaskFiles.h"
 #include "projection/world/ProjectionPlacement.h"
 
@@ -493,8 +495,14 @@ void renderProjectionFrame(BaseActorRenderContext& renderContext, bool renderAlp
                             }
                         }
                         distributeIndependentFileEvents(state);
+                        uploadCompletedProjectionMeshes(state, renderContext.mScreenContext.tessellator);
                     }
-                    for (auto& file:state.files) renderProjection(*file,renderContext,renderAlphaLayer);
+                    if (!renderAlphaLayer) {
+                        forEachIndependentProjectionFile(state.files.size(), state.fileFrameCursor,
+                            [&](std::size_t index) { renderProjection(*state.files[index], renderContext, false); });
+                    } else {
+                        for (auto& file : state.files) renderProjection(*file, renderContext, true);
+                    }
                 } catch (std::exception const& error) {
                     logger().error("Independent projection failed: {}",error.what());
                     resetProjectionState(state);

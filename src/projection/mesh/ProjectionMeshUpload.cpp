@@ -44,14 +44,27 @@ void markSectionDirty(ProjectionState& state, std::size_t section, bool incremen
 
 } // namespace
 
-void uploadCompletedProjectionMeshes(ProjectionState& state, Tessellator& tessellator) {
+void uploadCompletedProjectionMeshes(ProjectionState& root, Tessellator& tessellator) {
     if (auto bufferService = tessellator.mBufferResourceService.lock()) {
         auto const uploadStarted = std::chrono::steady_clock::now();
         for (std::size_t uploaded = 0; uploaded < 2; ++uploaded) {
             if (std::chrono::steady_clock::now() - uploadStarted >= std::chrono::milliseconds(1)) break;
-            auto completed = state.fileTransform ? std::exchange(state.fileCompleted,{}) : takeCompletedSectionBuilds(1);
+            auto completed = takeCompletedSectionBuilds(1);
             if (completed.empty()) break;
             auto result = std::move(completed.front());
+            // There is only one completion queue and one upload budget. Route
+            // directly to the runtime instance; removed/reloaded files have no
+            // matching generation and are discarded without touching live state.
+            auto* owner = &root;
+            if (root.structure && root.structure->independentFiles) {
+                auto const found = std::find_if(root.files.begin(), root.files.end(), [&](auto const& file) {
+                    return file->structureGeneration == result.structureGeneration
+                        && file->meshWorkerGeneration == result.workerGeneration;
+                });
+                if (found == root.files.end()) continue;
+                owner = found->get();
+            }
+            auto& state = *owner;
             if (result.workerGeneration != state.meshWorkerGeneration
                 || result.structureGeneration != state.structureGeneration
                 || result.section >= state.sections.size()) {

@@ -7,6 +7,7 @@
 // (at your option) any later version.
 
 #include "projection/mesh/ProjectionMeshWorker.h"
+#include "projection/mesh/ProjectionBuildCompletionQueue.h"
 
 #include <algorithm>
 #include <atomic>
@@ -104,15 +105,8 @@ bool submitMeshWorkerTask(
 }
 
 std::vector<AsyncSectionBuildResult> takeCompletedSectionBuilds(std::size_t limit) {
-    std::vector<AsyncSectionBuildResult> results;
     std::lock_guard lock(gMeshWorkerMutex);
-    auto const count = std::min(limit, gCompletedSectionBuilds.size());
-    results.reserve(count);
-    for (std::size_t index = 0; index < count; ++index) {
-        results.emplace_back(std::move(gCompletedSectionBuilds.front()));
-        gCompletedSectionBuilds.pop_front();
-    }
-    return results;
+    return takeProjectionBuildResults(gCompletedSectionBuilds, limit);
 }
 
 bool meshWorkerIsBusy() {
