@@ -228,7 +228,6 @@
 
 .lholo-modal-input-group { box-sizing:border-box; width:100%; margin:1.15rem 0 0.85rem; }
 .lholo-modal-input-label { width:100%; flex-shrink:0; white-space:nowrap; font-size:0.95rem; color:#b0b0b0; margin-bottom:0.5rem; font-weight:500; }
-.lholo-modal-input-hint { font-size:0.85rem; color:#858585; margin-top:0.45rem; }
 
 /* Full width task inputs */
 .lholo-input-shell.lholo-input-full,

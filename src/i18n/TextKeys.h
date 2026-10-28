@@ -59,7 +59,6 @@
     LHOLO_TEXT_KEY("tasks.createTitle", TasksCreateTitle, "")                                \
     LHOLO_TEXT_KEY("tasks.renameTitle", TasksRenameTitle, "")                                \
     LHOLO_TEXT_KEY("tasks.namePlaceholder", TasksNamePlaceholder, "")                        \
-    LHOLO_TEXT_KEY("tasks.nameHint", TasksNameHint, "")                                      \
     LHOLO_TEXT_KEY("tasks.confirm", TasksConfirm, "")                                        \
     LHOLO_TEXT_KEY("tasks.deleteTaskPrompt", TasksDeleteTaskPrompt, "")                      \
     LHOLO_TEXT_KEY("tasks.removeFilePrompt", TasksRemoveFilePrompt, "")                      \

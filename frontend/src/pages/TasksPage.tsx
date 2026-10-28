@@ -272,9 +272,6 @@ export function TasksPage({ labels, tasksCtrl, hasProjection, onMaterials }: {
                 onEnter={handleConfirmTaskModal}
                 onEscape={handleCancelTaskModal}
               />
-              <div className="lholo-modal-input-hint">
-                {labels['tasks.nameHint']}
-              </div>
             </div> : <div className="lholo-modal-input-group">
               <div className="lholo-modal-paragraph">
                 {(taskModal.mode === 'deleteTask' || taskModal.mode === 'removeFile')
