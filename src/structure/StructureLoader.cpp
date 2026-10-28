@@ -406,8 +406,6 @@ void loadSettings() {
                 i18n::kDefaultLanguageCode
             );
         }
-        session.setLastPath(settings.lastStructurePath);
-        uiState().setUiScale(std::clamp(settings.uiScale, 0.0f, 5.0f));
         projection::setCorrectionFillOpacity(settings.correctionFillOpacity);
         projection::setCorrectionOutlineOpacity(settings.correctionOutlineOpacity);
         projection::setStructureBoundsEnabled(settings.structureBoundsEnabled);
@@ -418,8 +416,7 @@ void loadSettings() {
         uiState().setMaterialHudStackConversion(settings.materialHudStackConversion);
         uiState().setMaterialHudMaxItems(settings.materialHudMaxItems);
         setMaterialHudPosition(settings.materialHudPosition);
-        // Transform and layer state are session-local. Only the explicit
-        // "restore last projection" record below is persisted.
+        // Placement and transforms are owned by tasks; global config is preferences only.
         session.resetTransform();
         auto hud = uiState().hud();
         hud.enabled = settings.hudEnabled;
@@ -472,23 +469,7 @@ void loadSettings() {
                 std::clamp(settings.moveHotkeyModifiers[index], 0, 7)
             );
         }
-        session.setSavedProjection({
-            settings.hasSavedProjection,
-            settings.savedAnchorX,
-            settings.savedAnchorY,
-            settings.savedAnchorZ,
-            {
-                settings.savedRotation,
-                std::clamp(settings.savedMirror, 0, 2),
-                settings.savedOffsetX,
-                settings.savedOffsetY,
-                settings.savedOffsetZ,
-                layerDisplayModeFromInt(settings.savedLayerDisplayMode),
-                settings.savedDisplayLayer,
-                layerAxisFromInt(settings.savedLayerAxis)
-            },
-            settings.savedStructurePath
-        });
+        saveSettings(); // Canonicalize valid legacy preferences once loaded.
         logger().info("Loaded projection settings from {}", path.string());
     } catch (std::exception const& exception) {
         logger().error("Could not load projection settings {}: {}", path.string(), exception.what());
@@ -499,17 +480,11 @@ void saveSettings() {
     auto const path = settingsPath();
     try {
         auto& session = detail::StructureSession::getInstance();
-        // Only an active projection may update its restore snapshot. At
-        // startup the session-local transform/layer values intentionally
-        // reset to defaults; copying those values before the user restores
-        // a structure would silently destroy the saved state.
+        // Hidden legacy restore state remains in memory, outside user preferences.
         session.refreshSavedTransformIfActive();
-        auto const sessionSnapshot = session.snapshot();
         auto const hud = uiState().hud();
         lholo::settings::Settings settings;
-        settings.lastStructurePath = sessionSnapshot.lastPath;
         settings.language = std::string{i18n::languageCode(i18n::language())};
-        settings.uiScale = hud.uiScale;
         settings.correctionFillOpacity = projection::getCorrectionFillOpacity();
         settings.correctionOutlineOpacity = projection::getCorrectionOutlineOpacity();
         settings.structureBoundsEnabled = projection::getStructureBoundsEnabled();
@@ -557,19 +532,6 @@ void saveSettings() {
         settings.materialHudNextPageHotkey = nextPage.key;
         settings.materialHudNextPageHotkeyModifiers = nextPage.modifiers;
         settings.altWheelOffsetEnabled = uiState().altWheelOffsetEnabled();
-        settings.hasSavedProjection = sessionSnapshot.saved.available;
-        settings.savedAnchorX = sessionSnapshot.saved.anchorX;
-        settings.savedAnchorY = sessionSnapshot.saved.anchorY;
-        settings.savedAnchorZ = sessionSnapshot.saved.anchorZ;
-        settings.savedRotation = sessionSnapshot.saved.transform.rotation;
-        settings.savedMirror = sessionSnapshot.saved.transform.mirror;
-        settings.savedOffsetX = sessionSnapshot.saved.transform.offsetX;
-        settings.savedOffsetY = sessionSnapshot.saved.transform.offsetY;
-        settings.savedOffsetZ = sessionSnapshot.saved.transform.offsetZ;
-        settings.savedLayerDisplayMode = toInt(sessionSnapshot.saved.transform.layerDisplayMode);
-        settings.savedDisplayLayer = sessionSnapshot.saved.transform.displayLayer;
-        settings.savedLayerAxis = toInt(sessionSnapshot.saved.transform.layerAxis);
-        settings.savedStructurePath = sessionSnapshot.saved.structurePath;
         lholo::settings::saveSettingsFile(path, settings);
     } catch (std::exception const& exception) {
         logger().error("Could not save projection settings {}: {}", path.string(), exception.what());

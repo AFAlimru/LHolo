@@ -32,6 +32,7 @@ std::optional<std::string> takeSettingsUpdate(bool force) {
         auto slot = input::hotkeyIndex(definition.id);
         auto const& b = s.hotkeys[slot];
         hotkeys.push_back({{"slot", slot}, {"labelKey", i18n::kTextKeyIds[static_cast<std::size_t>(definition.label)]},
+            {"groupKey", i18n::kTextKeyIds[static_cast<std::size_t>(definition.group)]},
             {"key", b.key}, {"modifiers", b.modifiers}, {"capturing", b.capturing},
             {"display", ui::hotkeyChordName(b.modifiers, b.key)}});
     }

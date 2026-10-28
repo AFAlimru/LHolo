@@ -6,7 +6,7 @@ export interface SettingsValues {
   placementRadius: number; autoPlacementCooldown: number; activeMode: number; language: string;
 }
 export type SettingsField = keyof SettingsValues;
-export interface SettingsHotkey {slot: number; labelKey: string; key: number; modifiers: number; capturing: boolean; display: string}
+export interface SettingsHotkey {slot: number; labelKey: string; groupKey: string; key: number; modifiers: number; capturing: boolean; display: string}
 export interface SettingsState {
   values: SettingsValues; hotkeys: SettingsHotkey[]; languages: {code: string; name: string}[];
   consent: boolean; context: number; ack: number; accepted: boolean; hotkeysRevision: number;
@@ -34,7 +34,7 @@ export function parseSettings(payload: string): SettingsState {
     || !Array.isArray(s.languages) || !s.languages.length || !s.languages.every((l: any) => l && typeof l.code === 'string' && !!l.code && typeof l.name === 'string')
     || new Set(s.languages.map((l: any) => l.code)).size !== s.languages.length || !s.languages.some((l: any) => l.code === v.language)
     || !Array.isArray(s.hotkeys) || !s.hotkeys.length || s.hotkeys.length > 256
-    || !s.hotkeys.every((b: any, n: number) => b && b.slot === n && typeof b.labelKey === 'string'
+    || !s.hotkeys.every((b: any, n: number) => b && b.slot === n && typeof b.labelKey === 'string' && typeof b.groupKey === 'string' && !!b.groupKey
       && integer(b.key, 0, 255) && integer(b.modifiers, 0, 7) && typeof b.capturing === 'boolean' && typeof b.display === 'string')
     || s.hotkeys.filter((b: any) => b.capturing).length > 1) throw new Error('Invalid LHolo settings state');
   return s as SettingsState;

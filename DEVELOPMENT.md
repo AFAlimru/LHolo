@@ -975,38 +975,15 @@ PreLoader/LeviLamina 的约定处理：`0` 表示成功，任何非 `0` 值都�
 mods/LHolo/config/config.json
 ```
 
-当前配置版本：`12`。
+当前配置版本：`13`。完整字段、默认示例、快捷键写法及迁移规则见 [配置文件说明](docs/CONFIGURATION.md) 和 [默认配置](docs/config.example.json)。
 
-正式持久化字段：
+配置只保存界面、渲染、HUD、输入、辅助放置偏好，按 `interface`、`rendering`、`hud`、`input`、`placement` 分组。HUD 内容、位置、缩放与背景不透明度归入各自面板；快捷键以 `Alt+M` 等组合字符串或 `null` 保存；百分比与秒明确标注单位，固定分组顺序、4 空格缩进和末尾换行。
 
-- `version`
-- `language`（界面语言 locale 代码，例如 `zh_CN`、`en_US`；缺失、非字符串、未知代码或旧整数值均在应用时回退 `zh_CN`）
-- `lastStructurePath`
-- `uiScale`
-- `correctionFillOpacity`
-- `correctionOutlineOpacity`
-- `structureBoundsEnabled`
-- `placementRadius`
-- `autoPlacementBreakCooldownSeconds`（0～60 秒，默认 10；只控制后续破坏产生的自动放置冷却）
-- `correctionSeeThrough`、`missingSeeThrough`（错误与未放置标记的穿透显示开关，默认关闭）
-- `experimentalConsent`（辅助放置风险提示是否已确认）
-- `materialHudEnabled`、`materialHudPosition`（材料 HUD 开关与四角位置，新配置默认右下角）
-- `loadProjectionHotkey`、`closeProjectionHotkey` 及其修饰键
-- HUD 开关、各项显示开关（含 `hudShowProjectedBlockName` 投影方块名称）、位置；读取时兼容旧键
-  `hudShowBlockEntity`，保存时只写新键
-- GUI、移动、显示层快捷键与修饰键
-- 上次投影是否存在、文件路径、绝对锚点
-- 上次投影旋转、镜像、偏移、显示模式、显示层和分层轴
+旧单文件最近路径、`saved*` 恢复记录及旧 ImGui `uiScale` 不再进入正式偏好文件。任务与各文件维度/坐标继续由 tasks 独立保存。隐藏 ImGui 和旧单文件恢复的内存逻辑按项目约束保留，但不再从配置恢复或写入。运行态 Settings 值只保留实际偏好，菜单/应用用例不依赖新 JSON 分组。
 
-普通结构变换和显示层属于当前会话；只有“恢复上次投影”记录显式跨会话保存。手动放置、轻松放置和范围放置为安全敏感的临时功能，只能从实验性功能页面启用，不提供全局快捷键，不读取、不写入配置，每次启动均默认关闭；放置半径和投影方块破坏后的自动放置冷却时长仍持久化。纠错样式、GUI/HUD 和其他快捷键属于用户偏好，始终持久化。
+SettingsStore 在读取时兼容旧平铺字段（包括旧世界轴快捷键和 hudShowBlockEntity 别名），完整校验后一次性发布；保存只写 v13，第一次覆盖旧格式前备份为 config.json.legacy.bak。有效配置在启动应用后规范化；损坏、错误类型、非法组合键/锚点和未来版本拒绝读取，后续保存也不会覆盖。写入经临时文件关闭和系统原子替换，进程内写入串行化。原生 HUD 使用的归一化位置、缩放和不透明度均保持原偏好。
 
-配置读取必须：
-
-- 为缺失字段提供当前默认值。
-- 对数值做范围限制。
-- 解析失败记录错误，不导致模组加载崩溃。
-- 写入前创建配置目录。
-- 更新字段时同步递增配置版本并更新本文档。
+堆叠换算默认关闭、每页默认 5 项，翻页快捷键默认不绑定。手动/轻松/范围放置模式和 HUD 页码是会话状态；只有知情确认、放置半径与冷却参数持久化。
 
 ---
 

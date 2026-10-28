@@ -32,6 +32,7 @@ int runStructureFilePickerTests();
 int runCaptureActionsTests();
 int runTransformActionsTests();
 int runRenderSettingsTests();
+int runSettingsStoreTests();
 int runSettingsActionsTests();
 int runCaptureFacetLifetimeTests();
 int runNativeHudTests();
@@ -210,146 +211,9 @@ void testProgress() {
     LHOLO_CHECK(progress.extra == 0);
 }
 
+// Dedicated config migration/serialization regression suite.
 void testSettingsStore() {
-    auto const path = std::filesystem::temp_directory_path() / "lholo_settings_test.json";
-    std::error_code error;
-    std::filesystem::remove(path, error);
-
-    lholo::settings::Settings settings;
-    settings.language = "en_US";
-    settings.uiScale = 1.25f;
-    settings.guiHotkey = 'L';
-    settings.guiHotkeyModifiers = 1;
-    settings.hudShowProjectedBlockName = false;
-    settings.hudShowExtraBlocks = false;
-    settings.autoPlacementBreakCooldownSeconds = 27;
-    settings.correctionSeeThrough = true;
-    settings.materialHudEnabled = true;
-    settings.materialHudStackConversion = true;
-    settings.materialHudMaxItems = 23;
-    settings.materialHudPosition = 3;
-    settings.materialHudPreviousPageHotkey = 33; settings.materialHudPreviousPageHotkeyModifiers = 2;
-    settings.materialHudNextPageHotkey = 34; settings.materialHudNextPageHotkeyModifiers = 1;
-    settings.hudScales = {75, 160};
-    settings.hudBackgroundOpacities = {35, 80};
-    settings.hudPlacements = {{{true, 0.2f, 0.3f}, {true, 0.7f, 0.6f}}};
-    settings.altWheelOffsetEnabled = false;
-    settings.moveHotkeys[4] = 0x57; // W
-    settings.hasSavedProjection = true;
-    settings.savedAnchorX = 12;
-    settings.savedAnchorZ = -34;
-    lholo::settings::saveSettingsFile(path, settings);
-    {
-        std::ifstream saved(path);
-        std::ostringstream contents;
-        contents << saved.rdbuf();
-        LHOLO_CHECK(contents.str().find("\"version\": 12") != std::string::npos);
-        LHOLO_CHECK(contents.str().find("\"language\": \"en_US\"") != std::string::npos);
-        LHOLO_CHECK(contents.str().find("\"altWheelOffsetEnabled\": false") != std::string::npos);
-        LHOLO_CHECK(contents.str().find("\"moveUpHotkey\": 87") != std::string::npos);
-        // The axis-era move key names are gone from new files; they are only
-        // read as a fallback (see the legacy config below).
-        LHOLO_CHECK(contents.str().find("moveXMinusHotkey") == std::string::npos);
-        LHOLO_CHECK(contents.str().find("moveYPlusHotkey") == std::string::npos);
-        LHOLO_CHECK(contents.str().find("toggleManualHotkey") == std::string::npos);
-        LHOLO_CHECK(contents.str().find("toggleEasyHotkey") == std::string::npos);
-        LHOLO_CHECK(contents.str().find("toggleRangeHotkey") == std::string::npos);
-    }
-
-    lholo::settings::Settings loaded;
-    LHOLO_CHECK(lholo::settings::loadSettingsFile(path, loaded));
-    LHOLO_CHECK(loaded.language == "en_US");
-    LHOLO_CHECK(loaded.uiScale == 1.25f);
-    LHOLO_CHECK(loaded.guiHotkey == 'L');
-    LHOLO_CHECK(loaded.guiHotkeyModifiers == 1);
-    LHOLO_CHECK(!loaded.hudShowProjectedBlockName);
-    LHOLO_CHECK(!loaded.hudShowExtraBlocks);
-    LHOLO_CHECK(loaded.autoPlacementBreakCooldownSeconds == 27);
-    LHOLO_CHECK(loaded.correctionSeeThrough);
-    LHOLO_CHECK(loaded.materialHudEnabled);
-    LHOLO_CHECK(loaded.materialHudStackConversion);
-    LHOLO_CHECK(loaded.materialHudMaxItems == 23);
-    LHOLO_CHECK(loaded.materialHudPosition == 3);
-    LHOLO_CHECK(loaded.materialHudPreviousPageHotkey == 33 && loaded.materialHudPreviousPageHotkeyModifiers == 2);
-    LHOLO_CHECK(loaded.materialHudNextPageHotkey == 34 && loaded.materialHudNextPageHotkeyModifiers == 1);
-    LHOLO_CHECK(loaded.hudPlacements == settings.hudPlacements);
-    LHOLO_CHECK(loaded.hudBackgroundOpacities == settings.hudBackgroundOpacities);
-    LHOLO_CHECK(loaded.hudScales == settings.hudScales);
-    LHOLO_CHECK(!loaded.altWheelOffsetEnabled);
-    LHOLO_CHECK(loaded.moveHotkeys[4] == 0x57);
-    LHOLO_CHECK(loaded.hasSavedProjection);
-    LHOLO_CHECK(loaded.savedAnchorX == 12);
-    LHOLO_CHECK(loaded.savedAnchorZ == -34);
-
-    // Existing configs keep their preference when the old, narrower
-    // block-entity label migrates to the projected-block label.
-    {
-        std::ofstream legacy(path, std::ios::trunc);
-        legacy << R"({"hudShowBlockEntity":false,"toggleManualHotkey":82,"toggleEasyHotkey":70,"toggleRangeHotkey":89,"moveXMinusHotkey":65,"moveXMinusHotkeyModifiers":2,"moveYPlusHotkey":87})";
-    }
-    lholo::settings::Settings migrated;
-    LHOLO_CHECK(lholo::settings::loadSettingsFile(path, migrated));
-    LHOLO_CHECK(!migrated.hudShowProjectedBlockName);
-    LHOLO_CHECK(migrated.hudPlacements == lholo::settings::HudPlacements{});
-    LHOLO_CHECK((migrated.hudScales == std::array<int, 2>{100, 100}));
-    LHOLO_CHECK((migrated.hudBackgroundOpacities == std::array<int, 2>{60, 60}));
-    LHOLO_CHECK(migrated.hudShowExtraBlocks);
-    LHOLO_CHECK(migrated.autoPlacementBreakCooldownSeconds == 10);
-    LHOLO_CHECK(!migrated.correctionSeeThrough);
-    LHOLO_CHECK(!migrated.materialHudEnabled);
-    LHOLO_CHECK(!migrated.materialHudStackConversion);
-    LHOLO_CHECK(migrated.materialHudMaxItems == 5);
-    LHOLO_CHECK(migrated.materialHudPosition == 3);
-    LHOLO_CHECK(migrated.materialHudPreviousPageHotkey == 0 && migrated.materialHudPreviousPageHotkeyModifiers == 0);
-    LHOLO_CHECK(migrated.materialHudNextPageHotkey == 0 && migrated.materialHudNextPageHotkeyModifiers == 0);
-    // A config without a valid language field uses the Chinese default.
-    LHOLO_CHECK(migrated.language == "zh_CN");
-    // Likewise, a config written before the Alt+wheel switch existed keeps the
-    // gesture enabled, so upgrading never silently changes input behavior.
-    LHOLO_CHECK(migrated.altWheelOffsetEnabled);
-    // Move bindings survive the rename of the move slots from world axes to
-    // view-relative directions: the old key names are still read as a fallback.
-    LHOLO_CHECK(migrated.moveHotkeys[0] == 65);
-    LHOLO_CHECK(migrated.moveHotkeyModifiers[0] == 2);
-    LHOLO_CHECK(migrated.moveHotkeys[4] == 87);
-
-    {
-        std::ofstream invalidLanguage(path, std::ios::trunc);
-        invalidLanguage << R"({"language":1})";
-    }
-    lholo::settings::Settings invalid;
-    LHOLO_CHECK(lholo::settings::loadSettingsFile(path, invalid));
-    LHOLO_CHECK(invalid.language == "zh_CN");
-
-    // Retired projection opacity must not affect other preferences, even
-    // when an old file stores a value that is no longer a valid float.
-    for (auto const* legacyOpacity : {"0", "0.5", "1", "null", "\"obsolete\""}) {
-        {
-            std::ofstream legacy(path, std::ios::trunc);
-            legacy << R"({"opacity":)" << legacyOpacity
-                   << R"(,"correctionFillOpacity":0.3,"correctionOutlineOpacity":0.7,"savedAnchorX":42})";
-        }
-        lholo::settings::Settings retired;
-        LHOLO_CHECK(lholo::settings::loadSettingsFile(path, retired));
-        LHOLO_CHECK(retired.correctionFillOpacity == 0.3f);
-        LHOLO_CHECK(retired.correctionOutlineOpacity == 0.7f);
-        LHOLO_CHECK(retired.savedAnchorX == 42);
-        lholo::settings::saveSettingsFile(path, retired);
-        std::ifstream saved(path);
-        std::ostringstream contents;
-        contents << saved.rdbuf();
-        LHOLO_CHECK(contents.str().find("\"opacity\"") == std::string::npos);
-        lholo::settings::Settings reloaded;
-        LHOLO_CHECK(lholo::settings::loadSettingsFile(path, reloaded));
-        LHOLO_CHECK(reloaded.correctionFillOpacity == 0.3f);
-        LHOLO_CHECK(reloaded.correctionOutlineOpacity == 0.7f);
-        LHOLO_CHECK(reloaded.savedAnchorX == 42);
-    }
-
-    lholo::settings::Settings missing;
-    std::filesystem::remove(path, error);
-    LHOLO_CHECK(!lholo::settings::loadSettingsFile(path, missing));
-    std::filesystem::remove(path, error);
+    LHOLO_CHECK(runSettingsStoreTests() == 0);
 }
 
 void testStructureSession() {

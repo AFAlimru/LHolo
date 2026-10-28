@@ -661,6 +661,13 @@ click(labels['page.hotkeys']);
 const hotkeyRows=()=>tree.root.findAllByProps({className:'lholo-hotkey-row'});
 const hkButton=(n,b=0)=>hotkeyRows()[n].findAllByType('button')[b];
 assert.equal(hotkeyRows().length,11);
+const hotkeyGroups = () => tree.root.findAllByProps({className:'lholo-hotkey-group'});
+assert.deepEqual(hotkeyGroups().map(group=>group.findByProps({className:'lholo-hotkey-group-title'}).children.join('')),
+  ['hotkeys.group.menu','hotkeys.group.movement','hotkeys.group.layers','hotkeys.group.materials'].map(key=>labels[key]));
+assert.deepEqual(hotkeyGroups().map(group=>group.findAllByProps({className:'lholo-hotkey-row'}).length),[1,6,2,2]);
+assert.equal(hotkeyGroups()[1].findAllByProps({className:'lholo-hotkey-gesture'}).length,1,'Alt wheel remains with movement');
+assert.equal(nodeText(hotkeyRows()[1].findByProps({className:'lholo-hotkey-label'})),labels['hotkey.moveLeft']);
+assert.equal(nodeText(hotkeyRows()[9].findByProps({className:'lholo-hotkey-label'})),labels['hotkey.materialHudPreviousPage']);
 assert.equal(nodeText(hkButton(9)),labels['key.notSet']);
 assert.equal(nodeText(hkButton(10)),labels['key.notSet']);
 renderer.act(()=>hkButton(9).props.onClick());ackSettings();

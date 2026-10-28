@@ -179,6 +179,10 @@
     LHOLO_TEXT_KEY("label.materialHudPosition", LabelMaterialHudPosition, "")                            \
                                                                                                          \
     /* Hotkeys page */                                                                                   \
+    LHOLO_TEXT_KEY("hotkeys.group.menu", HotkeysGroupMenu, "")                                           \
+    LHOLO_TEXT_KEY("hotkeys.group.movement", HotkeysGroupMovement, "")                                   \
+    LHOLO_TEXT_KEY("hotkeys.group.layers", HotkeysGroupLayers, "")                                       \
+    LHOLO_TEXT_KEY("hotkeys.group.materials", HotkeysGroupMaterials, "")                                 \
     LHOLO_TEXT_KEY("section.hotkeys", SectionHotkeys, "")                                                \
     LHOLO_TEXT_KEY("hint.pressKeys", HintPressKeys, "")                                                  \
     LHOLO_TEXT_KEY("button.resetHotkey", ButtonResetHotkey, "")                                          \

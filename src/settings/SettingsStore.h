@@ -17,24 +17,28 @@
 
 namespace lholo::settings {
 
+inline constexpr int kSettingsVersion = 13;
+
 struct Settings {
-    std::string lastStructurePath;
     // Interface language locale code, for example "zh_CN" or "en_US".
     // Runtime language indices are never persisted.
     std::string language{"zh_CN"};
-    float uiScale{2.0f};
+    // Rendering preferences.
     float correctionFillOpacity{0.15f};
     float correctionOutlineOpacity{1.0f};
     bool structureBoundsEnabled{true};
     bool correctionSeeThrough{false};
     bool missingSeeThrough{false};
+    // Placement consent and parameters; live placement modes are never saved.
     bool experimentalConsent{false};
+    int placementRadius{4};
+    int autoPlacementBreakCooldownSeconds{10};
+
+    // Material and projection HUD preferences.
     bool materialHudEnabled{false};
     bool materialHudStackConversion{false};
     int materialHudMaxItems{kDefaultMaterialHudItems};
     int materialHudPosition{3};
-    int placementRadius{4};
-    int autoPlacementBreakCooldownSeconds{10};
     bool hudEnabled{true};
     bool hudShowFileName{true};
     bool hudShowLayer{true};
@@ -48,6 +52,7 @@ struct Settings {
     HudPlacements hudPlacements{};
     std::array<int, 2> hudBackgroundOpacities{60, 60};
     std::array<int, 2> hudScales{100, 100};
+    // Input bindings use native virtual-key values internally only.
     int guiHotkey{'M'};
     int guiHotkeyModifiers{2};
     int layerIncreaseHotkey{0x26}; // VK_UP
@@ -66,24 +71,15 @@ struct Settings {
     // names the slots had when they were world-axis offsets.
     std::array<int, input::kMoveHotkeyCount> moveHotkeys{0x25, 0x27, 0x26, 0x28, 0x26, 0x28};
     std::array<int, input::kMoveHotkeyCount> moveHotkeyModifiers{1, 1, 1, 1, 4, 4};
-    bool hasSavedProjection{false};
-    int savedAnchorX{};
-    int savedAnchorY{};
-    int savedAnchorZ{};
-    int savedRotation{};
-    int savedMirror{};
-    int savedOffsetX{};
-    int savedOffsetY{};
-    int savedOffsetZ{};
-    int savedLayerDisplayMode{};
-    int savedDisplayLayer{};
-    int savedLayerAxis{};
-    std::string savedStructurePath;
+    bool operator==(Settings const&) const = default;
 };
 
-// Returns false when the file does not exist. Throws on read or parse errors.
+// Reads current or legacy preferences without modifying the file.
+// Returns false when absent; throws on invalid data without changing out.
 bool loadSettingsFile(std::filesystem::path const& path, Settings& out);
 
+// Writes only the canonical current schema, backs up legacy input once, and
+// atomically replaces the file. Unknown future versions are never overwritten.
 void saveSettingsFile(std::filesystem::path const& path, Settings const& settings);
 
 } // namespace lholo::settings
