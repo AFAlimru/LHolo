@@ -117,3 +117,7 @@ Hook 先执行原版 `ScreenView::render`，只在 `hud_screen` 的渲染调用�
 原生场景通过 SceneFactory::createUIScene 后交由 _createScreen 完成工厂初始化；在自有 UIScene::render 内配对 setup/cleanup 并构造本帧 MinecraftUIRenderContext，调用共用 Painter。该路径已获用户实测成功确认。试验期的请求、入栈、首次渲染和出栈日志已移除，保留实际创建失败的错误信息。
 
 顶部操作按钮与 HUD 共用 paintHudBackground 的颜色和圆角，不单独维护矩形底色。全部按钮默认背景不透明度为 0.5，悬停 0.6，按下 0.7，文字统一使用白色阴影。
+
+## 水图标的显式着色
+
+水和流动水的灰度纹理在 HUD 中由 ItemRenderer::iconBlit 直接绘制：复用原版地形 atlas 与水的 UV，将原生 Water TessellationPolicy 默认水色显式传入颜色参数；原生默认色不可用、为黑或白时使用标准蓝 #3F76E4。仍使用现有图标坐标、尺寸及渲染作用域；物品/atlas 未就绪时保留原来的物品绘制回退。不新增 Hook、跨帧颜色状态或纹理缓存，不修改物品 NBT 和材料计数。岩浆及其他图标继续使用 renderGuiItemNew。iconBlit 直接接收 HUD 实际宽高，xscale/yscale 均为 1，避免套用物品模型的 16 单位缩放导致错位。2026-10-28 用户实机确认水色与位置测试通过。

@@ -9,11 +9,17 @@
 #include "mc/client/player/LocalPlayer.h"
 #include "mc/client/renderer/BaseActorRenderContext.h"
 #include "mc/client/renderer/actor/ItemRenderer.h"
+#include "mc/client/renderer/actor/IconBlitGlint.h"
+#include "mc/client/renderer/block/BlockGraphics.h"
+#include "mc/client/renderer/game/LevelRenderer.h"
 #include "mc/client/renderer/screen/MinecraftUIRenderContext.h"
+#include "mc/client/world/level/biome/biome_color_sampling/TessellationPolicy.h"
 #include "mc/client/gui/screens/ScreenContext.h"
 #include "mc/deps/renderer/Camera.h"
 #include "mc/deps/renderer/ShaderColor.h"
 #include "mc/world/item/ItemStack.h"
+#include "mc/world/level/block/TintMethod.h"
+#include "mc/world/level/biome/biome_color_sampling/BiomeColorSampling.h"
 #include <atomic>
 #include <exception>
 #include <memory>
@@ -42,6 +48,36 @@ struct IconFrame {
 };
 thread_local IconFrame* currentFrame{};
 auto& logger() { return LHolo::getInstance().getSelf().getLogger(); }
+
+bool drawWaterIcon(ItemRenderer& renderer, BaseActorRenderContext& actors,
+    ClientInstance& client, HudIconDraw const& draw, ItemStack const& item) {
+    if (draw.id != "minecraft:water" && draw.id != "minecraft:flowing_water") return false;
+    auto const* block = item.getBlockForRendering();
+    auto* levelRenderer = client.getLevelRenderer();
+    if (!block || !levelRenderer) return false;
+    auto const* graphics = BlockGraphics::getForBlock(*block);
+    if (!graphics) return false;
+    auto const& atlas = levelRenderer->mAtlasTexture.get();
+    if (!atlas.mClientTexture) return false;
+
+    // Water's atlas tile is grayscale. Pass its color explicitly to the native
+    // blitter instead of relying on the generic ItemStack GUI tint path.
+    std::uint32_t rgb = 0x3F76E4U;
+    try {
+        auto const color = BiomeColorSampling::getTessellationPolicy(TintMethod::Water).get(*block);
+        auto const nativeRgb = static_cast<std::uint32_t>(color.toARGB()) & 0xFFFFFFU;
+        if (nativeRgb != 0 && nativeRgb != 0xFFFFFFU) rgb = nativeRgb;
+    } catch (...) {
+        // Keep standard water blue if the native default is unavailable.
+    }
+    auto const tint = static_cast<int>(0xFF000000U | rgb);
+    // iconBlit receives the final GUI rectangle directly; its scale parameters
+    // are not the 16-unit item-model scale used by renderGuiItemNew.
+    renderer.iconBlit(actors, atlas, draw.x, draw.y, 0.0f, graphics->getTexture(0, 0),
+        draw.size, draw.size, 1.0f, 1.0f, tint, tint, 1.0f, 1.0f,
+        IconBlitGlint{}, false);
+    return true;
+}
 
 void prepareItems() {
     std::unordered_set<std::string> requests;
@@ -121,6 +157,7 @@ LL_TYPE_INSTANCE_HOOK(HudIconTextFlush, ll::memory::HookPriority::Normal,
                 continue;
             }
             if (!actors) actors.emplace(screen, frame->client, frame->client.$getMinecraftGame_DEPRECATED());
+            if (drawWaterIcon(*renderer, *actors, frame->client, icon.draw, *icon.item)) continue;
             // Vanilla inventory icons occupy 16 GUI units at scale 1.
             renderer->renderGuiItemNew(*actors, *icon.item, 0, icon.draw.x, icon.draw.y,
                 false, 1.0f, 1.0f, icon.draw.size / 16.0f, 0);
