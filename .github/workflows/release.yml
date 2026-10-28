@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   verify:
@@ -29,7 +30,7 @@ jobs:
         with:
           python-version: '3.x'
 
-      # Upload the complete xmake output from the release machine to the draft.
+      # Promote the original build.yml Actions artifact for the tagged commit.
       # Verification never rebuilds the package or overwrites accepted notes.
       - name: Download installation package and GitHub asset digest
         run: |
@@ -37,13 +38,36 @@ jobs:
           gh release view "$RELEASE_TAG" --json assets > release/asset-metadata.json
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
           import re
+          import subprocess
           archive = Path("release/LHolo-client-windows-x64.zip")
           assets = json.loads(Path("release/asset-metadata.json").read_text())["assets"]
           digest = next(asset["digest"] for asset in assets if asset["name"] == archive.name)
           if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
               raise ValueError("Missing GitHub asset SHA256")
+          commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          runs = json.loads(subprocess.check_output([
+              "gh", "run", "list", "--workflow", "build.yml", "--commit", commit,
+              "--status", "success", "--limit", "20", "--json", "databaseId,headSha"
+          ], text=True))
+          source = None
+          for run in runs:
+              if run["headSha"] != commit:
+                  continue
+              endpoint = f"repos/{os.environ['GH_REPO']}/actions/runs/{run['databaseId']}/artifacts"
+              artifacts = json.loads(subprocess.check_output(["gh", "api", endpoint], text=True))["artifacts"]
+              for artifact in artifacts:
+                  if (not artifact["expired"] and artifact.get("digest") == digest
+                      and artifact["name"] == f"LHolo-{commit}-client-windows-x64"):
+                      source = run["databaseId"]
+                      break
+              if source is not None:
+                  break
+          if source is None:
+              raise ValueError("Release ZIP is not an original successful Actions build artifact for this tag")
+          print(f"Verified remote build origin: Actions run {source}, commit {commit}")
           archive.with_name(archive.name + ".sha256").write_text(
               f"{digest[7:]}  {archive.name}\n", encoding="ascii")
           PY

@@ -91,16 +91,15 @@ LHolo/
 
 ## 正式发布流程
 
-日常构建仍只有 `xmake`，不会自动压缩或上传。发布阶段使用单独的归档工具：
+日常本地构建仍使用 `xmake`，供实机测试；正式 Release 必须使用 GitHub Actions 对发行标签对应提交编译的原始 artifact ZIP，不上传本机编译包。
 
-```powershell
-xmake
-python tools/oreui/release_package.py --output build/release/LHolo-client-windows-x64.zip --tag v26.51.7
-```
+1. 核对 `tooth.json.version`、xmake modVersion 与 `v<version>` 标签，并按对应 lip 官方 Schema 检查清单。v3 使用固定 format_version/format_uuid、client/win-x64、实际依赖范围及安装目录；`preserve_files` 是卸载保留规则，不是打包清单。当前保留配置、旧配置备份和任务数据。
+2. 等待 `.github/workflows/build.yml` 对发行标签相同 SHA 的 Windows 构建成功。获取该 run 的 `LHolo-<SHA>-client-windows-x64` artifact，核对未过期及 GitHub digest，下载其原始 ZIP，不在本地重新编译或重新压缩。
+3. 将该原始 ZIP 命名为 `LHolo-client-windows-x64.zip`。通过 `tools/oreui/release_package.py --verify <ZIP> --tag v<version>` 验证六项必需文件、版本、固定 UUID 与 UI 协议；同名 `.zip.sha256` 只作本地校验输入，不上传。ZIP 顶层为 `LHolo/`，与 tooth 安装规则一致，不含配置、PDB 或本机文件。
+4. 草稿 target、发行标签和已验证 artifact 的源码提交必须一致，只上传该原始 ZIP 和已确认的更新日志，然后发布草稿。已存在的版本不能静默移动标签或改用其他提交的二进制。
+5. `.github/workflows/release.yml` 下载正式附件，除核对整包哈希和安装清单，还要求其 digest 与同标签提交的成功 build.yml artifact 一致，从而拒绝本机构建包。可用 workflow_dispatch 对指定标签重验；发布校验不重编译、不改写更新日志。
 
-该工具只收集组装报告中的六项必需文件，再校验包内版本、UUID 与协议；同名 `.zip.sha256` 仅用于构建机本地校验，不作为发行附件上传。ZIP 顶层为 `LHolo/`，与 tooth 的安装规则一致；不包含配置、PDB、构建报告、游戏安装路径或其他本机文件。
-
-提交并推送发布源码后，将草稿的 target 更新到该提交；只上传上述 ZIP，最后发布草稿。CI 从 GitHub 附件元数据读取 SHA256，在临时目录生成本地校验输入，不依赖或发布额外校验附件。`.github/workflows/release.yml` 负责下载和校验发行附件，支持 workflow_dispatch 重新验证已有版本。构建和安装资源版本必须匹配，不允许将旧页面与新 DLL 混装。
+v26.51.7 的远程构建来源为 Actions run 40665777019，提交 68bf0f11971944e92e18394d66b3018989ff059d。包格式参照官方模板 d0a888ec116c9a00fe4dc8f28ccead4dfc6b6760；lip v3 Schema 使用 LiteLDev/lip 的 v0.34.7 版本核对，避免把当前 v4 格式直接套到本版本。
 
 仍须持续进行干净安装、同 UUID 升级、缓存刷新、配置保留与不兼容版本提示的实机回归。
 
