@@ -236,6 +236,7 @@ bool startTaskComposition(std::string taskId, std::uint64_t revision, StructureL
                     parsed[paths[i]] = file.loaded;
                 }
                 result->errorFileId.clear();
+                normalizeCompositionLayers(result->files);
                 result->composition =
                     composeTaskProjection(result->files, [](Block const* block, int mirror, int rotation) -> Block const* {
                         if (!block || (mirror == 0 && rotation == 0))

@@ -205,16 +205,30 @@ void processTaskActions() {
                     activeGeneration = generation;
                     activeDefinition = std::move(pendingDefinition);
                     auto* task = tasks::findTask(state.catalog, state.activeTaskId);
-                    bool bound{};
+                    bool preferencesChanged{};
                     if (task) for (auto const& placed:activeDefinition->files) {
                         auto* saved=tasks::findFile(*task,placed.id);
                         if (saved && !saved->dimension && placed.dimension) {
                             saved->dimension=placed.dimension;
                             saved->x=placed.x; saved->y=placed.y; saved->z=placed.z;
-                            bound=true;
+                            preferencesChanged=true;
                         }
                     }
-                    if (bound) save();
+                    // The accepted composition already used these corrected
+                    // slices. Publish the same values to the editor and store;
+                    // failed or stale loads never reach this point.
+                    for (auto const& resolved : result->files) {
+                        if (!resolved.loaded) continue;
+                        auto* active = tasks::findFile(*activeDefinition, resolved.id);
+                        if (!active) continue;
+                        active->slice = resolved.slice;
+                        auto* saved = task ? tasks::findFile(*task, resolved.id) : nullptr;
+                        if (saved && saved->slice != resolved.slice) {
+                            saved->slice = resolved.slice;
+                            preferencesChanged = true;
+                        }
+                    }
+                    if (preferencesChanged) save();
                     if (task && task->files == activeDefinition->files) {
                         state.error.clear();
                         state.errorFileId.clear();

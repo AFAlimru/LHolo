@@ -78,7 +78,7 @@ int runTaskActionsTests() {
         processTaskActions();
         check(getTaskStatus().accepted, "action accepted by real control frame");
     };
-    auto finish = [&](bool success) {
+    auto finish = [&](bool success, int height = 1, int width = 1, std::size_t materials = 0) {
         check(inFlight && requested != nullptr, "composition was scheduled");
         if (!requested) return;
         if (success) {
@@ -86,11 +86,15 @@ int runTaskActionsTests() {
                 auto& file = requested->files[i];
                 auto loaded = std::make_shared<structure::LoadedStructure>();
                 loaded->sizeX = loaded->sizeY = loaded->sizeZ = 1;
+                loaded->sizeY = height;
+                loaded->sizeX = width;
+                loaded->materialCount = materials;
                 loaded->sourcePath = requestedPaths[i];
                 loaded->renderBlocks.push_back({0, 0, 0, reinterpret_cast<Block const*>(0x1000)});
                 file.loaded = loaded;
                 cache[requestedPaths[i]] = loaded;
             }
+            structure::normalizeCompositionLayers(requested->files);
             requested->composition = structure::composeTaskProjection(requested->files,
                 [](Block const* b, int, int) { return b; });
         } else {
@@ -263,7 +267,34 @@ int runTaskActionsTests() {
     auto placed=getTaskSnapshot().catalog.tasks[0].files[0];
     check(placed.dimension==1 && placed.x==-300 && placed.y==70 && placed.z==400,
         "loader retry captures a dimension change and commits it with absolute XYZ");
+    session.setLayerAxis(structure::LayerAxis::Y);
+    session.setLayerDisplayMode(structure::LayerDisplayMode::Single);
+    session.setDisplayLayer(88);
+    session.setRotation(1);
+    session.setMirror(2);
+    processTaskActions(); finish(true, 100, 40, 4);
+    check(session.layerSettings().values.layer == 88, "large source accepts layer 88");
+    command(TaskAction::Path, "short.mcstructure", freshFile.id); finish(true, 34, 8, 2);
+    auto corrected = getTaskSnapshot().catalog.tasks[0].files[0];
+    auto layers = session.layerSettings();
+    check(corrected.slice == structure::LayerSettings{structure::LayerAxis::Y, structure::LayerDisplayMode::Single, 33}
+        && layers.values == corrected.slice && layers.maximum[0] == 33,
+        "path replacement publishes one corrected layer to catalog, editor and render settings");
+    check(corrected.dimension == placed.dimension && corrected.x == placed.x && corrected.y == placed.y
+        && corrected.z == placed.z && corrected.rotation == 90 && corrected.mirror == "z",
+        "path replacement preserves absolute position, dimension, rotation and mirror");
+    check(session.loaded()->independentFiles->files[0].slice == corrected.slice,
+        "independent render snapshot uses the normalized source layer");
+    auto goodProjection = session.loaded();
+    command(TaskAction::Path, "unreadable.mcstructure", freshFile.id); finish(false);
+    check(session.loaded() == goodProjection && session.layerSettings().values == corrected.slice
+        && getTaskSnapshot().catalog.tasks[0].files[0].slice == corrected.slice,
+        "failed replacement keeps the last valid projection and layer settings");
+    command(TaskAction::Path, "taller.mcstructure", freshFile.id); finish(true, 100, 40, 4);
+    check(session.layerSettings().values.layer == 33, "replacement with taller file preserves an in-range layer");
+    auto expectedLayers = getTaskSnapshot().catalog;
     shutdownTasks();
+    check(tasks::readCatalog(taskPath) == expectedLayers, "corrected layers survive actual task-store persistence");
     std::filesystem::remove(taskPath);
     std::filesystem::remove(directory);
     requested.reset(); completed.reset(); cache.clear(); inFlight = false;

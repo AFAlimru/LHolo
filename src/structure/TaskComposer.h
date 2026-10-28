@@ -17,5 +17,8 @@ struct Composition {
     std::array<int, 3> origin{};
 };
 using BlockTransform = std::function<Block const*(Block const*, int mirror, int rotation)>;
+// Normalize loaded source-file slices once, before either composition path.
+// Unloaded files retain their settings until their dimensions are available.
+void normalizeCompositionLayers(std::span<CompositionFile> files);
 Composition composeTask(std::span<CompositionFile const>, BlockTransform const&);
 } // namespace lholo::structure

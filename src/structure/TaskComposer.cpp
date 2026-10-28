@@ -8,6 +8,18 @@
 #include <tuple>
 
 namespace lholo::structure {
+void normalizeCompositionLayers(std::span<CompositionFile> files) {
+    for (auto& file : files) {
+        if (!file.loaded) continue;
+        auto const& loaded = *file.loaded;
+        auto const maximum = file.slice.axis == LayerAxis::Material
+            ? static_cast<int>(std::min(loaded.materialCount,
+                static_cast<std::size_t>(std::numeric_limits<int>::max()))) - 1
+            : (file.slice.axis == LayerAxis::X ? loaded.sizeX : loaded.sizeY) - 1;
+        file.slice.layer = std::clamp(file.slice.layer, 0, std::max(0, maximum));
+    }
+}
+
 int coveringSource(LoadedStructure const& loaded, int x, int y, int z) {
     for (auto const& box : loaded.regions)
         if (x >= box.x && static_cast<long long>(x) < static_cast<long long>(box.x) + box.sizeX &&

@@ -1,4 +1,5 @@
 #include "structure/TaskComposer.h"
+#include "structure/IndependentTaskFiles.h"
 #include "structure/StructureSession.h"
 #include "tasks/TaskCatalog.h"
 #include "tasks/TaskStore.h"
@@ -21,6 +22,50 @@ int runTaskTests() {
     auto* stone = reinterpret_cast<Block const*>(0x1000);
     auto* glass = reinterpret_cast<Block const*>(0x2000);
     auto* water = reinterpret_cast<Block const*>(0x3000);
+    {
+        auto source = std::make_shared<structure::LoadedStructure>();
+        source->sizeX = 12; source->sizeY = 34; source->sizeZ = 7;
+        source->materialCount = 4;
+        for (auto const axis : {structure::LayerAxis::Y, structure::LayerAxis::X, structure::LayerAxis::Material}) {
+            auto const maximum = axis == structure::LayerAxis::Y ? 33 : axis == structure::LayerAxis::X ? 11 : 3;
+            for (auto const mode : {structure::LayerDisplayMode::All, structure::LayerDisplayMode::Single,
+                                   structure::LayerDisplayMode::UpToCurrent, structure::LayerDisplayMode::FromCurrent}) {
+                std::vector<structure::CompositionFile> slices{{"loaded", source, true, 10, 20, 30, 1, 2,
+                    {axis, mode, 88}}, {"unloaded", {}, false, 0, 0, 0, 0, 0, {axis, mode, 88}}};
+                structure::normalizeCompositionLayers(slices);
+                check(slices[0].slice == structure::LayerSettings{axis, mode, maximum},
+                    "loaded layer clamps to the selected source axis without changing display mode");
+                check(slices[0].x == 10 && slices[0].y == 20 && slices[0].z == 30
+                    && slices[0].rotation == 1 && slices[0].mirror == 2,
+                    "normalizing source slices preserves placement and transforms");
+                check(slices[1].slice.layer == 88, "unloaded file settings wait for actual dimensions");
+            }
+        }
+        std::vector<structure::CompositionFile> slices{{"valid", source, true, 0, 0, 0, 0, 0,
+            {structure::LayerAxis::Y, structure::LayerDisplayMode::Single, 20}}};
+        structure::normalizeCompositionLayers(slices);
+        check(slices[0].slice.layer == 20, "in-range layers remain unchanged");
+        source->materialCount = 0;
+        slices[0].slice = {structure::LayerAxis::Material, structure::LayerDisplayMode::Single, 88};
+        structure::normalizeCompositionLayers(slices);
+        check(slices[0].slice.layer == 0, "empty material palette has a safe zero layer");
+        source->materialCount = 4;
+        source->renderBlocks = {{0, 33, 0, stone}};
+        source->regions = {{0, 0, 0, 12, 34, 7}};
+        slices[0].slice = {structure::LayerAxis::Y, structure::LayerDisplayMode::Single, 88};
+        structure::normalizeCompositionLayers(slices);
+        auto independent = structure::composeTaskProjection(slices, [](Block const* b, int, int) { return b; });
+        check(independent.loaded->independentFiles
+            && independent.loaded->independentFiles->files[0].slice.layer == 33,
+            "independent projection receives the corrected layer before publication");
+        auto empty = std::make_shared<structure::LoadedStructure>();
+        empty->sizeX = empty->sizeY = empty->sizeZ = 1;
+        slices.push_back({"overlap", empty, true});
+        auto composed = structure::composeTaskProjection(slices, [](Block const* b, int, int) { return b; });
+        check(!composed.loaded->independentFiles && composed.loaded->renderBlocks.size() == 1
+            && composed.loaded->renderBlocks[0].block == stone,
+            "overlapping composition keeps the final valid layer instead of filtering the source away");
+    }
     auto first = std::make_shared<structure::LoadedStructure>();
     first->sizeX = 3;
     first->sizeY = 2;
