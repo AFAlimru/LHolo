@@ -36,19 +36,33 @@ std::string fitLine(UIRenderContext& context, Font& font, std::string text, floa
     return fitHudText(std::move(text), width, measure);
 }
 
+float materialColumnGap(float lineHeight) { return lineHeight * 0.8f; }
 template <class Measure>
-float panelTextWidth(HudPanel const& panel, float lineHeight, Measure&& measure) {
+float measurePanel(HudPanel const& panel, float lineHeight, Measure&& measure) {
     float textWidth{};
-    for (auto const& line : panel.lines)
-        textWidth = std::max(textWidth, static_cast<float>(measure(line.text))
-            + (line.iconId ? hudIconColumn(lineHeight) : 0.0f));
+    for (auto const& line : panel.lines) {
+        auto width = static_cast<float>(measure(line.text))
+            + (line.iconId ? hudIconColumn(lineHeight) : 0.0f);
+        if (!line.quantity.empty())
+            width += materialColumnGap(lineHeight) + static_cast<float>(measure(line.quantity));
+        textWidth = std::max(textWidth, width);
+    }
     return textWidth;
 }
 
 PanelPlacement drawPanel(UIRenderContext& context, Font& font, RectangleArea const& viewport,
     float lineHeight, HudPanel panel, settings::HudPlacement const& saved, std::vector<HudIconDraw>& icons, float opacity, float fontScale, PanelPlacement const* preceding = nullptr) {
-    auto const textWidth = panelTextWidth(panel, lineHeight,
-        [&](std::string const& text) { return context.getLineLength(font, text, fontScale, false); });
+    auto measure = [&](std::string const& text) { return context.getLineLength(font, text, fontScale, false); };
+    auto textWidth = measurePanel(panel, lineHeight, measure);
+    if (panel.compactRows) {
+        auto const widthScale = hudWidthScale(viewport._x1 - viewport._x0 - 2 * kHudMargin,
+            textWidth + 2 * hudStyle(lineHeight, panel.compactRows, fontScale).horizontalPadding);
+        if (widthScale < 1.0f) {
+            lineHeight *= widthScale;
+            fontScale *= widthScale;
+            textWidth = measurePanel(panel, lineHeight, measure);
+        }
+    }
     auto const placement = applyHudPlacement(placeHudPanel(viewport._x1 - viewport._x0, viewport._y1 - viewport._y0,
         textWidth, lineHeight, panel.lines.size(), panel.position, preceding, panel.compactRows, fontScale),
         viewport._x1 - viewport._x0, viewport._y1 - viewport._y0, saved);
@@ -64,14 +78,29 @@ PanelPlacement drawPanel(UIRenderContext& context, Font& font, RectangleArea con
         if (index + 1 == placement.rows && placement.rows < panel.lines.size()) line = {"...", TextTone::Muted};
         auto const iconColumn = line.iconId ? hudIconColumn(lineHeight) : 0.0f;
         auto const availableWidth = placement.width - 2 * style.horizontalPadding;
-        auto const showIcon = line.iconId && availableWidth > iconColumn;
+        bool const hasQuantity = !line.quantity.empty();
+        auto const quantityWidth = hasQuantity ? measure(line.quantity) : 0.0f;
+        auto const columnGap = hasQuantity ? materialColumnGap(lineHeight) : 0.0f;
+        auto const showIcon = line.iconId && availableWidth > iconColumn
+            + quantityWidth + columnGap;
         auto const textOffset = showIcon ? iconColumn : 0.0f;
-        auto text = fitLine(context, font, std::move(line.text), availableWidth - textOffset, fontScale);
+        auto const nameWidth = hudNameWidth(availableWidth, textOffset,
+            quantityWidth, columnGap);
+        auto text = hasQuantity ? std::move(line.text)
+            : fitLine(context, font, std::move(line.text), nameWidth, fontScale);
         auto const rowHeight = lineHeight + style.lineGap;
         auto const top = y + style.verticalPadding + static_cast<float>(index) * rowHeight;
-        if (showIcon) icons.push_back({*line.iconId, x + style.horizontalPadding, top, lineHeight});
-        context.drawText(font, {x + style.horizontalPadding + textOffset, x + placement.width - style.horizontalPadding, top, top + lineHeight},
+        if (showIcon) icons.push_back({*line.iconId, x + style.horizontalPadding, top, lineHeight, line.iconItem});
+        auto const contentX = x + style.horizontalPadding;
+        if (!text.empty()) context.drawText(font,
+            {contentX + textOffset, contentX + textOffset + nameWidth, top, top + lineHeight},
             std::move(text), color(line.tone), 1.0f, ::ui::TextAlignment::Left, textData, caret);
+        if (hasQuantity) {
+            auto quantity = std::move(line.quantity);
+            if (!quantity.empty()) context.drawText(font,
+                {contentX + availableWidth - quantityWidth, contentX + availableWidth, top, top + lineHeight},
+                std::move(quantity), color(line.tone), 1.0f, ::ui::TextAlignment::Left, textData, caret);
+        }
     }
     return placement;
 }

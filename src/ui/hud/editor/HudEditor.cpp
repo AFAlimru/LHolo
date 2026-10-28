@@ -176,6 +176,6 @@ HudContent makeHudEditorContent(int projectionPosition, int materialPosition) {
         {"", TextKey::HudLayoutGlass, "minecraft:glass", "minecraft:glass", 24},
     };
     materials.available = {64, 32, 8};
-    return {0, makeProjectionHud(display, example), makeMaterialHud(materials, materialPosition)};
+    return {0, makeProjectionHud(display, example), makeMaterialHud(materials, materialPosition, state().materialHudStackConversion(), state().materialHudMaxItems())};
 }
 }

@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include "settings/MaterialHudSettings.h"
+
 #include "i18n/Message.h"
 #include "input/HotkeyTypes.h"
 #include "settings/HudPlacement.h"
@@ -14,10 +16,13 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
+
+class ItemStack;
 
 namespace lholo::structure::detail {
 
@@ -35,6 +40,7 @@ struct MaterialRequirement {
     // signs etc., 1 for filled buckets). Used for the JE-style "N (a x S + b)"
     // count display. Computed on the tick thread; 64 when unknown.
     int           stackSize{64};
+    std::shared_ptr<ItemStack const> iconItem; // Immutable native item, including banner patterns.
 };
 
 // One coherent, versioned snapshot for material-list consumers.
@@ -161,6 +167,10 @@ public:
     void setExperimentalConsentGiven(bool given);
     [[nodiscard]] bool materialHudEnabled() const;
     void setMaterialHudEnabled(bool enabled);
+    [[nodiscard]] bool materialHudStackConversion() const;
+    void setMaterialHudStackConversion(bool enabled);
+    [[nodiscard]] int materialHudMaxItems() const;
+    void setMaterialHudMaxItems(int count);
     [[nodiscard]] int materialHudPosition() const;
     void setMaterialHudPosition(int position);
     // Hints are stored as key plus arguments so a pending hint follows a
@@ -171,7 +181,7 @@ public:
     [[nodiscard]] bool actionHintActive(std::uint64_t now) const;
     // Loading shares the existing hint bar, but does not expire or overwrite
     // transient hints. Completion tokens cannot clear a later loading hint.
-    [[nodiscard]] std::uint64_t beginLoadingHint();
+    [[nodiscard]] std::uint64_t beginLoadingHint(i18n::TextKey key = i18n::TextKey::StatusLoading);
     void finishLoadingHint(std::uint64_t token);
     void clearLoadingHint();
 
@@ -248,11 +258,14 @@ private:
 
     std::atomic_bool mExperimentalConsent{false};
     std::atomic_bool mMaterialHudEnabled{false};
+    std::atomic_bool mMaterialHudStackConversion{false};
+    std::atomic_int mMaterialHudMaxItems{settings::kDefaultMaterialHudItems};
     std::atomic_int  mMaterialHudPosition{3};
     mutable std::mutex mActionHintMutex;
     i18n::Message      mActionHintMessage;
     std::atomic_uint64_t mActionHintExpiry{};
     std::uint64_t       mLoadingHintSequence{}; // protected by mActionHintMutex
+    i18n::TextKey       mLoadingHintKey{i18n::TextKey::StatusLoading}; // protected by mActionHintMutex
     std::atomic_uint64_t mLoadingHintToken{};
 
     mutable std::mutex                mMaterialMutex;

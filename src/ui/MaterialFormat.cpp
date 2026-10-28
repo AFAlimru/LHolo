@@ -1,34 +1,17 @@
 #include "ui/MaterialFormat.h"
-#include <cstdio>
 
 namespace lholo::ui {
 
 std::string_view materialIconId(std::string const& itemId, std::string const& typeName) {
     return itemId.empty() ? std::string_view{typeName} : std::string_view{itemId};
 }
-std::string formatStackCount(std::uint64_t count, int stackSize) {
+std::string formatMaterialHudCount(std::uint64_t count, int stackSize, bool convertStacks) {
     auto const stack = static_cast<std::uint64_t>(stackSize > 0 ? stackSize : 64);
-    if (count < stack) return std::to_string(count);
-    auto const stacks = count / stack;
-    auto const remainder = count % stack;
-    char buffer[64];
-    if (remainder == 0) {
-        std::snprintf(
-            buffer, sizeof(buffer), "%llu (%llu x %llu)",
-            static_cast<unsigned long long>(count),
-            static_cast<unsigned long long>(stacks),
-            static_cast<unsigned long long>(stack)
-        );
-    } else {
-        std::snprintf(
-            buffer, sizeof(buffer), "%llu (%llu x %llu + %llu)",
-            static_cast<unsigned long long>(count),
-            static_cast<unsigned long long>(stacks),
-            static_cast<unsigned long long>(stack),
-            static_cast<unsigned long long>(remainder)
-        );
-    }
-    return buffer;
+    if (!convertStacks || count < stack) return std::to_string(count);
+    auto result = std::to_string(count / stack) + "x" + std::to_string(stack);
+    if (auto remainder = count % stack; remainder != 0)
+        result += "+" + std::to_string(remainder);
+    return result;
 }
 
 char const* materialDisplayName(

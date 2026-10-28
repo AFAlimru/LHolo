@@ -62,9 +62,13 @@ HudPanel makeProjectionHud(structure::detail::HudStateSnapshot const& s, Project
     return panel;
 }
 
-HudPanel makeMaterialHud(structure::detail::MaterialHudSnapshot const& snapshot, int position) {
-    HudPanel panel{std::clamp(position, 0, 3), {{i18n::tr(TextKey::MaterialHudTitle)}}, true};
+HudPanel makeMaterialHud(structure::detail::MaterialHudSnapshot const& snapshot, int position, bool convertStacks, int maxItems, MaterialHudPaging* paging, int pageDelta) {
+    MaterialHudPaging localPage;
+    auto& page = paging ? *paging : localPage;
+    HudPanel panel{std::clamp(position, 0, 3), {{i18n::tr(TextKey::MaterialHudTitle), TextTone::Normal, std::nullopt,
+        text(TextKey::MaterialHudPage, std::size_t{1}, std::size_t{1})}}, true};
     if (!snapshot.ready) {
+        page.update(0, 1);
         panel.lines.push_back({i18n::tr(TextKey::MaterialHudScanning), TextTone::Muted});
         return panel;
     }
@@ -76,22 +80,26 @@ HudPanel makeMaterialHud(structure::detail::MaterialHudSnapshot const& snapshot,
         auto const have = index < snapshot.available.size() ? std::max(0, snapshot.available[index]) : 0;
         if (need > static_cast<std::uint64_t>(have)) rows.push_back({index, need - static_cast<std::uint64_t>(have)});
     }
-    constexpr std::size_t maxRows = 14;
-    // Only the first 14 rows are displayed. Resolve equal counts by original
-    // index to retain the tracker's stable ordering without sorting the tail.
-    std::partial_sort(rows.begin(), rows.begin() + std::min(rows.size(), maxRows), rows.end(),
-        [](Row const& a, Row const& b) {
-            return a.missing != b.missing ? a.missing > b.missing : a.index < b.index;
-        });
+    auto const maxRows = static_cast<std::size_t>(std::clamp(maxItems, settings::kMinMaterialHudItems, settings::kMaxMaterialHudItems));
+    page.update(rows.size(), maxRows, pageDelta);
+    panel.lines.front().quantity = text(TextKey::MaterialHudPage, page.index + 1, page.count);
+    auto const first = page.index * maxRows;
+    auto const last = first + std::min(maxRows, rows.size() - first);
+    auto const less = [](Row const& a, Row const& b) {
+        return a.missing != b.missing ? a.missing > b.missing : a.index < b.index;
+    };
+    // Partition off earlier pages, then sort only this page. Equal deficits
+    // keep the material tracker's original order across page boundaries.
+    if (first != 0) std::nth_element(rows.begin(), rows.begin() + first, rows.end(), less);
+    std::partial_sort(rows.begin() + first, rows.begin() + last, rows.end(), less);
     if (rows.empty()) panel.lines.push_back({i18n::tr(TextKey::MaterialHudComplete), TextTone::Success});
-    for (std::size_t index = 0; index < std::min(rows.size(), maxRows); ++index) {
+    for (std::size_t index = first; index < last; ++index) {
         auto const& row = rows[index];
         auto const& material = snapshot.requirements[row.index];
-        panel.lines.push_back({std::string(materialDisplayName(material.displayName, material.nameKey))
-            + "  " + formatStackCount(row.missing, material.stackSize), TextTone::Normal,
-            std::string(materialIconId(material.itemId, material.typeName))});
+        panel.lines.push_back({std::string(materialDisplayName(material.displayName, material.nameKey)), TextTone::Normal,
+            std::string(materialIconId(material.itemId, material.typeName)),
+            formatMaterialHudCount(row.missing, material.stackSize, convertStacks), material.iconItem});
     }
-    if (rows.size() > maxRows) panel.lines.push_back({text(TextKey::MaterialHudMore, rows.size() - maxRows), TextTone::Muted});
     return panel;
 }
 }

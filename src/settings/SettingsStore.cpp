@@ -34,6 +34,8 @@ bool loadSettingsFile(std::filesystem::path const& path, Settings& out) {
     out.missingSeeThrough = json.value("missingSeeThrough", out.missingSeeThrough);
     out.experimentalConsent = json.value("experimentalConsent", out.experimentalConsent);
     out.materialHudEnabled = json.value("materialHudEnabled", out.materialHudEnabled);
+    out.materialHudStackConversion = json.value("materialHudStackConversion", out.materialHudStackConversion);
+    out.materialHudMaxItems = std::clamp(json.value("materialHudMaxItems", out.materialHudMaxItems), kMinMaterialHudItems, kMaxMaterialHudItems);
     out.materialHudPosition = json.value("materialHudPosition", out.materialHudPosition);
     out.placementRadius = json.value("placementRadius", out.placementRadius);
     out.autoPlacementBreakCooldownSeconds = json.value(
@@ -70,6 +72,10 @@ bool loadSettingsFile(std::filesystem::path const& path, Settings& out) {
         = json.value("layerIncreaseHotkeyModifiers", out.layerIncreaseHotkeyModifiers);
     out.layerDecreaseHotkeyModifiers
         = json.value("layerDecreaseHotkeyModifiers", out.layerDecreaseHotkeyModifiers);
+    out.materialHudPreviousPageHotkey = json.value("materialHudPreviousPageHotkey", out.materialHudPreviousPageHotkey);
+    out.materialHudPreviousPageHotkeyModifiers = json.value("materialHudPreviousPageHotkeyModifiers", out.materialHudPreviousPageHotkeyModifiers);
+    out.materialHudNextPageHotkey = json.value("materialHudNextPageHotkey", out.materialHudNextPageHotkey);
+    out.materialHudNextPageHotkeyModifiers = json.value("materialHudNextPageHotkeyModifiers", out.materialHudNextPageHotkeyModifiers);
     out.altWheelOffsetEnabled
         = json.value("altWheelOffsetEnabled", out.altWheelOffsetEnabled);
 
@@ -153,6 +159,8 @@ void saveSettingsFile(std::filesystem::path const& path, Settings const& setting
         {"missingSeeThrough", settings.missingSeeThrough},
         {"experimentalConsent", settings.experimentalConsent},
         {"materialHudEnabled", settings.materialHudEnabled},
+        {"materialHudStackConversion", settings.materialHudStackConversion},
+        {"materialHudMaxItems", settings.materialHudMaxItems},
         {"materialHudPosition", settings.materialHudPosition},
         {"placementRadius", settings.placementRadius},
         {"autoPlacementBreakCooldownSeconds", settings.autoPlacementBreakCooldownSeconds},
@@ -175,6 +183,10 @@ void saveSettingsFile(std::filesystem::path const& path, Settings const& setting
         {"layerDecreaseHotkey", settings.layerDecreaseHotkey},
         {"layerIncreaseHotkeyModifiers", settings.layerIncreaseHotkeyModifiers},
         {"layerDecreaseHotkeyModifiers", settings.layerDecreaseHotkeyModifiers},
+        {"materialHudPreviousPageHotkey", settings.materialHudPreviousPageHotkey},
+        {"materialHudPreviousPageHotkeyModifiers", settings.materialHudPreviousPageHotkeyModifiers},
+        {"materialHudNextPageHotkey", settings.materialHudNextPageHotkey},
+        {"materialHudNextPageHotkeyModifiers", settings.materialHudNextPageHotkeyModifiers},
         {"altWheelOffsetEnabled", settings.altWheelOffsetEnabled},
         {"moveLeftHotkey", settings.moveHotkeys[0]},
         {"moveRightHotkey", settings.moveHotkeys[1]},

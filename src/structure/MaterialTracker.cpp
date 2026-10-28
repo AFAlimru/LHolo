@@ -11,6 +11,12 @@
 #include "structure/StructureUiState.h"
 
 #include "mc/client/player/LocalPlayer.h"
+#include "mc/dataloadhelper/NewUniqueIdsDataLoadHelper.h"
+#include "mc/world/level/Level.h"
+#include "mc/world/level/BlockPos.h"
+#include "mc/world/level/block/BlockType.h"
+#include "mc/world/level/block/actor/BlockActor.h"
+#include "mc/world/level/block/actor/VanillaBlockActorFactory.h"
 #include "mc/locale/I18n.h"
 #include "mc/world/actor/player/Inventory.h"
 #include "mc/world/item/ItemStack.h"
@@ -46,6 +52,9 @@ using BlockCounts = std::unordered_map<Block const*, std::uint64_t>;
 struct RawMaterialCounts {
     BlockCounts body;
     BlockCounts liquid;
+    // One representative per existing material/palette identity, not one
+    // native actor per projected cell. Keep source NBT immutable.
+    std::unordered_map<Block const*, std::shared_ptr<CompoundTag const>> blockEntitySamples;
 };
 
 using MaterialHudKey = projection::MaterialProgressKey;
@@ -83,6 +92,8 @@ RawMaterialCounts collectRawMaterials(
     counts.liquid.reserve(std::min<std::size_t>(renderBlocks.size(), 64));
     for (auto const& entry : renderBlocks) {
         countBlock(counts.body, entry.block);
+        if (entry.block && entry.blockEntityNbt)
+            counts.blockEntitySamples.try_emplace(entry.block, entry.blockEntityNbt);
         countBlock(counts.liquid, entry.liquid);
     }
     return counts;
@@ -116,9 +127,27 @@ std::string localizedBlockName(Block const& block, std::string_view localeCode) 
     return name;
 }
 
+block::PlacementItem resolveMaterialItem(Block const& blockValue, CompoundTag const* nbt, Level& level) {
+    if (nbt) try {
+        BlockPos const origin{0, 0, 0};
+        auto actor = VanillaBlockActorFactory::createBlockActor(origin, blockValue.getBlockType());
+        if (actor) {
+            NewUniqueIdsDataLoadHelper helper;
+            helper.mLevel = &level;
+            actor->load(level, *nbt, helper);
+            actor->mPosition = origin;
+            return block::resolvePlacementItem(blockValue, actor.get());
+        }
+    } catch (...) {
+        // Malformed or unsupported actor data must not discard material counts.
+    }
+    return block::resolvePlacementItem(blockValue);
+}
+
 std::vector<MaterialRequirement> resolveMaterials(
     RawMaterialCounts counts,
-    std::string_view localeCode
+    std::string_view localeCode,
+    Level& level
 ) {
     std::map<std::string, MaterialRequirement> byType;
     std::map<std::string, MaterialRequirement> byLiquidType;
@@ -128,16 +157,19 @@ std::vector<MaterialRequirement> resolveMaterials(
         std::string const typeName{blockValue->getTypeName()};
         auto const key = block::materialKey(typeName);
         if (key.empty()) return;
+        auto const sample = counts.blockEntitySamples.find(blockValue);
+        auto const* nbt = sample == counts.blockEntitySamples.end() ? nullptr : sample->second.get();
         MaterialRequirement requirement;
         requirement.typeName = typeName;
         if (typeName == "minecraft:water" || typeName == "minecraft:flowing_water") {
             requirement.nameKey = i18n::TextKey::MaterialWater;
         } else if (typeName == "minecraft:lava" || typeName == "minecraft:flowing_lava") {
             requirement.nameKey = i18n::TextKey::MaterialLava;
-        } else if (auto const item = block::resolvePlacementItem(*blockValue); item.valid) {
+        } else if (auto const item = resolveMaterialItem(*blockValue, nbt, level); item.valid) {
             requirement.displayName = item.displayName;
             requirement.itemId = item.itemId;
             requirement.stackSize = item.stackSize;
+            requirement.iconItem = item.displayItem;
         } else {
             requirement.displayName = localizedBlockName(*blockValue, localeCode);
         }
@@ -182,9 +214,10 @@ std::vector<MaterialRequirement> resolveMaterials(
 
 std::vector<MaterialRequirement> collectMaterials(
     std::vector<LoadedStructure::RenderBlock> const& renderBlocks,
-    std::string_view localeCode
+    std::string_view localeCode,
+    Level& level
 ) {
-    return resolveMaterials(collectRawMaterials(renderBlocks), localeCode);
+    return resolveMaterials(collectRawMaterials(renderBlocks), localeCode, level);
 }
 
 std::optional<MaterialHudKey> currentMaterialHudKey() {
@@ -215,6 +248,8 @@ MaterialHudResult countMaterialHud(MaterialHudInput input) {
         // Block pointers are opaque keys here. Registry, localization and item
         // resolution remain on the game tick thread after aggregation.
         countBlock(result.counts.body, entry.block);
+        if (entry.block && entry.blockEntityNbt)
+            result.counts.blockEntitySamples.try_emplace(entry.block, entry.blockEntityNbt);
         countBlock(result.counts.liquid, entry.liquid);
     }
     return result;
@@ -253,7 +288,7 @@ void updateMaterialHud(LocalPlayer& player) {
         worker.inFlight.reset();
         if (auto const current = currentMaterialHudKey(); current && *current == result.key) {
             auto materials = resolveMaterials(
-                std::move(result.counts), player.getLocaleCode()
+                std::move(result.counts), player.getLocaleCode(), player.getLevel()
             );
             auto available = collectInventoryAvailability(player, materials);
             // Publish both vectors under one lock. The render thread therefore
@@ -298,8 +333,8 @@ void processPendingMaterialList(LocalPlayer& player) {
                     selected.push_back(block);
         } else for (auto const& block:loaded->renderBlocks)
             if (block.sourceIndex==source) selected.push_back(block);
-        materials=collectMaterials(selected,player.getLocaleCode());
-    } else if (loaded) materials = collectMaterials(loaded->renderBlocks, player.getLocaleCode());
+        materials=collectMaterials(selected,player.getLocaleCode(), player.getLevel());
+    } else if (loaded) materials = collectMaterials(loaded->renderBlocks, player.getLocaleCode(), player.getLevel());
     // Loading another structure can overlap this game-thread calculation. Never
     // publish a completed list for a structure that is no longer active.
     if (StructureSession::getInstance().loaded() != loaded || StructureSession::getInstance().selectedSource()!=source) {

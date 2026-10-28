@@ -2,7 +2,7 @@ export interface SettingsValues {
   hudEnabled: boolean; hudPosition: number; hudShowFileName: boolean; hudShowLayer: boolean;
   hudShowOverallProgress: boolean; hudShowProgress: boolean; hudShowProjectedBlockName: boolean;
   hudShowWrongState: boolean; hudShowWrongType: boolean; hudShowExtraBlocks: boolean;
-  materialHudEnabled: boolean; materialHudPosition: number; altWheelOffsetEnabled: boolean;
+  materialHudEnabled: boolean; materialHudStackConversion: boolean; materialHudMaxItems: number; materialHudPosition: number; altWheelOffsetEnabled: boolean;
   placementRadius: number; autoPlacementCooldown: number; activeMode: number; language: string;
 }
 export type SettingsField = keyof SettingsValues;
@@ -26,9 +26,9 @@ export function parseSettings(payload: string): SettingsState {
   const integer = (n: unknown, low: number, high: number) => typeof n === 'number' && Number.isInteger(n) && n >= low && n <= high;
   const id = (n: unknown) => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
   const boolFields = ['hudEnabled', 'hudShowFileName', 'hudShowLayer', 'hudShowOverallProgress', 'hudShowProgress',
-    'hudShowProjectedBlockName', 'hudShowWrongState', 'hudShowWrongType', 'hudShowExtraBlocks', 'materialHudEnabled', 'altWheelOffsetEnabled'];
+    'hudShowProjectedBlockName', 'hudShowWrongState', 'hudShowWrongType', 'hudShowExtraBlocks', 'materialHudEnabled', 'materialHudStackConversion', 'altWheelOffsetEnabled'];
   if (!v || !boolFields.every(k => typeof v[k] === 'boolean') || !integer(v.hudPosition, 0, 3)
-    || !integer(v.materialHudPosition, 0, 3) || !integer(v.placementRadius, 1, 4)
+    || !integer(v.materialHudMaxItems, 1, 50) || !integer(v.materialHudPosition, 0, 3) || !integer(v.placementRadius, 1, 4)
     || !integer(v.autoPlacementCooldown, 0, 60) || !integer(v.activeMode, 0, 3) || typeof v.language !== 'string'
     || !id(s.context) || !id(s.ack) || !id(s.hotkeysRevision) || typeof s.accepted !== 'boolean' || typeof s.consent !== 'boolean'
     || !Array.isArray(s.languages) || !s.languages.length || !s.languages.every((l: any) => l && typeof l.code === 'string' && !!l.code && typeof l.name === 'string')

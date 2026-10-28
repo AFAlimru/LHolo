@@ -23,6 +23,20 @@ inline HudStyle hudStyle(float lineHeight, bool compactRows = false, float scale
 inline float hudIconColumn(float lineHeight) {
     return lineHeight + hudStyle(lineHeight).lineGap * 0.7f;
 }
+// Preserve full material names by fitting the whole panel rather than
+// replacing part of a name with an ellipsis.
+inline float hudWidthScale(float availableWidth, float naturalWidth) {
+    if (availableWidth <= 0 || naturalWidth <= 0) return 1.0f;
+    return std::min(1.0f, availableWidth / naturalWidth);
+}
+// Relative to the panel's padded content area. Reserve the quantity column
+// before drawing the name, including when the viewport constrains the panel.
+inline float hudNameWidth(float width, float iconWidth, float quantityWidth, float gap) {
+    width = std::max(0.0f, width);
+    quantityWidth = std::clamp(quantityWidth, 0.0f, width);
+    auto const quantityX = width - quantityWidth;
+    return std::max(0.0f, quantityX - iconWidth - gap);
+}
 struct PanelPlacement {
     float x{}, y{}, width{}, height{};
     std::size_t rows{};

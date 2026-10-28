@@ -52,15 +52,21 @@ Hook 先执行原版 `ScreenView::render`，只在 `hud_screen` 的渲染调用�
 
 日志前缀 `[native-hud]`：安装时记录启用状态；C++ 绘制异常记录一次并停止本次启用周期的追加绘制。首次提交等验证期日志已清理。
 
+## 材料 HUD 分页
+
+标题左侧使用 MaterialHudTitle 本地化文案，右侧通过 MaterialHudPage 显示“1/4”，复用数量列的右对齐绘制，与下方材料数量共用右边缘；不把标题和页码拼成单段文本。显示项数作为每页项数，默认 5；没有缺失项或等待统计时显示 1/1，并保留原有齐全/计算中提示。ui/hud/MaterialHudPaging 只管理当前页、总页数及上下文，不写入配置。输入层 MaterialHudPageRequest 仅提交翻页方向，readHudContent 在渲染侧消费；材料/投影业务不依赖该页码。新快捷键默认均未绑定，沿用 HotkeyId、原生捕获与 SettingsStore，不在前端监听键盘。
+
+每页按缺口从大到小、相同缺口按原材料索引排序。nth_element 分离前页，仅对当前页 partial_sort，避免每帧排序全部材料。数量减少自动钳制有效页；切换文件、分层或每页项数回到首页；首尾不循环。翻页只重新选择已有快照内容，不查询世界或重复计算背包。菜单/编辑期间不应用翻页请求，退出世界丢弃待处理请求。页码、两个动作标签均覆盖四种语言。
+
 ## 缺失材料图标
 
-每条缺失材料行携带独立的可选 `iconId`；标题、统计中/齐全提示及剩余类型数不携带图标。`ui/MaterialFormat::materialIconId` 同时供 OreUI 材料清单与 HUD 使用：优先采用真实物品 `itemId`，没有时采用 `typeName`，保留完整命名空间；图标身份不改变库存计数、缺口或放置规则。HUD 不引入 OreUI 页面，不请求 `geo-item://`，不复制贴图包。
+每条缺失材料行携带独立的可选 `iconId`；标题、统计中/齐全提示不携带图标。`ui/MaterialFormat::materialIconId` 同时供 OreUI 材料清单与 HUD 使用：优先采用真实物品 `itemId`，没有时采用 `typeName`，保留完整命名空间；图标身份不改变库存计数、缺口或放置规则。HUD 不引入 OreUI 页面，不请求 `geo-item://`，不复制贴图包。
 
-显示用 ItemStack 通过原版 `reinit(id, 1, 0)` 在主本地玩家的 tickWorld 回调中准备。渲染线程只提交可见图标 ID 请求并读取准备好的只读对象，不访问物品注册表；缓存按结构代际失效，额外 epoch 拒绝清理前尚未完成的结果。缓存最多保留约 64 个身份，超过时整体更新；HUD 无图标、无世界、暂停显示或卸载时清理，不持有跨帧 ClientInstance、LocalPlayer 或渲染上下文。
+原生材料解析保留已解析物品的 aux 附加值和完整物品数据，经 MaterialRequirement → HudLine → HudIconDraw 传入绘制。蓝图有方块实体 NBT 时，每个现有调色板身份只保留一份显示样本，在游戏线程通过 VanillaBlockActorFactory 创建未注册到世界的临时实体并调用原生 load，再交给 BlockType::asItemInstance(block, actor)。BedBlock 和 BannerBlock 均提供该虚函数覆盖；不自行维护染料映射或旗帜图案协议。ItemInstance 通过原生 save(SaveContext{Clone}) / ItemStack::fromTag 转为只读共享 ItemStack，保留原生返回的颜色、图案及其他用户数据，HUD 直接绘制该物品，不重新按裸 ID 构造。样本和物品随原有快照清理，不改变材料分组、库存计数或放置规则。仅开发示例、液体等没有原生物品的回退通路使用原版 `reinit(id, 1, 0)` 在主本地玩家的 tickWorld 回调中准备，缓存和待处理队列仅服务无原生物品的回退通路，以完整物品 ID 标识；正常材料直接使用完整物品，不再保留附加值转发和独立变体缓存两套状态。渲染线程只提交可见图标 ID 请求并读取准备好的只读对象，不访问物品注册表；缓存按结构代际失效，额外 epoch 拒绝清理前尚未完成的结果。缓存最多保留约 64 个身份，超过时整体更新；HUD 无图标、无世界、暂停显示或卸载时清理，不持有跨帧 ClientInstance、LocalPlayer 或渲染上下文。
 
 图标绘制依据目标 SDK 的 [ItemRenderer::renderGuiItemNew](https://github.com/LiteLDev/LeviLamina/blob/v26.51.0/src-client/mc/client/renderer/actor/ItemRenderer.h)、[BaseActorRenderContext](https://github.com/LiteLDev/LeviLamina/blob/v26.51.0/src-client/mc/client/renderer/BaseActorRenderContext.h) 与 [MinecraftUIRenderContext](https://github.com/LiteLDev/LeviLamina/blob/v26.51.0/src-client/mc/client/renderer/screen/MinecraftUIRenderContext.h)。HUD 的同步文字 flush 建立只在本次调用有效的请求范围；匹配的具体 MinecraftUIRenderContext::flushText Hook 先提交文字，再使用该上下文的 ScreenContext 绘制图标，避免将通用 UIRenderContext 强制向下转换。其他文字刷新只调用原版。
 
-图标高度随现有字体行高，名称列增加图标宽度和间隔，仍参与面板测宽及长文本省略；不增加行高。窄窗口放不下图标时优先保留文字。首次等待 tick 准备、未知物品或没有原生库存图标的方块（包括可能无法解析的水/岩浆身份）显示灰色占位，不以水桶替换材料身份。图标 Hook 不可用或 C++ 绘制异常时保留文字 HUD。
+图标高度随现有字体行高，名称列增加图标宽度和间隔，参与面板测宽，材料名称完整保留，超出视口宽度时整体缩放；不增加行高。窄窗口放不下图标时优先保留文字。首次等待 tick 准备、未知物品或没有原生库存图标的方块（包括可能无法解析的水/岩浆身份）显示灰色占位，不以水桶替换材料身份。图标 Hook 不可用或 C++ 绘制异常时保留文字 HUD。
 
 日志前缀 `[native-hud.icons]`：只保留 Hook 不可用、图标准备/绘制异常及上下文回调缺失的有界诊断；首次提交和未知身份等验证期日志已清理。用户已确认当前图标显示通过，特殊材质及后续游戏版本仍需实机回归。
 
@@ -92,13 +98,13 @@ Hook 先执行原版 `ScreenView::render`，只在 `hud_screen` 的渲染调用�
 
 - 原 ImGui 普通/材料 HUD 函数、声明和跨帧叠放缓存已移除；隐藏旧菜单及动作提示按项目要求保留。
 - 业务层没有增加对 UI/OreUI 的依赖；菜单和原生 HUD 通过独立 MaterialFormat 共享展示规则，不通过 MenuWidgets 间接依赖 ImGui。
-- 渲染不增加世界/结构/背包扫描。材料展示只选择前 14 项（partial_sort，相同缺口以原索引稳定排序），不排序不显示的尾部。
+- 渲染不增加世界/结构/背包扫描。材料默认每页 5 项，先分离前页再只排序当前页（nth_element + partial_sort，相同缺口以原索引稳定排序），不排序未显示的其余材料。
 - 超长文字在 UTF-8 边界二分查找，测宽次数从逐字删除降为对数级；一万字符的测试将原生测宽调用限制在 18 次以内。
 - 图标准备在处理队列前检查已发布缓存，避免 tick 处理期间渲染重复入队造成二次构造；epoch 检查保留，用于拒绝清理前的异步完成结果。锁、匹配回调作用域及矩阵/颜色恢复均为具体线程和渲染状态要求，不添加未使用的通用防御框架。
 
 ## 验证
 
-`xmake` 构建完整 `bin/LHolo`，包含原生编辑场景的两份 UI JSON。`LHoloLogicTests` 中的 `NativeHudTests` 覆盖字段文本、X/Y/材料范围、进度区别、错误颜色、开关独立性、材料缺口与堆叠格式、14 项限制、图标/文本排序对应、显示身份回退、命名空间与无图标状态行、四角及同角堆叠、窗口不足和无效尺寸。
+`xmake` 构建完整 `bin/LHolo`，包含原生编辑场景的两份 UI JSON。`LHoloLogicTests` 中的 `NativeHudTests` 覆盖字段文本、X/Y/材料范围、进度区别、错误颜色、开关独立性、材料缺口与堆叠格式、默认每页 5 项与分页边界、图标/文本排序对应、显示身份回退、命名空间与无图标状态行、四角及同角堆叠、窗口不足和无效尺寸。
 
 部署后由用户自行启动游戏，加载结构并检查：
 

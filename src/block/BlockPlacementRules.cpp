@@ -4,6 +4,8 @@
 #include "block/BlockPlacementRules.h"
 
 #include "mc/world/item/ItemInstance.h"
+#include "mc/world/item/SaveContext.h"
+#include "mc/deps/nbt/CompoundTag.h"
 #include "mc/world/item/ItemStack.h"
 #include "mc/world/level/block/Block.h"
 #include "mc/world/level/block/BlockType.h"
@@ -39,11 +41,11 @@ std::string stripMinecraftFormatting(std::string_view text) {
     return out;
 }
 
-PlacementItem resolvePlacementItem(Block const& block) {
-    // 1. Bedrock native polymorphic resolution: BlockType::asItemInstance(block, nullptr)
+PlacementItem resolvePlacementItem(Block const& block, BlockActor const* blockActor) {
+    // 1. Bedrock native polymorphic resolution: BlockType::asItemInstance(block, blockActor)
     // Mojang implements this virtual method on all BlockType subclasses (crops, signs, redstone, etc.)
     try {
-        ItemInstance const pickItem = block.getBlockType().asItemInstance(block, nullptr);
+        ItemInstance const pickItem = block.getBlockType().asItemInstance(block, blockActor);
         if (!pickItem.isNull()) {
             int const size = static_cast<int>(pickItem.getMaxStackSize());
             return {
@@ -51,6 +53,7 @@ PlacementItem resolvePlacementItem(Block const& block) {
                 pickItem.getTypeName(),
                 size > 0 ? size : 64,
                 true,
+                std::make_shared<ItemStack>(ItemStack::fromTag(*pickItem.save(SaveContext{}))),
             };
         }
     } catch (...) {
@@ -65,6 +68,7 @@ PlacementItem resolvePlacementItem(Block const& block) {
             placeItem.getTypeName(),
             size > 0 ? size : 64,
             true,
+            std::make_shared<ItemStack>(placeItem),
         };
     }
 
@@ -77,6 +81,7 @@ PlacementItem resolvePlacementItem(Block const& block) {
             gameItem.getTypeName(),
             size > 0 ? size : 64,
             true,
+            std::make_shared<ItemStack>(ItemStack::fromTag(*gameItem.save(SaveContext{}))),
         };
     }
 

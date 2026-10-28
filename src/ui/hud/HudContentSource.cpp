@@ -1,4 +1,5 @@
 #include "ui/hud/HudContent.h"
+#include "input/MaterialHudPageRequest.h"
 #include "ui/hud/editor/HudEditor.h"
 #include "structure/StructureLoader.h"
 #include "structure/IndependentTaskFiles.h"
@@ -12,6 +13,9 @@
 
 namespace lholo::ui::hud {
 HudContent readHudContent() {
+    // Owned exclusively by the HUD render path; input only supplies intent.
+    static MaterialHudPaging paging;
+    auto const pageDelta = input::consumeMaterialHudPageRequest();
     HudContent result;
     bool const editing = hudLayoutEditorActive();
     if (!editing && (structure::isGuiVisible() || oreui::isMenuOnTop() || projection::isDimensionSuspended())) return result;
@@ -19,10 +23,13 @@ HudContent readHudContent() {
     auto settings = state.hud();
     if (editing) settings.enabled = true;
     auto const materialEnabled = editing || state.materialHudEnabled();
+    if (!materialEnabled) paging = {};
     if (!settings.enabled && !materialEnabled) return result;
     auto const session = structure::detail::StructureSession::getInstance().snapshot();
-    if (!session.loaded || projection::isDimensionSuspended())
+    if (!session.loaded || projection::isDimensionSuspended()) {
+        paging = {};
         return editing ? makeHudEditorContent(settings.position, state.materialHudPosition()) : result;
+    }
     result.context = session.loaded->generation;
     if (settings.enabled) {
         ProjectionHudData data;
@@ -51,9 +58,12 @@ HudContent readHudContent() {
     }
     if (materialEnabled) {
         auto const materials = state.materialHudSnapshot();
+        auto const changed = paging.setContext({session.loaded->generation,
+            structure::detail::StructureSession::getInstance().selectedSource(), state.materialHudMaxItems(),
+            static_cast<int>(session.transform.layerAxis), static_cast<int>(session.transform.layerDisplayMode), session.transform.displayLayer});
         result.materials = editing && !materials.ready
             ? makeHudEditorContent(settings.position, state.materialHudPosition()).materials
-            : makeMaterialHud(materials, state.materialHudPosition());
+            : makeMaterialHud(materials, state.materialHudPosition(), state.materialHudStackConversion(), state.materialHudMaxItems(), &paging, editing || changed ? 0 : pageDelta);
     }
     if (editing && result.projection.lines.empty())
         result.projection = makeHudEditorContent(settings.position, state.materialHudPosition()).projection;

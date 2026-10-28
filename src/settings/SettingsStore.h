@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include "settings/MaterialHudSettings.h"
+
 #include "input/HotkeyTypes.h"
 #include "settings/HudPlacement.h"
 
@@ -28,6 +30,8 @@ struct Settings {
     bool missingSeeThrough{false};
     bool experimentalConsent{false};
     bool materialHudEnabled{false};
+    bool materialHudStackConversion{false};
+    int materialHudMaxItems{kDefaultMaterialHudItems};
     int materialHudPosition{3};
     int placementRadius{4};
     int autoPlacementBreakCooldownSeconds{10};
@@ -50,6 +54,8 @@ struct Settings {
     int layerDecreaseHotkey{0x28}; // VK_DOWN
     int layerIncreaseHotkeyModifiers{2};
     int layerDecreaseHotkeyModifiers{2};
+    int materialHudPreviousPageHotkey{}, materialHudPreviousPageHotkeyModifiers{};
+    int materialHudNextPageHotkey{}, materialHudNextPageHotkeyModifiers{};
     // Fixed-gesture input, not a rebindable slot: while enabled, holding Alt
     // claims the wheel for the projection offset and locks the hotbar for as
     // long as Alt is down. The hotkeys page can turn it off so Alt and the

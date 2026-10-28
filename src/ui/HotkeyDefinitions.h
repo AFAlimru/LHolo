@@ -14,6 +14,8 @@ inline constexpr std::array<HotkeyDefinition, input::kHotkeyCount> kHotkeyDefini
     {HotkeyId::MoveUp, i18n::TextKey::HotkeyMoveUp},
     {HotkeyId::MoveDown, i18n::TextKey::HotkeyMoveDown},
     {HotkeyId::LayerIncrease, i18n::TextKey::HotkeyLayerIncrease},
-    {HotkeyId::LayerDecrease, i18n::TextKey::HotkeyLayerDecrease}
+    {HotkeyId::LayerDecrease, i18n::TextKey::HotkeyLayerDecrease},
+    {HotkeyId::MaterialHudPreviousPage, i18n::TextKey::HotkeyMaterialHudPreviousPage},
+    {HotkeyId::MaterialHudNextPage, i18n::TextKey::HotkeyMaterialHudNextPage}
 }};
 }

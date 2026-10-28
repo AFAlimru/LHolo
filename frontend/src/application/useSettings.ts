@@ -4,7 +4,7 @@ import type {SettingsBridge, SettingsCommand, SettingsField, SettingsIntent, Set
 
 const initial: SettingsValues = {hudEnabled: true, hudPosition: 1, hudShowFileName: true, hudShowLayer: true,
   hudShowOverallProgress: false, hudShowProgress: true, hudShowProjectedBlockName: true, hudShowWrongState: true,
-  hudShowWrongType: true, hudShowExtraBlocks: true, materialHudEnabled: false, materialHudPosition: 3,
+  hudShowWrongType: true, hudShowExtraBlocks: true, materialHudEnabled: false, materialHudStackConversion: false, materialHudMaxItems: 5, materialHudPosition: 3,
   altWheelOffsetEnabled: true, placementRadius: 4, autoPlacementCooldown: 10, activeMode: 0, language: ''};
 interface Editor {native: SettingsState | null; dirty: Partial<SettingsValues>; pending: SettingsIntent | null; failed: boolean}
 let nextId = 0;

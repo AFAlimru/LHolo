@@ -9,7 +9,7 @@ namespace lholo::app {
 enum class SettingsField {
     HudEnabled, HudPosition, HudFileName, HudLayer, HudOverallProgress, HudProgress,
     HudProjectedBlockName, HudWrongState, HudWrongType, HudExtraBlocks,
-    MaterialHudEnabled, MaterialHudPosition, AltWheel, Radius, Cooldown, Mode, Language, Count
+    MaterialHudEnabled, MaterialHudStackConversion, MaterialHudMaxItems, MaterialHudPosition, AltWheel, Radius, Cooldown, Mode, Language, Count
 };
 inline constexpr auto kSettingsFieldCount = static_cast<std::size_t>(SettingsField::Count);
 using SettingsValue = std::variant<bool, int, std::string>;

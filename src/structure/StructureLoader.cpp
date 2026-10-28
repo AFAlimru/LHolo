@@ -15,6 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "structure/StructureLoader.h"
+#include "input/MaterialHudPageRequest.h"
 #include "input/MenuOpenRequest.h"
 
 #include "i18n/Message.h"
@@ -200,6 +201,17 @@ bool handleGuiHotkeyKeyDown(unsigned int virtualKey) {
             uiState().queueLayerDelta(-1);
         }
         return true;
+    }
+    if (uiState().materialHudEnabled() && detail::StructureSession::getInstance().hasLoaded()
+        && !projection::isDimensionSuspended()) {
+        for (auto const id : {input::HotkeyId::MaterialHudPreviousPage, input::HotkeyId::MaterialHudNextPage}) {
+            auto const slot = input::hotkeyIndex(id);
+            auto const hotkey = uiState().inputHotkey(slot);
+            if (hotkey.key == 0 || virtualKey != hotkey.key || modifiers != hotkey.modifiers) continue;
+            if (GetTickCount64() >= uiState().ignoreHotkeyUntil() && uiState().tryPressHotkey(slot))
+                input::requestMaterialHudPage(id == input::HotkeyId::MaterialHudPreviousPage ? -1 : 1);
+            return true;
+        }
     }
     return false;
 }
@@ -403,6 +415,8 @@ void loadSettings() {
         projection::setMissingSeeThrough(settings.missingSeeThrough);
         setExperimentalConsentGiven(settings.experimentalConsent);
         setMaterialHudEnabled(settings.materialHudEnabled);
+        uiState().setMaterialHudStackConversion(settings.materialHudStackConversion);
+        uiState().setMaterialHudMaxItems(settings.materialHudMaxItems);
         setMaterialHudPosition(settings.materialHudPosition);
         // Transform and layer state are session-local. Only the explicit
         // "restore last projection" record below is persisted.
@@ -437,6 +451,10 @@ void loadSettings() {
             std::clamp(settings.guiHotkeyModifiers, 0, 7)
         );
         uiState().setAltWheelOffsetEnabled(settings.altWheelOffsetEnabled);
+        uiState().setHotkey(input::hotkeyIndex(input::HotkeyId::MaterialHudPreviousPage),
+            std::clamp(settings.materialHudPreviousPageHotkey, 0, 255), std::clamp(settings.materialHudPreviousPageHotkeyModifiers, 0, 7));
+        uiState().setHotkey(input::hotkeyIndex(input::HotkeyId::MaterialHudNextPage),
+            std::clamp(settings.materialHudNextPageHotkey, 0, 255), std::clamp(settings.materialHudNextPageHotkeyModifiers, 0, 7));
         uiState().setHotkey(
             kLayerIncreaseHotkeyIndex,
             std::clamp(settings.layerIncreaseHotkey, 0, 255),
@@ -499,6 +517,8 @@ void saveSettings() {
         settings.missingSeeThrough = projection::getMissingSeeThrough();
         settings.experimentalConsent = experimentalConsentGiven();
         settings.materialHudEnabled = materialHudEnabled();
+        settings.materialHudStackConversion = uiState().materialHudStackConversion();
+        settings.materialHudMaxItems = uiState().materialHudMaxItems();
         settings.materialHudPosition = materialHudPosition();
         settings.placementRadius = place::getPlacementRadius();
         settings.autoPlacementBreakCooldownSeconds
@@ -530,6 +550,12 @@ void saveSettings() {
             settings.moveHotkeys[index] = moveHotkey.key;
             settings.moveHotkeyModifiers[index] = moveHotkey.modifiers;
         }
+        auto const previousPage = uiState().hotkey(input::hotkeyIndex(input::HotkeyId::MaterialHudPreviousPage));
+        auto const nextPage = uiState().hotkey(input::hotkeyIndex(input::HotkeyId::MaterialHudNextPage));
+        settings.materialHudPreviousPageHotkey = previousPage.key;
+        settings.materialHudPreviousPageHotkeyModifiers = previousPage.modifiers;
+        settings.materialHudNextPageHotkey = nextPage.key;
+        settings.materialHudNextPageHotkeyModifiers = nextPage.modifiers;
         settings.altWheelOffsetEnabled = uiState().altWheelOffsetEnabled();
         settings.hasSavedProjection = sessionSnapshot.saved.available;
         settings.savedAnchorX = sessionSnapshot.saved.anchorX;

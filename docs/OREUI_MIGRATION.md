@@ -99,6 +99,10 @@ lholo.transform.intent 接收 {id, context, field, expected, value}；lholo:tran
 
 ## HUD、快捷键、语言与实验性设置
 
+材料 HUD 分页由原生 UI 层持有，标题文案靠左，当前页/总页数单独放在同一行最右侧，与下方材料数量右边缘对齐。现有显示项数改为每页项数；快捷键设置动态增加上一页/下一页，默认不绑定，捕获、去重、重置与保存共用原有通路，正式前端没有按键监听或页码副本。四种语言同步标题格式与新快捷键名称。首尾页停住，文件/分层/页大小变化回首页，缺失项减少时自动收敛到有效页；不恢复底部剩余材料种类提示。
+
+材料 HUD 页提供“堆叠数量换算”开关，默认关闭。`materialHudStackConversion` 通过现有 Settings 协议与应用控制帧保存，UI 只持有编辑状态。原生 HUD 和布局编辑示例复用 `MaterialFormat` 格式化：关闭显示缺失总数，开启只显示 `43x64+34`（整组省略余数，小于一组只显示数量），按实际堆叠上限计算；不改变材料清单、统计、排序或背包计数。四种语言共用新文案键，旧配置缺少字段时默认为关闭。`materialHudMaxItems` 同通路保存，范围 1～50、默认 5；不再显示剩余材料种类提示。数量和名称分别存入 HudLine，Painter 按原生字体测宽并右对齐数量列，材料名称完整显示，不用空格模拟对齐。面板按每行名称与数量的实际合计宽度自适应，名称与数量间隔为字高的 0.8 倍，超过视口宽度时同比例缩小文字、图标与间距；显示项数使用与现有设置一致的紧凑步进器和正文字号。
+
 依赖方向：页面 → 各功能 use*Settings → application/useSettings → platform/settingsBridge → OreUiBridge → SettingsBindings/SettingsProtocol → app/SettingsActions → StructureUiState / i18n / place。应用层只编排具体字段和命令；settings/SettingsStore 仍只负责原有配置读写，下层不依赖 OreUI 或页面 JSON。单个共享队列防止各页争用同一请求通道，四个页面 hook 仅暴露各自控件所需能力；不把整个配置对象回传后直接覆盖。
 
 - SettingsActions 在 AppKernel 控制帧执行，返回是否需要保存；HUD、材料 HUD、Alt+滚轮、语言、半径/冷却和知情确认沿用现有持久化。三个辅助放置模式是实时会话状态，互斥切换，未授权不能开启，单纯启停不请求保存。模式切换先清除原有模式及手动按压状态。context 沿用加载 revision，旧世界或加载前排队的意图失效。

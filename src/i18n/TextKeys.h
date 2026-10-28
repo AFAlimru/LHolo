@@ -174,6 +174,8 @@
     LHOLO_TEXT_KEY("checkbox.hudWrongType", CheckboxHudWrongType, "")                                    \
     LHOLO_TEXT_KEY("checkbox.hudExtraBlocks", CheckboxHudExtraBlocks, "")                                \
     LHOLO_TEXT_KEY("checkbox.materialHudEnabled", CheckboxMaterialHudEnabled, "")                        \
+    LHOLO_TEXT_KEY("checkbox.materialHudStackConversion", CheckboxMaterialHudStackConversion, "")        \
+    LHOLO_TEXT_KEY("label.materialHudMaxItems", LabelMaterialHudMaxItems, "")                             \
     LHOLO_TEXT_KEY("label.materialHudPosition", LabelMaterialHudPosition, "")                            \
                                                                                                          \
     /* Hotkeys page */                                                                                   \
@@ -262,10 +264,12 @@
     LHOLO_TEXT_KEY("hud.placementMode", HudPlacementMode, "")                                            \
                                                                                                          \
     /* Material HUD */                                                                                   \
+    LHOLO_TEXT_KEY("hotkey.materialHudPreviousPage", HotkeyMaterialHudPreviousPage, "")                    \
+    LHOLO_TEXT_KEY("hotkey.materialHudNextPage", HotkeyMaterialHudNextPage, "")                            \
+    LHOLO_TEXT_KEY("materialHud.page", MaterialHudPage, "")                                              \
     LHOLO_TEXT_KEY("materialHud.title", MaterialHudTitle, "")                                            \
     LHOLO_TEXT_KEY("materialHud.scanning", MaterialHudScanning, "")                                      \
     LHOLO_TEXT_KEY("materialHud.complete", MaterialHudComplete, "")                                      \
-    LHOLO_TEXT_KEY("materialHud.more", MaterialHudMore, "")                                              \
                                                                                                          \
     /* File dialogs (Win32 common dialog filters) */                                                     \
     LHOLO_TEXT_KEY("dialog.filterProjection", DialogFilterProjection, "")                                \

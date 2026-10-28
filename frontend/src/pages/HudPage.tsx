@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import type { HudSettingsControls } from '../application/useHudSettings';
 import type { MenuLabels } from '../platform/bridge';
-import { LHoloButton, LHoloCheckbox } from '../components/LHoloControls';
+import { LHoloButton, LHoloCheckbox, LHoloTextField } from '../components/LHoloControls';
 
 type HudTab = 'projection' | 'materials';
 
@@ -66,6 +66,24 @@ export function HudPage({ labels, hud, worldAvailable }: { labels: MenuLabels; h
       <div className="lholo-hud-master">
         <LHoloCheckbox disabled={!hud.ready} label={labels['checkbox.materialHudEnabled']}
           value={hud.materialHudEnabled} onChange={hud.setMaterialHudEnabled} />
+      </div>
+      <div className="lholo-hud-option">
+        <LHoloCheckbox disabled={!hud.ready || !hud.materialHudEnabled} label={labels['checkbox.materialHudStackConversion']}
+          value={hud.materialHudStackConversion} onChange={hud.setMaterialHudStackConversion} />
+      </div>
+      <div className="lholo-material-hud-row lholo-setting-row">
+        <div className="lholo-material-hud-label">{labels['label.materialHudMaxItems']}</div>
+        <div className="lholo-stepper">
+          <LHoloButton disabled={!hud.ready || !hud.materialHudEnabled} label="-" className="lholo-stepper-button"
+            onClick={() => hud.stepMaterialHudMaxItems(-1)} />
+          <div className="lholo-stepper-value" style={{ width: '3.2rem' }}>
+            <LHoloTextField disabled={!hud.ready || !hud.materialHudEnabled}
+              label={labels['label.materialHudMaxItems']} value={hud.materialHudMaxItemsText} maxLength={3}
+              onChange={hud.editMaterialHudMaxItems} onBlur={hud.commitMaterialHudMaxItems} />
+          </div>
+          <LHoloButton disabled={!hud.ready || !hud.materialHudEnabled} label="+" className="lholo-stepper-button"
+            onClick={() => hud.stepMaterialHudMaxItems(1)} />
+        </div>
       </div>
     </div>}
   </>;

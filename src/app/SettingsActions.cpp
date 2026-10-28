@@ -27,7 +27,7 @@ SettingsSnapshot snapshot() {
     auto h = ui().hud();
     SettingsSnapshot s{{h.enabled, h.position, h.showFileName, h.showLayer, h.showOverallProgress,
         h.showProgress, h.showProjectedBlockName, h.showWrongState, h.showWrongType, h.showExtraBlocks,
-        ui().materialHudEnabled(), ui().materialHudPosition(), ui().altWheelOffsetEnabled(),
+        ui().materialHudEnabled(), ui().materialHudStackConversion(), ui().materialHudMaxItems(), ui().materialHudPosition(), ui().altWheelOffsetEnabled(),
         place::getPlacementRadius(), place::getAutoPlacementBreakCooldownSeconds(), activeMode(),
         std::string{i18n::languageCode(i18n::language())}}, {}, 0,
         structure::detail::StructureSession::getInstance().transformEditorState().context, ack,
@@ -55,6 +55,8 @@ bool applyField(SettingsField field, SettingsValue const& value) {
     case F::HudWrongType: return ui().setHudFlag(H::WrongType, std::get<bool>(value));
     case F::HudExtraBlocks: return ui().setHudFlag(H::ExtraBlocks, std::get<bool>(value));
     case F::MaterialHudEnabled: ui().setMaterialHudEnabled(std::get<bool>(value)); return true;
+    case F::MaterialHudStackConversion: ui().setMaterialHudStackConversion(std::get<bool>(value)); return true;
+    case F::MaterialHudMaxItems: ui().setMaterialHudMaxItems(std::get<int>(value)); return true;
     case F::MaterialHudPosition: ui().setMaterialHudPosition(std::get<int>(value)); return true;
     case F::AltWheel: return ui().setAltWheelOffsetEnabled(std::get<bool>(value));
     case F::Radius: place::setPlacementRadius(std::get<int>(value)); return true;
@@ -79,6 +81,7 @@ bool validSettingsIntent(SettingsIntent const& i) {
         auto integer = [&](int low, int high) { auto n = std::get_if<int>(&v); return n && *n >= low && *n <= high; };
         switch (i.field) {
         case F::HudPosition: case F::MaterialHudPosition: case F::Mode: return integer(0, 3);
+        case F::MaterialHudMaxItems: return integer(settings::kMinMaterialHudItems, settings::kMaxMaterialHudItems);
         case F::Radius: return integer(1, 4);
         case F::Cooldown: return integer(0, 60);
         case F::Language: { auto s = std::get_if<std::string>(&v); return s && !s->empty() && s->size() <= 32; }

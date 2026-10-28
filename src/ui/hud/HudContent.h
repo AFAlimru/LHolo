@@ -1,9 +1,15 @@
 #pragma once
 
+#include "settings/MaterialHudSettings.h"
+#include "ui/hud/MaterialHudPaging.h"
+
 #include "projection/ProjectionTypes.h"
 #include <string>
 #include <optional>
+#include <memory>
 #include <vector>
+
+class ItemStack;
 
 namespace lholo::structure::detail {
 struct HudStateSnapshot;
@@ -16,6 +22,8 @@ struct HudLine {
     std::string text;
     TextTone tone{TextTone::Normal};
     std::optional<std::string> iconId;
+    std::string quantity; // Right-aligned value: material count or header page indicator.
+    std::shared_ptr<ItemStack const> iconItem;
 };
 struct HudPanel {
     int position{}; // 0 TL, 1 BL, 2 TR, 3 BR; matches persisted settings.
@@ -39,7 +47,8 @@ struct ProjectionHudData {
 
 // Pure presentation rules, independent of native font/context and game objects.
 HudPanel makeProjectionHud(structure::detail::HudStateSnapshot const& settings, ProjectionHudData const& data);
-HudPanel makeMaterialHud(structure::detail::MaterialHudSnapshot const& snapshot, int position);
+HudPanel makeMaterialHud(structure::detail::MaterialHudSnapshot const& snapshot, int position, bool convertStacks = false,
+    int maxItems = settings::kDefaultMaterialHudItems, MaterialHudPaging* paging = nullptr, int pageDelta = 0);
 
 // Read existing business snapshots only; no world/inventory scans or settings writes.
 HudContent readHudContent();

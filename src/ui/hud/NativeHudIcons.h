@@ -2,15 +2,18 @@
 
 #include <cstdint>
 #include <span>
+#include <memory>
 #include <string>
 
 class UIRenderContext;
+class ItemStack;
 class ClientInstance;
 
 namespace lholo::ui::hud {
 struct HudIconDraw {
     std::string id;
     float x{}, y{}, size{};
+    std::shared_ptr<ItemStack const> item;
 };
 bool installNativeHudIcons();
 void uninstallNativeHudIcons();

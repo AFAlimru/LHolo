@@ -1,4 +1,5 @@
 #include "ui/hud/HudContent.h"
+#include "input/MaterialHudPageRequest.h"
 #include "structure/StructureUiState.h"
 #include "ui/hud/HudLayout.h"
 #include "ui/hud/HudText.h"
@@ -74,12 +75,33 @@ int runNativeHudTests() {
     dirt.itemId = "minecraft:dirt"; dirt.typeName = "minecraft:dirt";
     material.requirements = {signs, stone, dirt}; material.available = {1, 0, 4};
     panel = makeMaterialHud(material, 3);
-    check(panel.position == 3 && panel.lines.size() == 3 && panel.lines[1].text == "Stone  111 (1 x 64 + 47)"
-        && panel.lines[2].text == "Signs  17 (1 x 16 + 1)", "inventory deficit sorting, per-item stack sizes and no satisfied rows");
+    check(panel.position == 3 && panel.lines.size() == 3 && panel.lines[1].text == "Stone" && panel.lines[1].quantity == "111"
+        && panel.lines[2].text == "Signs" && panel.lines[2].quantity == "17", "raw inventory deficits by default, sorted without satisfied rows");
+    auto converted = makeMaterialHud(material, 3, true);
+    check(converted.lines[1].text == "Stone" && converted.lines[1].quantity == "1x64+47"
+        && converted.lines[2].text == "Signs" && converted.lines[2].quantity == "1x16+1",
+        "conversion replaces raw count and respects each item stack limit");
+    check(ui::formatMaterialHudCount(43 * 64 + 34, 64, true) == "43x64+34", "requested stack format");
+    check(ui::formatMaterialHudCount(43 * 64 + 34, 64, false) == "2786", "disabled conversion only shows total");
+    check(ui::formatMaterialHudCount(128, 64, true) == "2x64", "whole stacks omit empty remainder");
+    check(ui::formatMaterialHudCount(34, 64, true) == "34" && ui::formatMaterialHudCount(0, 64, true) == "0", "sub-stack quantities stay raw");
+    check(ui::formatMaterialHudCount(3, 1, true) == "3x1" && ui::formatMaterialHudCount(65, 0, true) == "1x64+1", "unstackable items and invalid stack fallback");
     check(!panel.lines.front().iconId && panel.lines[1].iconId == "minecraft:stone"
         && panel.lines[2].iconId == "minecraft:oak_sign", "sorted icons follow their material, preferring placement item identity");
     check(panel.lines[1].tone == TextTone::Normal && panel.lines[2].tone == TextTone::Normal,
         "material icons retain default white text");
+    auto redBed = stone; redBed.displayName = "Red Bed"; redBed.itemId = "minecraft:bed";
+    // Opaque native item payload: presentation must retain ownership without
+    // invoking game APIs or reconstructing the item from its bare type ID.
+    auto nativeToken = std::make_shared<int>(1);
+    redBed.iconItem = std::shared_ptr<ItemStack const>(nativeToken, reinterpret_cast<ItemStack const*>(nativeToken.get()));
+    auto whiteBed = redBed; whiteBed.displayName = "White Bed"; whiteBed.count = 1; whiteBed.iconItem.reset();
+    auto beds = makeMaterialHud({{whiteBed, redBed}, {0, 0}, true}, 0);
+    check(beds.lines[1].text == "Red Bed" && beds.lines[1].iconId == "minecraft:bed"
+        && beds.lines[2].text == "White Bed",
+        "sorted material labels retain their shared item type");
+    check(beds.lines[1].iconItem == redBed.iconItem && !beds.lines[2].iconItem,
+        "full native item payload follows its material through deficit sorting");
     auto liquid = dirt; liquid.itemId.clear(); liquid.typeName = "minecraft:water";
     structure::detail::MaterialHudSnapshot liquidSnapshot{{liquid}, {0}, true};
     check(makeMaterialHud(liquidSnapshot, 0).lines[1].iconId == "minecraft:water" && liquid.itemId.empty(),
@@ -95,12 +117,79 @@ int runNativeHudTests() {
         material.requirements[index].displayName = "Dirt" + std::to_string(index);
     material.requirements.back().count = 42;
     panel = makeMaterialHud(material, 2);
-    check(panel.lines.size() == 16 && panel.lines.back().text == "…additional material types: 2", "14 material rows plus summary");
-    check(!panel.lines.back().iconId, "remaining-types summary has no item icon");
-    bool stableTopRows = panel.lines[1].text == "Dirt15  42";
-    for (std::size_t index = 2; index <= 14; ++index)
-        stableTopRows = stableTopRows && panel.lines[index].text == "Dirt" + std::to_string(index - 2) + "  3";
-    check(stableTopRows, "top-14 selection includes largest shortage and preserves equal-count tracker order");
+    check(panel.lines.size() == 6 && panel.lines.back().iconId.has_value(), "default shows five materials without a summary row");
+    auto limited = makeMaterialHud(material, 2, false, 2);
+    check(limited.lines.size() == 3 && limited.lines[1].text == "Dirt15"
+        && limited.lines[2].text == "Dirt0" && limited.lines.back().quantity == "3",
+        "configured limit preserves top deficits without an extra summary");
+    check(makeMaterialHud(material, 2, false, 0).lines.size() == 2, "item count clamps to at least one");
+    check(makeMaterialHud(material, 2, false, 500).lines.size() == 17, "large limit displays all available materials");
+    MaterialHudPaging paging;
+    std::vector<std::string> pagedNames;
+    for (int n = 0; n < 4; ++n) {
+        auto current = makeMaterialHud(material, 2, false, 5, &paging, n == 0 ? 0 : 1);
+        check(paging.index == static_cast<std::size_t>(n) && paging.count == 4,
+            "sixteen materials form four pages with five rows per page");
+        check(current.lines.front().text == "Missing materials"
+            && current.lines.front().quantity == std::to_string(n + 1) + "/4" && !current.lines.front().iconId,
+            "localized title and right-aligned page indicator remain independent");
+        for (std::size_t row = 1; row < current.lines.size(); ++row) pagedNames.push_back(current.lines[row].text);
+    }
+    check(pagedNames.size() == 16 && pagedNames.front() == "Dirt15", "paging reaches every material");
+    bool orderedPages = pagedNames.size() == 16;
+    for (std::size_t n = 1; n < pagedNames.size(); ++n)
+        orderedPages = orderedPages && pagedNames[n] == "Dirt" + std::to_string(n - 1);
+    check(orderedPages, "stable ties have no gaps or duplicates across page boundaries");
+    (void)makeMaterialHud(material, 2, false, 5, &paging, 100);
+    check(paging.index == 3, "next at last page stays at last page");
+    (void)makeMaterialHud(material, 2, false, 5, &paging, -100);
+    check(paging.index == 0, "previous clamps to first page");
+    (void)makeMaterialHud(material, 2, false, 5, &paging, 1);
+    i18n::setLanguageByCode("zh_CN");
+    auto translated = makeMaterialHud(material, 2, false, 5, &paging);
+    check(translated.lines.front().text == "缺失材料" && translated.lines.front().quantity == "2/4",
+        "language switches update pagination text without resetting the page");
+    i18n::setLanguageByCode("en_US");
+    auto fewer = material;
+    fewer.requirements.resize(3);
+    (void)makeMaterialHud(material, 2, false, 5, &paging, 100);
+    auto shrunk = makeMaterialHud(fewer, 2, false, 5, &paging);
+    check(paging.index == 0 && paging.count == 1 && shrunk.lines.size() == 4,
+        "shrinking deficits clamp page index before rendering");
+    fewer.available.assign(3, 1000);
+    auto complete = makeMaterialHud(fewer, 2, false, 5, &paging);
+    check(complete.lines.size() == 2 && complete.lines.front().text == "Missing materials" && complete.lines.front().quantity == "1/1",
+        "completed materials have one empty page with existing completion text");
+    (void)makeMaterialHud(material, 2, false, 5, &paging, 2);
+    check(paging.setContext({100, 0, 5, 0, 0, 0}) && paging.index == 0, "new structure resets page");
+    paging.update(16, 5, 2);
+    check(!paging.setContext({100, 0, 5, 0, 0, 0}) && paging.index == 2, "unchanged context retains page");
+    check(paging.setContext({100, 1, 5, 0, 0, 0}) && paging.index == 0, "selecting another file resets page");
+    paging.update(16, 5, 2);
+    check(paging.setContext({100, 1, 10, 0, 0, 0}) && paging.index == 0, "page size changes reset page");
+    paging.update(16, 5, 2);
+    check(paging.setContext({100, 1, 10, 1, 1, 3}) && paging.index == 0, "layer changes reset page");
+    input::clearMaterialHudPageRequest();
+    input::requestMaterialHudPage(1); input::requestMaterialHudPage(1);
+    check(input::consumeMaterialHudPageRequest() == 2 && input::consumeMaterialHudPageRequest() == 0,
+        "input intent is accumulated and consumed once without touching HUD state");
+    input::requestMaterialHudPage(1);
+    structure::detail::StructureUiState::getInstance().resetWorldSession();
+    check(input::consumeMaterialHudPageRequest() == 0, "world reset clears stale page input");
+    auto const nameWidth = hudNameWidth(200, 20, 80, 10);
+    check(nameWidth == 90, "name width reserves icon, quantity and gap");
+    check(20 + nameWidth + 10 + 80 <= 200, "name and quantity remain separated within the panel");
+    check(hudWidthScale(300, 200) == 1.0f && hudWidthScale(300, 600) == 0.5f,
+        "full names grow panel naturally and scale down only beyond viewport width");
+    auto const fitted = hudWidthScale(300, 600);
+    check(600 * fitted <= 300 && hudWidthScale(300, 600 * fitted) == 1.0f,
+        "adaptive material panel fits without shortening names");
+    check(hudNameWidth(30, 0, 80, 10) == 0,
+        "narrow viewport preserves quantity space without overlap");
+    bool stableTopRows = panel.lines[1].text == "Dirt15" && panel.lines[1].quantity == "42";
+    for (std::size_t index = 2; index <= 5; ++index)
+        stableTopRows = stableTopRows && panel.lines[index].text == "Dirt" + std::to_string(index - 2) && panel.lines[index].quantity == "3";
+    check(stableTopRows, "top-five selection includes largest shortage and preserves equal-count tracker order");
     check(!makeMaterialHud(material, 2).lines.empty() && makeProjectionHud(settings, data).lines.empty(), "material HUD independent of ordinary HUD");
     check(makeMaterialHud(material, 2).compactRows && !makeProjectionHud(settings, data).compactRows,
         "only material HUD selects compact rows");

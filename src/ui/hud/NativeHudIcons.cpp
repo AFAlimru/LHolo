@@ -160,6 +160,10 @@ void flushHudTextAndIcons(UIRenderContext& context, ClientInstance& client,
         }
         frame.icons.reserve(icons.size());
         for (auto const& icon : icons) {
+            if (icon.item) {
+                frame.icons.push_back({icon, icon.item});
+                continue;
+            }
             auto found = cache.find(icon.id);
             frame.icons.push_back({icon, found == cache.end() ? nullptr : found->second});
             if (found == cache.end()) pending.insert(icon.id);

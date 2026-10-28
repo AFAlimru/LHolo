@@ -4,6 +4,7 @@
 #include "structure/StructureUiState.h"
 
 #include "ui/HotkeyFormat.h"
+#include "input/MaterialHudPageRequest.h"
 
 #include <Windows.h>
 
@@ -35,6 +36,8 @@ constexpr std::array<DefaultHotkey, input::kHotkeyCount> kDefaultHotkeys{{
     {VK_DOWN, lholo::ui::kHotkeyModifierShift},
     {VK_UP,   lholo::ui::kHotkeyModifierAlt},
     {VK_DOWN, lholo::ui::kHotkeyModifierAlt},
+    {0, 0}, // Material HUD previous page: unbound by default.
+    {0, 0}, // Material HUD next page: unbound by default.
 }};
 
 // "Reset all hotkeys" restores this together with the bindings: it is an input
@@ -383,6 +386,22 @@ void StructureUiState::setMaterialHudEnabled(bool enabled) {
     mMaterialHudEnabled.store(enabled, std::memory_order_release);
 }
 
+bool StructureUiState::materialHudStackConversion() const {
+    return mMaterialHudStackConversion.load(std::memory_order_acquire);
+}
+
+void StructureUiState::setMaterialHudStackConversion(bool enabled) {
+    mMaterialHudStackConversion.store(enabled, std::memory_order_release);
+}
+
+int StructureUiState::materialHudMaxItems() const {
+    return mMaterialHudMaxItems.load(std::memory_order_acquire);
+}
+
+void StructureUiState::setMaterialHudMaxItems(int count) {
+    mMaterialHudMaxItems.store(std::clamp(count, settings::kMinMaterialHudItems, settings::kMaxMaterialHudItems), std::memory_order_release);
+}
+
 int StructureUiState::materialHudPosition() const {
     return mMaterialHudPosition.load(std::memory_order_acquire);
 }
@@ -408,7 +427,7 @@ ActionHintSnapshot StructureUiState::actionHint(std::uint64_t now) const {
     auto const expiry = mActionHintExpiry.load(std::memory_order_acquire);
     if (expiry > now) return {i18n::format(mActionHintMessage), expiry};
     if (mLoadingHintToken.load(std::memory_order_acquire) != 0) {
-        return {i18n::format(i18n::Message{i18n::TextKey::StatusLoading}), 0, true};
+        return {i18n::format(i18n::Message{mLoadingHintKey}), 0, true};
     }
     return {};
 }
@@ -418,9 +437,10 @@ bool StructureUiState::actionHintActive(std::uint64_t now) const {
         || mLoadingHintToken.load(std::memory_order_acquire) != 0;
 }
 
-std::uint64_t StructureUiState::beginLoadingHint() {
+std::uint64_t StructureUiState::beginLoadingHint(i18n::TextKey key) {
     std::lock_guard lock(mActionHintMutex);
     auto const token = ++mLoadingHintSequence;
+    mLoadingHintKey = key;
     mLoadingHintToken.store(token, std::memory_order_release);
     return token;
 }
@@ -512,6 +532,7 @@ void StructureUiState::clearMaterials() {
 }
 
 void StructureUiState::resetWorldSession() {
+    input::clearMaterialHudPageRequest();
     mGuiVisible.store(false, std::memory_order_release);
     mOpeningInputBlockFrames.store(0, std::memory_order_release);
     mBlockGameInputUntil.store(0, std::memory_order_release);

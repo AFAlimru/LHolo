@@ -211,64 +211,76 @@ bool startTaskComposition(std::string taskId, std::uint64_t revision, StructureL
     result->taskId = std::move(taskId);
     result->files = std::move(files);
     loader.compositionResult = result;
-    loader.task = std::async(std::launch::async, [result, paths = std::move(paths)] {
-        try {
-            std::unordered_map<std::string, std::shared_ptr<LoadedStructure const>> parsed;
-            for (std::size_t i = 0; i < result->files.size(); ++i)
-                if (result->files[i].loaded)
-                    parsed[paths[i]] = result->files[i].loaded;
-            for (std::size_t i = 0; i < result->files.size(); ++i) {
-                auto& file = result->files[i];
-                if (!file.visible || file.loaded)
-                    continue;
-                if (auto found = parsed.find(paths[i]); found != parsed.end()) {
-                    file.loaded = found->second;
-                    continue;
+    auto& ui = StructureUiState::getInstance();
+    auto const hint = ui.beginLoadingHint(i18n::TextKey::TasksLoading);
+    try {
+        loader.task = std::async(std::launch::async, [result, paths = std::move(paths), hint] {
+            auto finishHint = gsl::finally([&] { StructureUiState::getInstance().finishLoadingHint(hint); });
+            try {
+                std::unordered_map<std::string, std::shared_ptr<LoadedStructure const>> parsed;
+                for (std::size_t i = 0; i < result->files.size(); ++i)
+                    if (result->files[i].loaded)
+                        parsed[paths[i]] = result->files[i].loaded;
+                for (std::size_t i = 0; i < result->files.size(); ++i) {
+                    auto& file = result->files[i];
+                    if (!file.visible || file.loaded)
+                        continue;
+                    if (auto found = parsed.find(paths[i]); found != parsed.end()) {
+                        file.loaded = found->second;
+                        continue;
+                    }
+                    result->errorFileId = file.id;
+                    file.loaded = loadStructureFile(pathFromUtf8(paths[i]), result->error);
+                    if (!file.loaded)
+                        return;
+                    parsed[paths[i]] = file.loaded;
                 }
-                result->errorFileId = file.id;
-                file.loaded = loadStructureFile(pathFromUtf8(paths[i]), result->error);
-                if (!file.loaded)
-                    return;
-                parsed[paths[i]] = file.loaded;
-            }
-            result->errorFileId.clear();
-            result->composition =
-                composeTaskProjection(result->files, [](Block const* block, int mirror, int rotation) -> Block const* {
-                    if (!block || (mirror == 0 && rotation == 0))
-                        return block;
-                    constexpr Rotation rotations[]{Rotation::None, Rotation::Clockwise90,
-                                                   Rotation::Clockwise180, Rotation::CounterClockwise90};
-                    constexpr Mirror mirrors[]{Mirror::None, Mirror::Z, Mirror::X};
-                    return VanillaBlockStateTransformUtils::transformBlock(*block, rotations[rotation],
-                                                                           mirrors[mirror]);
-                });
-            std::array<int, 3> base{result->request.origin.x, result->request.origin.y,
-                                    result->request.origin.z};
-            auto const& composed = *result->composition.loaded;
-            std::array<int, 3> size{composed.sizeX, composed.sizeY, composed.sizeZ};
-            for (int axis = 0; axis < 3; ++axis) {
-                auto minimum = static_cast<long long>(base[axis]) + result->composition.origin[axis];
-                auto maximum = minimum + std::max(0, size[axis] - 1);
-                if (minimum < std::numeric_limits<int>::min() || maximum > std::numeric_limits<int>::max())
-                    throw std::runtime_error("Task world coordinates exceed supported range");
-            }
-            if (composed.independentFiles) for (auto const& f:composed.independentFiles->files) {
-                if (!f.visible || !f.loaded) continue;
-                std::array<int,3> offset{f.x,f.y,f.z};
-                bool rotated=(f.rotation&1)!=0;
-                std::array<int,3> extent{rotated?f.loaded->sizeZ:f.loaded->sizeX,f.loaded->sizeY,
-                    rotated?f.loaded->sizeX:f.loaded->sizeZ};
-                for (int axis=0;axis<3;++axis) {
-                    auto lo=static_cast<long long>(base[axis])+offset[axis];
-                    auto hi=lo+extent[axis]-1;
-                    if (lo<std::numeric_limits<int>::min() || hi>std::numeric_limits<int>::max())
+                result->errorFileId.clear();
+                result->composition =
+                    composeTaskProjection(result->files, [](Block const* block, int mirror, int rotation) -> Block const* {
+                        if (!block || (mirror == 0 && rotation == 0))
+                            return block;
+                        constexpr Rotation rotations[]{Rotation::None, Rotation::Clockwise90,
+                                                       Rotation::Clockwise180, Rotation::CounterClockwise90};
+                        constexpr Mirror mirrors[]{Mirror::None, Mirror::Z, Mirror::X};
+                        return VanillaBlockStateTransformUtils::transformBlock(*block, rotations[rotation],
+                                                                               mirrors[mirror]);
+                    });
+                std::array<int, 3> base{result->request.origin.x, result->request.origin.y,
+                                        result->request.origin.z};
+                auto const& composed = *result->composition.loaded;
+                std::array<int, 3> size{composed.sizeX, composed.sizeY, composed.sizeZ};
+                for (int axis = 0; axis < 3; ++axis) {
+                    auto minimum = static_cast<long long>(base[axis]) + result->composition.origin[axis];
+                    auto maximum = minimum + std::max(0, size[axis] - 1);
+                    if (minimum < std::numeric_limits<int>::min() || maximum > std::numeric_limits<int>::max())
                         throw std::runtime_error("Task world coordinates exceed supported range");
                 }
+                if (composed.independentFiles) for (auto const& f:composed.independentFiles->files) {
+                    if (!f.visible || !f.loaded) continue;
+                    std::array<int,3> offset{f.x,f.y,f.z};
+                    bool rotated=(f.rotation&1)!=0;
+                    std::array<int,3> extent{rotated?f.loaded->sizeZ:f.loaded->sizeX,f.loaded->sizeY,
+                        rotated?f.loaded->sizeX:f.loaded->sizeZ};
+                    for (int axis=0;axis<3;++axis) {
+                        auto lo=static_cast<long long>(base[axis])+offset[axis];
+                        auto hi=lo+extent[axis]-1;
+                        if (lo<std::numeric_limits<int>::min() || hi>std::numeric_limits<int>::max())
+                            throw std::runtime_error("Task world coordinates exceed supported range");
+                    }
+                }
+            } catch (std::exception const& error) {
+                result->error = error.what();
             }
-        } catch (std::exception const& error) {
-            result->error = error.what();
-        }
-    });
+        });
+    } catch (std::exception const& error) {
+        ui.finishLoadingHint(hint);
+        loader.compositionResult.reset();
+        StructureSession::getInstance().failFileLoad(result->request,
+            i18n::Message{i18n::TextKey::StatusLoadFailed, {error.what()}});
+        logger().error("Could not start background task composition: {}", error.what());
+        return false;
+    }
     return true;
 }
 std::shared_ptr<CompositionLoadResult> takeTaskCompositionResult() {

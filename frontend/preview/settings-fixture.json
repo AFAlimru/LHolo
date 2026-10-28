@@ -2,7 +2,7 @@
   "values": {"hudEnabled": true, "hudPosition": 1, "hudShowFileName": true, "hudShowLayer": true,
     "hudShowOverallProgress": false, "hudShowProgress": true, "hudShowProjectedBlockName": true,
     "hudShowWrongState": true, "hudShowWrongType": true, "hudShowExtraBlocks": true,
-    "materialHudEnabled": false, "materialHudPosition": 3, "altWheelOffsetEnabled": true,
+    "materialHudEnabled": false, "materialHudStackConversion": false, "materialHudMaxItems": 5, "materialHudPosition": 3, "altWheelOffsetEnabled": true,
     "placementRadius": 4, "autoPlacementCooldown": 10, "activeMode": 0, "language": "zh_CN"},
   "defaults": [
     {"labelKey":"hotkey.openMenu", "key":77, "modifiers":2},
@@ -13,6 +13,8 @@
     {"labelKey":"hotkey.moveUp", "key":38, "modifiers":4},
     {"labelKey":"hotkey.moveDown", "key":40, "modifiers":4},
     {"labelKey":"hotkey.layerIncrease", "key":38, "modifiers":2},
-    {"labelKey":"hotkey.layerDecrease", "key":40, "modifiers":2}
+    {"labelKey":"hotkey.layerDecrease", "key":40, "modifiers":2},
+    {"labelKey":"hotkey.materialHudPreviousPage", "key":0, "modifiers":0},
+    {"labelKey":"hotkey.materialHudNextPage", "key":0, "modifiers":0}
   ]
 }

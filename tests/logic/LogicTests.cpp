@@ -225,7 +225,11 @@ void testSettingsStore() {
     settings.autoPlacementBreakCooldownSeconds = 27;
     settings.correctionSeeThrough = true;
     settings.materialHudEnabled = true;
+    settings.materialHudStackConversion = true;
+    settings.materialHudMaxItems = 23;
     settings.materialHudPosition = 3;
+    settings.materialHudPreviousPageHotkey = 33; settings.materialHudPreviousPageHotkeyModifiers = 2;
+    settings.materialHudNextPageHotkey = 34; settings.materialHudNextPageHotkeyModifiers = 1;
     settings.hudScales = {75, 160};
     settings.hudBackgroundOpacities = {35, 80};
     settings.hudPlacements = {{{true, 0.2f, 0.3f}, {true, 0.7f, 0.6f}}};
@@ -263,7 +267,11 @@ void testSettingsStore() {
     LHOLO_CHECK(loaded.autoPlacementBreakCooldownSeconds == 27);
     LHOLO_CHECK(loaded.correctionSeeThrough);
     LHOLO_CHECK(loaded.materialHudEnabled);
+    LHOLO_CHECK(loaded.materialHudStackConversion);
+    LHOLO_CHECK(loaded.materialHudMaxItems == 23);
     LHOLO_CHECK(loaded.materialHudPosition == 3);
+    LHOLO_CHECK(loaded.materialHudPreviousPageHotkey == 33 && loaded.materialHudPreviousPageHotkeyModifiers == 2);
+    LHOLO_CHECK(loaded.materialHudNextPageHotkey == 34 && loaded.materialHudNextPageHotkeyModifiers == 1);
     LHOLO_CHECK(loaded.hudPlacements == settings.hudPlacements);
     LHOLO_CHECK(loaded.hudBackgroundOpacities == settings.hudBackgroundOpacities);
     LHOLO_CHECK(loaded.hudScales == settings.hudScales);
@@ -289,7 +297,11 @@ void testSettingsStore() {
     LHOLO_CHECK(migrated.autoPlacementBreakCooldownSeconds == 10);
     LHOLO_CHECK(!migrated.correctionSeeThrough);
     LHOLO_CHECK(!migrated.materialHudEnabled);
+    LHOLO_CHECK(!migrated.materialHudStackConversion);
+    LHOLO_CHECK(migrated.materialHudMaxItems == 5);
     LHOLO_CHECK(migrated.materialHudPosition == 3);
+    LHOLO_CHECK(migrated.materialHudPreviousPageHotkey == 0 && migrated.materialHudPreviousPageHotkeyModifiers == 0);
+    LHOLO_CHECK(migrated.materialHudNextPageHotkey == 0 && migrated.materialHudNextPageHotkeyModifiers == 0);
     // A config without a valid language field uses the Chinese default.
     LHOLO_CHECK(migrated.language == "zh_CN");
     // Likewise, a config written before the Alt+wheel switch existed keeps the
@@ -837,6 +849,22 @@ void testLoadingActionHint() {
     LHOLO_CHECK(state.actionHintActive(400)); // finishing leaves unrelated hints intact
     LHOLO_CHECK(!state.actionHint(400).persistent);
     state.setActionHint({}, 0);
+
+    auto const task = state.beginLoadingHint(lholo::i18n::TextKey::TasksLoading);
+    hint = state.actionHint(1000000);
+    LHOLO_CHECK(hint.persistent && hint.expiry == 0);
+    LHOLO_CHECK(hint.text == lholo::i18n::tr(lholo::i18n::TextKey::TasksLoading));
+    auto const language = lholo::i18n::language();
+    lholo::i18n::setLanguageByCode("en_US");
+    LHOLO_CHECK(state.actionHint(1000000).text == lholo::i18n::tr(lholo::i18n::TextKey::TasksLoading));
+    lholo::i18n::setLanguage(language);
+    state.finishLoadingHint(final); // an older file load cannot hide task loading
+    LHOLO_CHECK(state.actionHint(1000000).persistent);
+    state.finishLoadingHint(task);
+    LHOLO_CHECK(!state.actionHintActive(1000000));
+    auto const file = state.beginLoadingHint(); // default wording stays single-file specific
+    LHOLO_CHECK(state.actionHint(1000000).text == lholo::i18n::tr(lholo::i18n::TextKey::StatusLoading));
+    state.finishLoadingHint(file);
 }
 
 void testHotkeyFormat() {

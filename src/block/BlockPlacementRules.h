@@ -7,10 +7,12 @@
 
 #pragma once
 
+#include <memory>
 #include <string>
 #include <string_view>
 
 class Block;
+class BlockActor;
 class ItemStack;
 
 namespace lholo::block {
@@ -20,6 +22,7 @@ struct PlacementItem {
     std::string itemId;
     int         stackSize{64};
     bool        valid{false};
+    std::shared_ptr<ItemStack const> displayItem; // Native pick result, including item NBT.
 };
 
 // Maps game-driven runtime variants to the block form the player can actually
@@ -83,7 +86,7 @@ struct PlacementItem {
 
 // Resolves the real inventory item represented by a block. Must run on the game
 // tick thread because it touches the Bedrock item registry/localization data.
-[[nodiscard]] PlacementItem resolvePlacementItem(Block const& block);
+[[nodiscard]] PlacementItem resolvePlacementItem(Block const& block, BlockActor const* blockActor = nullptr);
 
 [[nodiscard]] std::string stripMinecraftFormatting(std::string_view text);
 
