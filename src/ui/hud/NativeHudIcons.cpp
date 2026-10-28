@@ -21,6 +21,7 @@
 #include "mc/world/level/block/TintMethod.h"
 #include "mc/world/level/biome/biome_color_sampling/BiomeColorSampling.h"
 #include <atomic>
+#include <cmath>
 #include <exception>
 #include <memory>
 #include <mutex>
@@ -159,8 +160,11 @@ LL_TYPE_INSTANCE_HOOK(HudIconTextFlush, ll::memory::HookPriority::Normal,
             if (!actors) actors.emplace(screen, frame->client, frame->client.$getMinecraftGame_DEPRECATED());
             if (drawWaterIcon(*renderer, *actors, frame->client, icon.draw, *icon.item)) continue;
             // Vanilla inventory icons occupy 16 GUI units at scale 1.
+            // Give the scaled 3D model a full icon's depth instead of placing
+            // it on the default UI plane, where its front corner can be clipped.
+            auto const zOrder = static_cast<int>(std::ceil(icon.draw.size));
             renderer->renderGuiItemNew(*actors, *icon.item, 0, icon.draw.x, icon.draw.y,
-                false, 1.0f, 1.0f, icon.draw.size / 16.0f, 0);
+                false, 1.0f, 1.0f, icon.draw.size / 16.0f, zOrder);
         }
     } catch (std::exception const& error) {
         if (!failed.exchange(true)) logger().warn("[native-hud.icons] icon drawing disabled; HUD text remains available: {}", error.what());

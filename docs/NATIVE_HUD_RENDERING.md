@@ -121,3 +121,7 @@ Hook 先执行原版 `ScreenView::render`，只在 `hud_screen` 的渲染调用�
 ## 水图标的显式着色
 
 水和流动水的灰度纹理在 HUD 中由 ItemRenderer::iconBlit 直接绘制：复用原版地形 atlas 与水的 UV，将原生 Water TessellationPolicy 默认水色显式传入颜色参数；原生默认色不可用、为黑或白时使用标准蓝 #3F76E4。仍使用现有图标坐标、尺寸及渲染作用域；物品/atlas 未就绪时保留原来的物品绘制回退。不新增 Hook、跨帧颜色状态或纹理缓存，不修改物品 NBT 和材料计数。岩浆及其他图标继续使用 renderGuiItemNew。iconBlit 直接接收 HUD 实际宽高，xscale/yscale 均为 1，避免套用物品模型的 16 单位缩放导致错位。2026-10-28 用户实机确认水色与位置测试通过。
+
+## 放大图标的深度
+
+三维物品图标的 renderGuiItemNew 使用 ceil(图标实际 GUI 尺寸) 作为 zOrder，替代固定的 0，让深度随 HUD 缩放增长，避免方块前角出现三角形缺口。XY 坐标、模型缩放、相机投影与深度测试保持原样，仍由已有 ScreenState 作用域恢复绘制现场；水图标继续走二维 iconBlit 分支。2026-10-28 用户实机确认放大 HUD 后缺口消失。
